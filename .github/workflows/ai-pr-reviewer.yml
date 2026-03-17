@@ -107,7 +107,7 @@ jobs:
           # LLM Configuration
           OPENAI_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENAI_API_BASE: "https://openrouter.ai/api/v1"
-          CONFIG_MODEL: "anthropic/claude-3.5-sonnet"
+          CONFIG_MODEL: "deepseek/deepseek-v3.2"
           OPENAI_CUSTOM_HEADERS: '{"HTTP-Referer": "https://github.com/imputnet/cobalt", "X-Title": "PR-Agent"}'
           
           # PR Description Settings
