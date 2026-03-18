@@ -1,0 +1,103 @@
+{
+  "review_style": "balanced",
+  "focus_areas": {
+    "security": {
+      "enabled": true,
+      "weight": 0.25,
+      "description": "Detect potential security vulnerabilities and unsafe code patterns",
+      "checks": [
+        "eval_usage",
+        "innerHTML_without_sanitization",
+        "hardcoded_secrets",
+        "insecure_dependencies",
+        "sql_injection_risks",
+        "xss_vulnerabilities"
+      ]
+    },
+    "performance": {
+      "enabled": true,
+      "weight": 0.20,
+      "description": "Identify performance bottlenecks and optimization opportunities",
+      "checks": [
+        "unnecessary_re-renders",
+        "memory_leaks",
+        "inefficient_loops",
+        "large_bundle_size",
+        "unused_imports",
+        "expensive_operations"
+      ]
+    },
+    "bug_detection": {
+      "enabled": true,
+      "weight": 0.25,
+      "description": "Find potential bugs and logical errors before they reach production",
+      "checks": [
+        "null_reference_risks",
+        "unhandled_promises",
+        "type_mismatches",
+        "missing_error_handling",
+        "race_conditions",
+        "infinite_loops"
+      ]
+    },
+    "style": {
+      "enabled": true,
+      "weight": 0.15,
+      "description": "Ensure consistent code style and best practices",
+      "checks": [
+        "naming_conventions",
+        "code_formatting",
+        "function_complexity",
+        "file_organization",
+        "comment_quality",
+        "consistent_patterns"
+      ]
+    },
+    "tests": {
+      "enabled": true,
+      "weight": 0.10,
+      "description": "Verify test coverage and quality for changed code",
+      "checks": [
+        "test_file_present",
+        "test_coverage_maintained",
+        "test_quality",
+        "missing_assertions",
+        "skipped_tests",
+        "mock_usage"
+      ]
+    },
+    "documentation": {
+      "enabled": true,
+      "weight": 0.05,
+      "description": "Check for adequate documentation and inline comments",
+      "checks": [
+        "function_documentation",
+        "complex_logic_explained",
+        "api_documentation",
+        "changelog_updates",
+        "readme_updates",
+        "type_definitions"
+      ]
+    }
+  },
+  "thresholds": {
+    "max_file_size_lines": 300,
+    "max_function_lines": 50,
+    "max_cyclomatic_complexity": 10,
+    "min_test_coverage": 70
+  },
+  "ignore_patterns": [
+    "**/node_modules/**",
+    "**/*.min.js",
+    "**/dist/**",
+    "**/build/**",
+    "**/*.d.ts",
+    "**/coverage/**",
+    "**/.svelte-kit/**"
+  ],
+  "notification_preferences": {
+    "pr_comment": true,
+    "check_status": true,
+    "detailed_report": false
+  }
+}

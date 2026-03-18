@@ -320,7 +320,7 @@ jobs:
           
           # Sanitize inputs for shell safety
           DATE=$(date -u +'%Y-%m-%d')
-          TITLE="${PR_TITLE//"/\\\"}"  # Escape quotes
+          TITLE="${PR_TITLE/\"/\\\"}"  # Escape quotes
           URL="${PR_URL}"
           USER="${PR_USER}"
           PR_NUM="${PR_NUMBER}"
@@ -427,7 +427,7 @@ jobs:
       - name: Post-Run Summary
         if: always()
         run: |
-          echo "## Sprint Digest Update" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **PR**: #${{ github.event.pull_request.number }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "## Sprint Digest Update" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **PR**: #${{ github.event.pull_request.number }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Status**: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"

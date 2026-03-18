@@ -1,0 +1,33 @@
+llm:
+    default:
+        provider: openai
+        model: minimax/minimax-m2.5:free
+        apiKeyEnvVar: 'OPENAI_API_KEY'
+        baseUrlEnvVar: 'OPENAI_BASE_URL'
+        temperature: 0.7
+
+    commands:
+        commit:
+            provider: openai
+            model: minimax/minimax-m2.5:free
+            apiKeyEnvVar: 'OPENAI_API_KEY'
+            baseUrlEnvVar: 'OPENAI_BASE_URL'
+            temperature: 0.7
+        pr:
+            provider: openai
+            model: minimax/minimax-m2.5:free
+            apiKeyEnvVar: 'OPENAI_API_KEY'
+            baseUrlEnvVar: 'OPENAI_BASE_URL'
+            temperature: 0.7
+
+commit:
+    suggestions: 3
+    prompt_template: './prompts/commit_prompt.txt'
+
+pr:
+    base_branch: main
+    include_file_tree: true
+    include_unstaged: false
+    max_lines_per_file: 300
+    warn_on_conflict: true
+    prompt_template: ./prompts/pr_prompt.txt

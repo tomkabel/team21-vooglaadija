@@ -131,9 +131,9 @@ jobs:
       - name: Post-Run Summary
         if: always()
         run: |
-          echo "## AI PR Review Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Event**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **PR**: #${{ github.event.pull_request.number || inputs.pr_number || 'N/A' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: ${{ steps.pr_agent.outcome }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Run ID**: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "## AI PR Review Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Event**: ${{ github.event_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **PR**: #${{ github.event.pull_request.number || inputs.pr_number || 'N/A' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Status**: ${{ steps.pr_agent.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Run ID**: ${{ github.run_id }}" >> "$GITHUB_STEP_SUMMARY"

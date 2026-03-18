@@ -1,0 +1,33 @@
+# KILOCODE DIRECTORY GITIGNORE
+# This directory contains AI agent configuration and custom tools.
+# DO NOT commit generated artifacts or dependencies.
+
+# Dependencies - never commit these
+node_modules/
+package.json
+bun.lock
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Generated/temporary files
+*.log
+.cache/
+tmp/
+
+# Local configuration (may contain secrets)
+local-ai/config.json
+shell/auto-launch.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# This file itself should not be ignored
+!.gitignore

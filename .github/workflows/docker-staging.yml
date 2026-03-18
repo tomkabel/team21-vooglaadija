@@ -39,9 +39,9 @@ jobs:
         id: release-meta
         run: |
           version=$(cat package.json | jq -r .version)
-          echo "commit_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          echo "version=$version" >> $GITHUB_OUTPUT
-          echo "major_version=$(echo "$version" | cut -d. -f1)" >> $GITHUB_OUTPUT
+          echo "commit_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "major_version=$(echo "$version" | cut -d. -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta

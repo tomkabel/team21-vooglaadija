@@ -1,0 +1,74 @@
+version: 2
+updates:
+  # ----------------------------------------------------------------------
+  # 1. CI/CD PIPELINE DEPENDENCIES (GitHub Actions)
+  # ----------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "America/New_York"
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "chore(deps)"
+    open-pull-requests-limit: 5
+
+  # ----------------------------------------------------------------------
+  # 2. APPLICATION DEPENDENCIES (NPM)
+  # ----------------------------------------------------------------------
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 10
+
+    reviewers:
+      - "your-github-team-name"
+    labels:
+      - "dependencies"
+      - "javascript"
+
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+    groups:
+      production-dependencies:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+      dev-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+
+    ignore:
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+
+  # ----------------------------------------------------------------------
+  # 3. DOCKER DEPENDENCIES
+  # ----------------------------------------------------------------------
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "04:00"
+      timezone: "America/New_York"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(docker)"
+      include: "scope"
+    open-pull-requests-limit: 3

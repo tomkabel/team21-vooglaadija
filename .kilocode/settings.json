@@ -1,0 +1,31 @@
+{
+  "modes": {
+    "enabled": ["cobalt-api-dev", "cobalt-web-dev", "cobalt-security"]
+  },
+  "rules": {
+    "javascript": {
+      "patterns": ["**/*.js", "**/*.ts"],
+      "instructions": "Use ES Modules (import/export), prefer const/let over var, use camelCase for variables/functions and PascalCase for classes, handle errors gracefully with standardized error codes, use optional chaining and nullish coalescing where appropriate, prefer async/await over raw promises"
+    },
+    "service-handler": {
+      "patterns": ["api/src/processing/services/*.js"],
+      "instructions": "Export default async function receiving pattern match object, return standardized response with urls/filename or {error: 'code'}, use Cookie class for session management, updateCookie() after fetch requests, check for content policies (BLOCK, SNIP), respect duration limits, return specific error codes (fetch.fail, fetch.empty, content.too_long, content.region, content.post.unavailable), include fileMetadata and cover for audio tracks"
+    },
+    "api-core": {
+      "patterns": ["api/src/core/*.js"],
+      "instructions": "Express.js patterns, use env.js for environment management, implement proper error middleware, use standardized logging via console-text.js"
+    },
+    "svelte-components": {
+      "patterns": ["web/src/components/**/*.svelte"],
+      "instructions": "Svelte 5 runes mode ($state, $derived, $effect), use TypeScript for props, follow component naming PascalCase, use $components alias for imports"
+    },
+    "svelte-routes": {
+      "patterns": ["web/src/routes/**/*.svelte", "web/src/routes/**/*.ts"],
+      "instructions": "SvelteKit routing patterns, use +page.svelte and +layout.svelte naming, implement proper load functions in +page.ts, use $lib alias for utilities"
+    },
+    "security": {
+      "patterns": ["api/src/security/*.js"],
+      "instructions": "Never expose secrets, use JWT for tokens, implement rate limiting, validate all inputs with zod, use timing-safe comparisons for secrets"
+    }
+  }
+}

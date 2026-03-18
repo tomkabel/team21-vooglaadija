@@ -1,0 +1,16 @@
+{
+  "servers": [
+    {
+      "name": "cobalt-api-inspector",
+      "transport": "stdio",
+      "command": "node",
+      "args": [".kilocode/mcp/servers/api-inspector.js"]
+    },
+    {
+      "name": "cobalt-test-runner",
+      "transport": "stdio",
+      "command": "node",
+      "args": [".kilocode/mcp/servers/test-runner.js"]
+    }
+  ]
+}
