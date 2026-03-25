@@ -1,4 +1,3 @@
-from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
@@ -9,15 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import ALGORITHM
 from app.config import settings
-from app.database import AsyncSessionLocal
+from app.database import get_db
 from app.models.user import User
 
 security = HTTPBearer()
-
-
-async def get_db() -> AsyncIterator[AsyncSession]:
-    async with AsyncSessionLocal() as session:
-        yield session
 
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]

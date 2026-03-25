@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from typing import Annotated
@@ -7,11 +8,12 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import CurrentUser
-from app.database import get_db
+from app.api.dependencies import CurrentUser, DbSession
 from app.models.download_job import DownloadJob
 from app.schemas.download import DownloadCreate, DownloadListResponse, DownloadResponse
 from worker.queue import enqueue_job
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/downloads", tags=["downloads"])
 
@@ -20,7 +22,7 @@ router = APIRouter(prefix="/downloads", tags=["downloads"])
 async def create_download(
     data: DownloadCreate,
     current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: DbSession,
 ) -> DownloadResponse:
     """Create a new download job for the authenticated user."""
     job_id = str(uuid.uuid4())
@@ -53,7 +55,7 @@ async def create_download(
 @router.get("", response_model=DownloadListResponse)
 async def list_downloads(
     current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: DbSession,
 ) -> DownloadListResponse:
     """List all download jobs for the authenticated user."""
     result = await db.execute(
@@ -84,7 +86,7 @@ async def list_downloads(
 async def get_download(
     job_id: str,
     current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: DbSession,
 ) -> DownloadResponse:
     """Get a specific download job by ID."""
     result = await db.execute(
@@ -117,7 +119,7 @@ async def get_download(
 async def get_download_file(
     job_id: str,
     current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: DbSession,
 ):
     """Download the file for a completed job."""
     result = await db.execute(
@@ -157,7 +159,7 @@ async def get_download_file(
 async def delete_download(
     job_id: str,
     current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: DbSession,
 ) -> None:
     """Delete a download job and its associated file."""
     result = await db.execute(
@@ -177,8 +179,9 @@ async def delete_download(
     if job.file_path:
         try:
             os.remove(job.file_path)
-        except OSError:
-            pass
+            logger.info(f"Deleted file: {job.file_path}")
+        except OSError as e:
+            logger.error(f"Failed to delete file {job.file_path}: {e}")
 
     await db.delete(job)
     await db.commit()

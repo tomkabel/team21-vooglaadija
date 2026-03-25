@@ -1,7 +1,11 @@
 from passlib.context import CryptContext
 
-# Configure bcrypt with default rounds to avoid passlib initialization bug
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
+from app.config import settings
+
+# Configure bcrypt with configurable rounds
+pwd_context = CryptContext(
+    schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=settings.bcrypt_rounds
+)
 
 
 def hash_password(password: str) -> str:
