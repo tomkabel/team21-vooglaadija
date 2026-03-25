@@ -51,7 +51,7 @@ class RateLimiter:
         _, current_count, _, _ = results
 
         # Allow if count before adding current request is less than max
-        return current_count < self.max_requests
+        return int(current_count) < self.max_requests
 
     async def get_retry_after(self, key: str) -> int:
         """Get seconds until rate limit resets.

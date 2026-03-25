@@ -23,7 +23,7 @@ def _extract_sync(url: str, output_template: str) -> dict:
     }
     # Pass options as first positional argument (params)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        return ydl.extract_info(url, download=True)
+        return ydl.extract_info(url, download=True)  # type: ignore[no-any-return]
 
 
 async def extract_media_url(url: str, storage_path: str) -> tuple[str, str]:
