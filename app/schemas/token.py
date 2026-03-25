@@ -7,5 +7,9 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
+class TokenRefresh(BaseModel):
+    refresh_token: str
+
+
 class TokenData(BaseModel):
     sub: str | None = None
