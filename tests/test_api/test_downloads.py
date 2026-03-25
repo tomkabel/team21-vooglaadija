@@ -5,8 +5,8 @@ import uuid
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import AsyncSessionLocal
 from app.main import app
 from app.models.download_job import DownloadJob
 
@@ -236,7 +236,7 @@ async def test_get_download_file_not_completed():
 
 
 @pytest.mark.asyncio
-async def test_get_download_file_not_found():
+async def test_get_download_file_not_found(db_session: AsyncSession):
     """Test that file with no path returns 404."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         token = await create_test_user_and_login(client)
@@ -248,11 +248,10 @@ async def test_get_download_file_not_found():
         )
         job_id = create_response.json()["id"]
         # Manually mark as completed but no file_path
-        async with AsyncSessionLocal() as session:
-            await session.execute(
-                update(DownloadJob).where(DownloadJob.id == job_id).values(status="completed")
-            )
-            await session.commit()
+        await db_session.execute(
+            update(DownloadJob).where(DownloadJob.id == job_id).values(status="completed")
+        )
+        await db_session.commit()
         # Try to get file
         response = await client.get(
             f"/api/v1/downloads/{job_id}/file",

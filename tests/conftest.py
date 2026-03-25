@@ -68,6 +68,13 @@ async def setup_database() -> AsyncGenerator[None, None]:
 
 
 @pytest.fixture
+async def db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Provide a database session for tests."""
+    async with TestingSessionLocal() as session:
+        yield session
+
+
+@pytest.fixture
 def sample_url() -> str:
     return "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
