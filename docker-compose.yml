@@ -9,7 +9,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://user:pass@db:5432/ytprocessor
-      SECRET_KEY: ${SECRET_KEY:-change-this-secret-key}
+      SECRET_KEY: ${SECRET_KEY:-change-this-secret-key-for-testing-only-min-32-chars}
       REDIS_URL: redis://redis:6379
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
@@ -38,7 +38,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://user:pass@db:5432/ytprocessor
-      SECRET_KEY: ${SECRET_KEY:-change-this-secret-key}
+      SECRET_KEY: ${SECRET_KEY:-change-this-secret-key-for-testing-only-min-32-chars}
       REDIS_URL: redis://redis:6379
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
