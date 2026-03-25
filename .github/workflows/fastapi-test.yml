@@ -165,7 +165,7 @@ jobs:
 
       - name: Create database schema
         run: |
-          python -c "
+          uv run python -c "
           import asyncio
           from sqlalchemy.ext.asyncio import create_async_engine
           from app.database import Base

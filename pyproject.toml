@@ -143,9 +143,7 @@ fix = "ruff check --fix app/ tests/"
 # ============================================
 [tool.hatch.envs.type]
 description = "Static type checking with mypy"
-detached = true
 installer = "uv"
-skip-install = true
 features = ["type"]
 
 [tool.hatch.envs.type.scripts]
@@ -199,7 +197,7 @@ type-check = "mypy app/ --ignore-missing-imports --install-types --non-interacti
 unit = "pytest tests/ --ignore=tests/test_api -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 # Security
-"security-bandit" = "bandit -r app/ -f github --confidence-level high --severity-level medium"
+"security-bandit" = "bandit -r app/ -f screen --confidence-level high --severity-level medium"
 "security-safety" = "safety check --json --output=security-report.json || true"
 
 # Environment variable overrides for CI
@@ -218,7 +216,7 @@ skip-install = true
 dependency-groups = ["security"]
 
 [tool.hatch.envs.security.scripts]
-scan-bandit = "bandit -r app/ -f github --confidence-level high --severity-level medium"
+scan-bandit = "bandit -r app/ -f screen --confidence-level high --severity-level medium"
 scan-safety = "safety check --json --output=security-report.json || true"
 "bandit-report" = "bandit -r app/ -f html -o bandit_report.html"
 "safety-report" = "safety check --json --output=security-report.json || true"
