@@ -1,9 +1,18 @@
 import asyncio
+import logging
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import yt_dlp
+
+logger = logging.getLogger(__name__)
+
+
+class StorageError(Exception):
+    """Raised when storage operations fail."""
+
+    pass
 
 
 def _extract_sync(url: str, output_template: str) -> dict:
@@ -28,10 +37,16 @@ async def extract_media_url(url: str, storage_path: str) -> tuple[str, str]:
 
     Returns:
         tuple of (file_path, file_name)
-    """
 
+    Raises:
+        StorageError: If the download directory cannot be created.
+    """
     download_dir = os.path.join(storage_path, "downloads")
-    os.makedirs(download_dir, exist_ok=True)
+    try:
+        os.makedirs(download_dir, exist_ok=True)
+    except OSError as e:
+        logger.error(f"Failed to create download directory {download_dir}: {e}")
+        raise StorageError(f"Failed to create download directory: {e}") from e
 
     file_id = str(uuid.uuid4())
     output_template = os.path.join(download_dir, f"{file_id}.%(ext)s")
