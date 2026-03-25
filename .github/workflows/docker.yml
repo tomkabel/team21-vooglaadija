@@ -17,8 +17,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -29,31 +31,40 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get release metadata
-        id: release-meta
+      - name: Extract version
+        id: version
         run: |
-            version=$(cat api/package.json | jq -r .version)
-            echo "commit_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-            echo "version=$version" >> $GITHUB_OUTPUT
-            echo "major_version=$(echo "$version" | cut -d. -f1)" >> $GITHUB_OUTPUT
-      - name: Extract metadata (tags, labels) for Docker
+          version=$(grep -E '^version = ' pyproject.toml | cut -d'"' -f2)
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          tags: |
-            type=raw,value=latest
-            type=raw,value=${{ steps.release-meta.outputs.version }}
-            type=raw,value=${{ steps.release-meta.outputs.major_version }}
-            type=raw,value=${{ steps.release-meta.outputs.version }}-${{ steps.release-meta.outputs.commit_short }}
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
-      - name: Build and push Docker image
+      - name: Build API image
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.worker
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:worker-latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:worker-${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

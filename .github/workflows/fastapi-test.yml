@@ -1,0 +1,268 @@
+name: FastAPI REST API Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: "3.12"
+  HATCH_VERSION: "1.14.0"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================
+  # LINT - Code quality checks (fastest, fail first)
+  # ============================================
+  lint:
+    name: Lint with ruff
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Install hatch
+        run: uv pip install --system hatch==${{ env.HATCH_VERSION }}
+
+      - name: Run ruff check
+        run: hatch run lint:check
+
+      - name: Run ruff format check
+        run: hatch run lint:format-check
+
+  # ============================================
+  # TYPE CHECK - Static type analysis
+  # ============================================
+  type-check:
+    name: Type check with mypy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [lint]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Install hatch
+        run: uv pip install --system hatch==${{ env.HATCH_VERSION }}
+
+      - name: Run mypy
+        run: hatch run type:check
+
+  # ============================================
+  # UNIT TESTS - Fast tests with mocked services
+  # ============================================
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [lint]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Install hatch
+        run: uv pip install --system hatch==${{ env.HATCH_VERSION }}
+
+      - name: Run unit tests with coverage
+        run: hatch run test:unit
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          name: unit-tests
+
+  # ============================================
+  # INTEGRATION TESTS - Full API with real services
+  # ============================================
+  integration-tests:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [lint]
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --health-start-period 10s
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Install hatch
+        run: uv pip install --system hatch==${{ env.HATCH_VERSION }}
+
+      # Note: GitHub Actions automatically waits for services to be healthy
+
+      - name: Create test environment
+        run: |
+          cp .env.example .env
+          sed -i 's|postgresql+asyncpg://user:pass@localhost:5432/ytprocessor|postgresql+asyncpg://test_user:test_pass@localhost:5432/test_db|g' .env
+          sed -i 's|change-this-secret-key|test-secret-key-for-ci|g' .env
+
+      - name: Create database schema
+        run: |
+          python -c "
+          import asyncio
+          from sqlalchemy.ext.asyncio import create_async_engine
+          from app.database import Base
+          from app.models import User, DownloadJob
+
+          async def init_db():
+              engine = create_async_engine('postgresql+asyncpg://test_user:test_pass@localhost:5432/test_db')
+              async with engine.begin() as conn:
+                  await conn.run_sync(Base.metadata.create_all)
+              await engine.dispose()
+
+          asyncio.run(init_db())
+          "
+
+      - name: Run API integration tests
+        run: hatch run test:integration
+
+      - name: Upload integration coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          flags: integrationtests
+          name: integration-tests
+
+  # ============================================
+  # SECURITY SCAN - Dependency and code security
+  # ============================================
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [lint]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Install hatch
+        run: uv pip install --system hatch==${{ env.HATCH_VERSION }}
+
+      - name: Run Bandit security scan
+        run: hatch run security:scan-bandit
+
+      - name: Run Safety dependency check
+        run: hatch run security:scan-safety
+
+      - name: Upload security report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-report
+          path: security-report.json
+          retention-days: 7
+
+  # ============================================
+  # BUILD CHECK - Verify Docker build works
+  # ============================================
+  build-check:
+    name: Docker build check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [type-check, unit-tests, integration-tests, security]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build API Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          tags: test-api:latest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Worker Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.worker
+          tags: test-worker:latest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify images exist
+        run: |
+          docker images | grep -E "test-api|test-worker" || exit 1
