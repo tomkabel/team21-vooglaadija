@@ -4,21 +4,17 @@ import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-import yt_dlp
-
 logger = logging.getLogger(__name__)
 
 
 class StorageError(Exception):
     """Raised when storage operations fail."""
 
-    pass
-
 
 def _extract_sync(url: str, output_template: str) -> dict:
     """Synchronous wrapper for yt_dlp.extract_info."""
     # Import inside function so it resolves to the patched module
-    from app.services.yt_dlp_service import yt_dlp as yt_dlp_module
+    from app.services.yt_dlp_service import yt_dlp as yt_dlp_module  # noqa: PLC0415
 
     ydl_opts = {
         "format": "best[ext=mp4]/best",

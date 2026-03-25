@@ -1,3 +1,4 @@
+import os
 import warnings
 
 from pydantic import field_validator
@@ -44,8 +45,6 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs):
         # If TESTING environment variable is set, use SQLite
-        import os
-
         if os.environ.get("TESTING"):
             kwargs["database_url"] = "sqlite+aiosqlite:///:memory:"
         super().__init__(**kwargs)

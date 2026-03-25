@@ -1,6 +1,5 @@
 import asyncio
 import os
-import sys
 
 # CRITICAL: Set environment variables BEFORE any other imports
 os.environ["TESTING"] = "1"
@@ -12,19 +11,18 @@ import app.config
 
 app.config.settings.database_url = "sqlite+aiosqlite:///test.db"
 
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator  # noqa: E402
 
-import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
+import pytest  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+from sqlalchemy.pool import NullPool  # noqa: E402
+
+import app.models  # noqa: E402
+from app.database import Base, get_db  # noqa: E402
 
 # Now import app - it will use the SQLite URL we set above
-from app.main import app as fastapi_app
-import app.models  # noqa: F401
-
-from app.database import Base, get_db
-from app.api.dependencies import DbSession
+from app.main import app as fastapi_app  # noqa: E402
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///test.db"
 
@@ -105,9 +103,9 @@ def sample_user_data() -> dict[str, str]:
 
 @pytest.fixture
 async def auth_headers(db_session: AsyncSession) -> dict[str, str]:
-    from app.auth import create_access_token
-    from app.models.user import User
-    from app.services.auth_service import hash_password
+    from app.auth import create_access_token  # noqa: PLC0415
+    from app.models.user import User  # noqa: PLC0415
+    from app.services.auth_service import hash_password  # noqa: PLC0415
 
     user = User(
         id="test-user-id",
