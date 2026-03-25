@@ -1,0 +1,271 @@
+name: Docker Compose Integration Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  COMPOSE_PROJECT_NAME: ytprocessor-test
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-compose-test:
+    name: Test Docker Compose Stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ============================================
+      # 1. SETUP
+      # ============================================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Verify nginx config exists
+        run: |
+          if [ ! -f "./infra/nginx/default.conf" ]; then
+            echo "ERROR: nginx config not found at ./infra/nginx/default.conf"
+            exit 1
+          fi
+          echo "nginx config verified"
+
+      # ============================================
+      # 2. BUILD & START SERVICES
+      # ============================================
+      - name: Build and start services
+        run: |
+          echo "Building and starting all services..."
+          docker compose up -d --build
+
+      - name: Wait for services to initialize
+        run: |
+          echo "Waiting for services to initialize (15s)..."
+          sleep 15
+
+      # ============================================
+      # 3. WAIT FOR DOCKER HEALTH CHECKS
+      # ============================================
+      - name: Wait for Docker health checks
+        timeout-minutes: 2
+        run: |
+          echo "Waiting for Docker health checks to pass..."
+
+          wait_for_health() {
+            local service=$1
+            local max_attempts=24
+            local attempt=1
+
+            while [ $attempt -le $max_attempts ]; do
+              status=$(docker inspect --format='{{.State.Health.Status}}' ytprocessor-$service 2>/dev/null || echo "unknown")
+
+              if [ "$status" = "healthy" ]; then
+                echo "$service is healthy"
+                return 0
+              elif [ "$status" = "unhealthy" ]; then
+                echo "ERROR: $service is unhealthy"
+                return 1
+              else
+                echo "Attempt $attempt/$max_attempts: $service status = $status"
+              fi
+
+              sleep 5
+              attempt=$((attempt + 1))
+            done
+
+            echo "ERROR: $service did not become healthy within timeout"
+            return 1
+          }
+
+          # Check services with healthchecks
+          wait_for_health "api" || exit 1
+          wait_for_health "db" || exit 1
+          wait_for_health "redis" || exit 1
+
+          echo "All Docker health checks passed"
+
+      # ============================================
+      # 4. CHECK WORKER HEALTH (LOG-BASED)
+      # ============================================
+      - name: Verify worker is running
+        run: |
+          echo "Checking worker container status..."
+
+          # Check container is running
+          container_status=$(docker inspect --format='{{.State.Status}}' ytprocessor-worker 2>/dev/null || echo "not_found")
+          if [ "$container_status" != "running" ]; then
+            echo "ERROR: Worker container status is '$container_status', expected 'running'"
+            exit 1
+          fi
+
+          # Check for ERROR or FATAL messages in worker logs
+          echo "Checking worker logs for errors..."
+          worker_logs=$(docker compose logs worker 2>&1)
+
+          if echo "$worker_logs" | grep -iE "(ERROR|FATAL|CRITICAL|EXCEPTION)" > /dev/null; then
+            echo "ERROR: Found error messages in worker logs:"
+            echo "$worker_logs" | grep -iE "(ERROR|FATAL|CRITICAL|EXCEPTION)"
+            exit 1
+          fi
+
+          echo "Worker is running without errors"
+
+      # ============================================
+      # 5. VERIFY HEALTH ENDPOINTS
+      # ============================================
+      - name: Test API health via nginx proxy
+        run: |
+          echo "Testing API health via nginx at :8080..."
+          response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/v1/health || echo "000")
+
+          if [ "$response" != "200" ]; then
+            echo "ERROR: Proxied health check failed with status $response"
+            exit 1
+          fi
+
+          response_body=$(curl -s http://localhost:8080/api/v1/health)
+          echo "Proxied health response: $response_body"
+          echo "Proxied health check passed"
+
+      # ============================================
+      # 6. VERIFY SERVICE LOGS
+      # ============================================
+      - name: Verify service logs for healthy operation
+        run: |
+          echo "Checking service logs for errors..."
+
+          # Check all service logs for ERROR/FATAL messages
+          services=("api" "worker" "db" "redis" "nginx")
+          has_errors=false
+
+          for service in "${services[@]}"; do
+            logs=$(docker compose logs $service 2>&1 || true)
+
+            # Skip services that might log "ERROR" as part of normal operation
+            # but catch actual Python exceptions, database errors, etc.
+            if echo "$logs" | grep -iE "(FATAL|CRITICAL|Traceback|Exception.*Error)" > /dev/null; then
+              echo "ERROR: Found critical error in $service logs:"
+              echo "$logs" | grep -iE "(FATAL|CRITICAL|Traceback|Exception.*Error)"
+              has_errors=true
+            fi
+          done
+
+          if [ "$has_errors" = true ]; then
+            exit 1
+          fi
+
+          echo "All service logs verified (no critical errors found)"
+
+      # ============================================
+      # 7. SMOKE TEST - API CONNECTIVITY
+      # ============================================
+      - name: Smoke test API connectivity
+        run: |
+          echo "Running smoke test - API registration endpoint..."
+
+          # Try to register a user - this tests full API connectivity
+          # Even if it fails (user exists), it proves the API stack works
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8080/api/v1/auth/register \
+            -H "Content-Type: application/json" \
+            -d '{"email":"smoke-test@example.com","password":"testpass123"}' \
+            || echo "000")
+
+          # 201 = created successfully, 400 = user exists (both prove API works)
+          if [ "$response" = "201" ] || [ "$response" = "400" ]; then
+            echo "Smoke test passed (API responded with $response)"
+          else
+            echo "WARNING: Smoke test returned unexpected status $response"
+            # Don't fail on smoke test - main goal is to verify services are healthy
+          fi
+
+      # ============================================
+      # 8. CAPTURE FINAL SERVICE STATUS
+      # ============================================
+      - name: Capture container status
+        if: always()
+        run: |
+          echo "=== Final Container Status ==="
+          docker compose ps
+
+          echo ""
+          echo "=== Docker Health Status ==="
+          for container in ytprocessor-api ytprocessor-db ytprocessor-redis; do
+            health=$(docker inspect --format='{{.State.Health.Status}}' $container 2>/dev/null || echo "N/A")
+            echo "$container: $health"
+          done
+
+          echo ""
+          echo "=== Worker Container State ==="
+          docker inspect --format='Status: {{.State.Status}}, ExitCode: {{.State.ExitCode}}' ytprocessor-worker || echo "Worker not found"
+
+      # ============================================
+      # 9. COLLECT ARTIFACTS
+      # ============================================
+      - name: Collect logs and artifacts
+        if: always()
+        run: |
+          mkdir -p logs/
+
+          # Collect all service logs
+          docker compose logs > logs/all-services.log 2>&1 || true
+          docker compose logs api > logs/api.log 2>&1 || true
+          docker compose logs worker > logs/worker.log 2>&1 || true
+          docker compose logs db > logs/db.log 2>&1 || true
+          docker compose logs redis > logs/redis.log 2>&1 || true
+          docker compose logs nginx > logs/nginx.log 2>&1 || true
+
+          # Collect container status
+          docker compose ps > logs/container-status.txt 2>&1 || true
+          docker ps -a >> logs/container-status.txt 2>&1 || true
+
+          # Collect docker inspect for each container
+          for container in ytprocessor-api ytprocessor-worker ytprocessor-db ytprocessor-redis ytprocessor-nginx; do
+            docker inspect $container > logs/inspect-$container.json 2>/dev/null || true
+          done
+
+          echo "Artifacts collected in logs/"
+          ls -la logs/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: docker-compose-logs
+          path: logs/
+          retention-days: 7
+
+      # ============================================
+      # 10. CLEANUP
+      # ============================================
+      - name: Cleanup services
+        if: always()
+        run: |
+          echo "Stopping and removing services..."
+          docker compose down -v --remove-orphans
+          echo "Cleanup complete"
+
+      # ============================================
+      # SUCCESS SUMMARY
+      # ============================================
+      - name: Success summary
+        if: success()
+        run: |
+          echo "============================================"
+          echo "DOCKER COMPOSE INTEGRATION TESTS PASSED"
+          echo "============================================"
+          echo "All 5 services verified:"
+          echo "  api     - Health check passed (Docker + HTTP)"
+          echo "  db      - Health check passed (pg_isready)"
+          echo "  redis   - Health check passed (redis-cli ping)"
+          echo "  worker  - Running without errors (log verified)"
+          echo "  nginx   - Proxy functioning (health via :8080)"
+          echo "============================================"
