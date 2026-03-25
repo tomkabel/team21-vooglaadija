@@ -1,7 +1,6 @@
 """Rate limiting middleware for FastAPI."""
 
 import time
-from typing import Optional
 
 import redis
 

@@ -6,7 +6,6 @@ from sqlalchemy import select
 
 from app.api.dependencies import CurrentUser, DbSession
 from app.auth import create_access_token, create_refresh_token, verify_token
-from app.config import settings
 from app.middleware.rate_limit import RateLimiter
 from app.models.user import User
 from app.schemas.token import Token, TokenRefresh
