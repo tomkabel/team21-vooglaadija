@@ -4,6 +4,7 @@ import sys
 
 # CRITICAL: Set environment variables BEFORE any other imports
 os.environ["TESTING"] = "1"
+os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-not-for-production-use-32chars"
 
 # Force reconfigure the database URL before any app imports
 # This ensures the app uses SQLite instead of PostgreSQL
@@ -23,7 +24,7 @@ from app.main import app as fastapi_app
 import app.models  # noqa: F401
 
 from app.database import Base, get_db
-from app.api.dependencies import get_db as get_db_dependencies
+from app.api.dependencies import DbSession
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///test.db"
 
@@ -56,7 +57,6 @@ def override_get_db():
 
 # Set the overrides on the FastAPI app instance
 fastapi_app.dependency_overrides[get_db] = override_get_db()
-fastapi_app.dependency_overrides[get_db_dependencies] = override_get_db()
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -104,8 +104,19 @@ def sample_user_data() -> dict[str, str]:
 
 
 @pytest.fixture
-def auth_headers() -> dict[str, str]:
+async def auth_headers(db_session: AsyncSession) -> dict[str, str]:
     from app.auth import create_access_token
+    from app.models.user import User
+    from app.services.auth_service import hash_password
+
+    user = User(
+        id="test-user-id",
+        email="test@example.com",
+        password_hash=hash_password("password123"),
+        is_active=True,
+    )
+    db_session.add(user)
+    await db_session.commit()
 
     token = create_access_token("test-user-id")
     return {"Authorization": f"Bearer {token}"}
