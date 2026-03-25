@@ -7,25 +7,28 @@ FROM python:3.12-slim AS builder
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    UV_SYSTEM_PYTHON=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
-# Copy application source first
+# Install uv first (separate layer for caching)
+RUN pip install --no-cache-dir uv
+
+# Create virtual environment
+RUN uv venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Copy dependency file first for better layer caching
+COPY pyproject.toml .
+
+# Install dependencies (without source code for better caching)
+RUN uv pip install --no-deps -e . || true
+
+# Copy application source
 COPY app ./app
 COPY worker ./worker
 
-# Install uv for fast dependency management
-RUN pip install uv
-
-# Copy only dependency files first for better layer caching
-COPY pyproject.toml pyproject.toml
-
-# Pre-install dependencies layer - use uv for speed
-# Install in a virtual environment for cleaner separation
-RUN uv venv /app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
+# Install the package in editable mode
 RUN uv pip install -e .
 
 # ============================================
@@ -36,8 +39,7 @@ FROM python:3.12-slim AS production
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONFAULTHANDLER=1 \
-    UV_SYSTEM_PYTHON=1
+    PYTHONFAULTHANDLER=1
 
 WORKDIR /app
 
@@ -47,6 +49,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application source
 COPY --from=builder /app/app ./app
+COPY --from=builder /app/worker ./worker
 COPY --from=builder /app/pyproject.toml ./pyproject.toml
 
 # Create non-root user for security
