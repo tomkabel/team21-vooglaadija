@@ -1,5 +1,6 @@
 # ============================================
 # Multi-stage build for Worker container
+# Optimized: standard install, ffmpeg, [worker] extras
 # ============================================
 FROM python:3.12-slim AS builder
 
@@ -11,6 +12,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Install system dependencies including ffmpeg for yt-dlp
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install uv first (separate layer for caching)
 RUN pip install --no-cache-dir uv
 
@@ -18,18 +24,14 @@ RUN pip install --no-cache-dir uv
 RUN uv venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Copy dependency file first for better layer caching
+# Copy only pyproject.toml first for better layer caching
 COPY pyproject.toml .
 
-# Install dependencies (without source code for better caching)
-RUN uv pip install --no-deps -e . || true
-
-# Copy application source
+# Install the package with worker extras (non-editable)
+# This installs all dependencies defined in [project] and [project.optional-dependencies] worker
 COPY app ./app
 COPY worker ./worker
-
-# Install the package in editable mode
-RUN uv pip install -e .
+RUN uv pip install ".[worker]"
 
 # ============================================
 # Production stage
@@ -42,6 +44,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONFAULTHANDLER=1
 
 WORKDIR /app
+
+# Install ffmpeg in production stage (required for yt-dlp video processing)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
