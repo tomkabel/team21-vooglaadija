@@ -1,22 +1,39 @@
-# OS directory info files
+# OS
 .DS_Store
 desktop.ini
+Thumbs.db
 
-# node
-node_modules
+# IDEs
+.vscode/
+.idea/
+.pycharm/
 
-# static build
-build
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env/
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
 
-# secrets
+# Databases / Data
+test.db
+*.sqlite3
+
+# Logs / Storage
+storage/
+logs/
+*.log
+
+# Secrets
 .env
 .env.*
 !.env.example
-cookies.json
-keys.json
-
-# docker
-docker-compose.yml
-
-# ide
-.vscode
+*.json
+!*.example.json
