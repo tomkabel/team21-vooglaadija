@@ -20,7 +20,7 @@ High-performance YouTube media extraction API with async processing
 </div>
 
 <div align="center">
-  <img src="vooglaadija_fin.png" alt="YouTube Link Processor" width="600" />
+  <img src="docs/images/vooglaadija_fin.png" alt="YouTube Link Processor" width="600" />
 </div>
 
 ---
