@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
 
+from app.config import settings
+
 # Mock redis in test environment
 try:
     import os
