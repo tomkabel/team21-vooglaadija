@@ -8,7 +8,7 @@ on:
 
 env:
   PYTHON_VERSION: "3.12"
-  HATCH_VERSION: "1.15.0"
+  HATCH_VERSION: "1.16.5"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
