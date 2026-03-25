@@ -1,21 +1,92 @@
-# OS directory info files
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 .DS_Store
 desktop.ini
 
-# node
-node_modules
+# Testing
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
 
-# static build
-build
+# Documentation
+docs/
+*.md
+!README.md
 
-# secrets
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Local development
 .env
-.env.*
-!.env.example
+.env.local
+.env.*.local
+!env.example
+*.log
 cookies.json
 
-# docker
-docker-compose.yml
+# Node (if any frontend)
+node_modules/
+npm-debug.log
+yarn-error.log
 
-# ide
-.vscode
+# static build
+build/
+
+# Storage (mount as volume, don't copy)
+storage/downloads/*
+!storage/downloads/.gitkeep
+
+# Infrastructure (not needed in images)
+infra/
+
+# Misc
+*.bak
+*.tmp
+*.temp
