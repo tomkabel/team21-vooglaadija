@@ -1,7 +1,8 @@
 name: "CodeQL"
 
 # DISABLED: This workflow is temporarily disabled.
-# To re-enable, uncomment the triggers below.
+# To re-enable, copy the triggers below into the `on:` section.
+#
 # on:
 #   push:
 #     branches: [main, develop]
@@ -9,7 +10,9 @@ name: "CodeQL"
 #     branches: [main, develop]
 #   schedule:
 #     - cron: '33 7 * * 5'
-on: []
+
+on:
+  workflow_dispatch:
 
 jobs:
   analyze:

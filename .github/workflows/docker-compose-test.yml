@@ -65,7 +65,7 @@ jobs:
             local attempt=1
 
             while [ $attempt -le $max_attempts ]; do
-              status=$(docker inspect --format='{{.State.Health.Status}}' ytprocessor-$service 2>/dev/null || echo "unknown")
+              status=$(docker inspect --format='{{.State.Health.Status}}' "ytprocessor-$service" 2>/dev/null || echo "unknown")
 
               if [ "$status" = "healthy" ]; then
                 echo "$service is healthy"
@@ -147,7 +147,7 @@ jobs:
           has_errors=false
 
           for service in "${services[@]}"; do
-            logs=$(docker compose logs $service 2>&1 || true)
+            logs=$(docker compose logs "$service" 2>&1 || true)
 
             # Skip services that might log "ERROR" as part of normal operation
             # but catch actual Python exceptions, database errors, etc.

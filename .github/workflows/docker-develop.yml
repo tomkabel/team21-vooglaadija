@@ -35,7 +35,7 @@ jobs:
         id: version
         run: |
           version=$(grep -E '^version = ' pyproject.toml | cut -d'"' -f2)
-          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
