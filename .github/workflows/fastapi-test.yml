@@ -36,7 +36,7 @@ jobs:
             uv.lock
 
       - name: Install hatch
-        run: uv pip install --system hatch==${{ env.HATCH_VERSION }}
+        run: uv tool install hatch==${{ env.HATCH_VERSION }}
 
       - name: Run ruff check
         run: hatch run lint:check
@@ -66,7 +66,7 @@ jobs:
             uv.lock
 
       - name: Install hatch
-        run: uv pip install --system hatch==${{ env.HATCH_VERSION }}
+        run: uv tool install hatch==${{ env.HATCH_VERSION }}
 
       - name: Run mypy
         run: hatch run type:check
@@ -93,7 +93,7 @@ jobs:
             uv.lock
 
       - name: Install hatch
-        run: uv pip install --system hatch==${{ env.HATCH_VERSION }}
+        run: uv tool install hatch==${{ env.HATCH_VERSION }}
 
       - name: Run unit tests with coverage
         run: hatch run test:unit
@@ -153,7 +153,7 @@ jobs:
             uv.lock
 
       - name: Install hatch
-        run: uv pip install --system hatch==${{ env.HATCH_VERSION }}
+        run: uv tool install hatch==${{ env.HATCH_VERSION }}
 
       # Note: GitHub Actions automatically waits for services to be healthy
 
@@ -212,7 +212,7 @@ jobs:
             uv.lock
 
       - name: Install hatch
-        run: uv pip install --system hatch==${{ env.HATCH_VERSION }}
+        run: uv tool install hatch==${{ env.HATCH_VERSION }}
 
       - name: Run Bandit security scan
         run: hatch run security:scan-bandit
