@@ -13,7 +13,7 @@ class DownloadCreate(BaseModel):
     @classmethod
     def validate_youtube_url(cls, v: str) -> str:
         if not is_youtube_url(v):
-            raise ValueError("URL must be a valid YouTube URL")
+            raise ValueError("Must be a valid YouTube URL")
         return v
 
 
