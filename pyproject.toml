@@ -1,0 +1,458 @@
+[build-system]
+requires = ["hatchling", "hatch-uv"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vooglaadija"
+version = "1.0.0"
+description = "YouTube Link Processor - REST API Service"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy",
+    "asyncpg",
+    "psycopg2-binary",
+    "redis",
+    "python-jose[cryptography]",
+    "passlib[bcrypt]",
+    "pydantic",
+    "pydantic-settings",
+    "yt-dlp",
+    "alembic",
+    "email-validator>=2.3.0",
+]
+
+[project.optional-dependencies]
+server = [
+    "fastapi",
+    "uvicorn[standard]",
+]
+worker = [
+    "redis",
+    "yt-dlp",
+]
+test = [
+    "pytest",
+    "pytest-cov",
+    "pytest-asyncio",
+    "pytest-xdist",
+    "httpx",
+    "aiosqlite",
+]
+lint = [
+    "ruff",
+]
+type = [
+    "mypy",
+    "types-redis",
+    "types-python-jose",
+]
+security = [
+    "bandit",
+    "safety",
+]
+dev = [
+    "vooglaadija[test,lint,type,security]",
+]
+
+# PEP 735 Dependency Groups - single source of truth for dev dependencies
+[dependency-groups]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-xdist>=3.0.0",
+    "httpx>=0.24.0",
+    "aiosqlite>=0.19.0",
+    "bcrypt==4.0.1",
+]
+lint = [
+    "ruff>=0.1.0",
+]
+type-check = [
+    "mypy>=1.0.0",
+    "types-redis>=4.5.0",
+    "types-python-jose>=0.1.0",
+]
+security = [
+    "bandit>=1.7.0",
+    "safety>=2.3.0",
+]
+# Meta group that includes all other groups
+dev = [
+    { include-group = "test" },
+    { include-group = "lint" },
+    { include-group = "type-check" },
+    { include-group = "security" },
+]
+
+# ============================================
+# HATCH CONFIGURATION
+# ============================================
+
+[tool.hatch]
+# Global Hatch settings
+# Use UV installer for faster operations (default in hatch 1.10+)
+installer = "uv"
+
+# Default environment configuration
+[tool.hatch.default]
+installer = "uv"
+skip-install = false
+description = "Default development environment"
+
+[tool.hatch.default.scripts]
+dev = "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+test = "pytest tests/ -v --cov=app --cov-report=term-missing"
+lint = "ruff check app/ tests/ --output-format=github"
+"lint-format" = "ruff format --check app/ tests/"
+type-check = "mypy app/ --ignore-missing-imports --install-types --non-interactive"
+# Coverage convenience scripts
+cov = "pytest tests/ -v --cov=app --cov-report=term-missing --cov-report=xml"
+"cov-html" = "coverage html"
+# Clean script
+clean = "find . -type d -name __pycache__ -exec rm -rf {} +"
+# Alembic database migration scripts
+"db-migrate" = "alembic upgrade head"
+"db-rollback" = "alembic downgrade -1"
+"db-status" = "alembic current"
+"db-history" = "alembic history"
+"db-check" = "alembic check"
+"db-revision" = "alembic revision --autogenerate -m"
+
+# ============================================
+# LINT ENVIRONMENT (detached - no project install)
+# ============================================
+[tool.hatch.envs.lint]
+description = "Code linting and formatting"
+detached = true
+installer = "uv"
+skip-install = true
+# Use features to install lint dependencies
+features = ["lint"]
+
+[tool.hatch.envs.lint.scripts]
+check = "ruff check app/ tests/ --output-format=github"
+format-check = "ruff format --check app/ tests/"
+format = "ruff format app/ tests/"
+fix = "ruff check --fix app/ tests/"
+
+# ============================================
+# TYPE CHECK ENVIRONMENT
+# ============================================
+[tool.hatch.envs.type]
+description = "Static type checking with mypy"
+detached = true
+installer = "uv"
+skip-install = true
+features = ["type"]
+
+[tool.hatch.envs.type.scripts]
+check = "mypy app/ --ignore-missing-imports --install-types --non-interactive"
+
+# ============================================
+# TEST ENVIRONMENT WITH MATRIX SUPPORT
+# ============================================
+[tool.hatch.envs.test]
+description = "Testing environment with matrix support"
+installer = "uv"
+dependency-groups = ["test"]
+
+# Override bcrypt to use a version compatible with passlib
+[tool.hatch.envs.test.overrides]
+dependency = "bcrypt"
+version = "4.0.1"
+
+# Matrix configuration for testing different Python versions and configurations
+[[tool.hatch.envs.test.matrix]]
+python = ["3.12"]
+db = ["sqlite"]
+
+[tool.hatch.envs.test.scripts]
+unit = "pytest tests/ --ignore=tests/test_api -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
+integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
+# Run all tests (both unit and integration)
+all = "pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
+# Coverage scripts
+cov = "pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing"
+"cov-report" = "coverage report --format=terminal --show-missing"
+"cov-html" = "coverage html"
+
+# ============================================
+# CI ENVIRONMENT (used by GitHub Actions)
+# ============================================
+[tool.hatch.envs.ci]
+description = "Continuous integration environment"
+installer = "uv"
+# Disable dev-mode for faster CI installs
+dev-mode = false
+features = ["test", "lint", "type", "security"]
+
+[tool.hatch.envs.ci.scripts]
+# Lint scripts
+lint = "ruff check app/ tests/ --output-format=github"
+"lint-format" = "ruff format --check app/ tests/"
+# Type check
+type-check = "mypy app/ --ignore-missing-imports --install-types --non-interactive"
+# Tests
+unit = "pytest tests/ --ignore=tests/test_api -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
+integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
+# Security
+"security-bandit" = "bandit -r app/ -f github --confidence-level high --severity-level medium"
+"security-safety" = "safety check --json --output=security-report.json || true"
+
+# Environment variable overrides for CI
+[tool.hatch.envs.ci.env-vars]
+CI = "true"
+HATCH_ENV = "ci"
+
+# ============================================
+# SECURITY ENVIRONMENT (detached)
+# ============================================
+[tool.hatch.envs.security]
+description = "Security scanning environment"
+detached = true
+installer = "uv"
+skip-install = true
+dependency-groups = ["security"]
+
+[tool.hatch.envs.security.scripts]
+scan-bandit = "bandit -r app/ -f github --confidence-level high --severity-level medium"
+scan-safety = "safety check --json --output=security-report.json || true"
+"bandit-report" = "bandit -r app/ -f html -o bandit_report.html"
+"safety-report" = "safety check --json --output=security-report.json || true"
+
+# ============================================
+# INTERNAL HATCH-TEST ENVIRONMENT
+# ============================================
+[tool.hatch.envs.hatch-test]
+# Use UV for faster test environment creation
+installer = "uv"
+# Use dependency groups
+dependency-groups = ["test"]
+# Add extra dependencies on top of defaults
+extra-dependencies = [
+    "pytest-asyncio",
+    "httpx",
+    "aiosqlite",
+]
+# Test configuration
+default-args = ["tests/", "--ignore=tests/test_api/"]
+# Enable test randomization for catching order-dependent bugs
+randomize = true
+# Parallel execution
+parallel = true
+# Retry flaky tests
+retries = 2
+retry-delay = 1
+
+# Override coverage based on environment
+[tool.hatch.envs.hatch-test.overrides]
+env.COVERAGE.run = { value = { source = ["app"], branch = true, omit = ["*/tests/*", "*/migrations/*"] } }
+
+# ============================================
+# BUILD ENVIRONMENT CONFIGURATION
+# ============================================
+[tool.hatch.envs.hatch-build]
+# UV is enabled by default for build environments
+installer = "uv"
+
+# Environment variables for reproducible builds
+[tool.hatch.envs.hatch-build.env-vars]
+SOURCE_DATE_EPOCH = "1580601600"
+# Ensure UTF-8 encoding
+LC_ALL = "C.UTF-8"
+LANG = "C.UTF-8"
+HATCH_BUILD_NO_PERMISSION_WARNING = "1"
+
+# ============================================
+# BUILD TARGETS CONFIGURATION
+# ============================================
+[tool.hatch.build.targets.wheel]
+# Only include Python source files for pure Python wheel
+include = [
+    "app/**/*.py",
+    "worker/**/*.py",
+]
+
+[tool.hatch.build.targets.sdist]
+# Include source files
+include = [
+    "app/**/*.py",
+    "worker/**/*.py",
+    "pyproject.toml",
+    "README.md",
+]
+
+# ============================================
+# PYTHON CONFIGURATION
+# ============================================
+[tool.hatch.python]
+# Default Python version
+version = "3.12"
+
+# ============================================
+# PYTEST CONFIGURATION
+# ============================================
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+# Add custom markers
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+# Minimum Python version
+minversion = "7.0"
+# Default args
+addopts = "-ra -q"
+
+# ============================================
+# COVERAGE CONFIGURATION
+# ============================================
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/migrations/*",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+]
+parallel = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+    "@abc.abstractmethod",
+]
+show_missing = true
+skip_covered = false
+exclude-programs = ["mypy", "ruff"]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+# ============================================
+# RUFF CONFIGURATION
+# ============================================
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Exclude common directories
+exclude = [
+    ".git",
+    "__pycache__",
+    ".mypy_cache",
+    ".ruff_cache",
+    "node_modules",
+    ".hatch",
+]
+fix = true
+show-fixes = true
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # warnings
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "A",    # flake8-builtins
+    "C4",   # flake8-comprehensions
+    "DTZ",  # flake8-datetimez
+    "T10",  # flake8-debugger
+    "ISC",  # flake8-implicit-str-concat
+    "PIE",  # flake8-pie
+    "PLC",  # flake8-pylint (statements)
+    "PLE",  # flake8-pylint (errors)
+    "PLR",  # flake8-pylint (refactor)
+    "PLW",  # flake8-pylint (warnings)
+    "RUF",  # Ruff-specific rules
+    "C90",  # mccabe complexity
+    "PGH",  # pygrep-hooks
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "PLR0913",  # too many arguments
+    "PLR2004",  # magic value comparison
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+skip-magic-trailing-comma = false
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "worker", "tests"]
+
+# ============================================
+# MYPY CONFIGURATION
+# ============================================
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+no_implicit_optional = true
+pretty = true
+show_error_codes = true
+show_error_context = true
+plugins = ["pydantic.mypy"]
+
+# Module-specific overrides
+[[tool.mypy.overrides]]
+module = "app.*"
+ignore_errors = false
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "worker.*"
+ignore_errors = false
+
+# ============================================
+# BANDIT CONFIGURATION
+# ============================================
+[tool.bandit]
+targets = ["app/", "tests/"]
+confidence_level = "HIGH"
+severity_level = "MEDIUM"
+exclude = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    ".git",
+    "node_modules",
+]
+skips = [
+    "B101",  # assert_used (common in tests)
+    "B413",  # blacklist (sometimes used for hashing)
+]
+
+# ============================================
+# SAFETY CONFIGURATION
+# ============================================
+[tool.safety]
+# Use ignored vulnerabilities database for CI
+db = false
+ignore = [
+    # Add CVEs to ignore here
+]
