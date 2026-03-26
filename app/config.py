@@ -1,7 +1,6 @@
 import os
 import warnings
 from pathlib import Path
-from typing import Any
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -32,52 +31,43 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_and_construct(self) -> "Settings":
         # TESTING override — skip all validation
-        testing_env = os.environ.get("TESTING", "").strip().lower()
-        if testing_env in ("1", "true", "yes", "y", "on"):
-            if not self.database_url.strip():
+        if os.environ.get("TESTING"):
+            if not self.database_url:
                 self.database_url = "sqlite+aiosqlite:///:memory:"
             return self
 
         # Construct DATABASE_URL from components if not set directly
-        if not self.database_url.strip():
-            if not self.db_password.strip():
+        if not self.database_url:
+            if not self.db_password:
                 raise ValueError(
                     "Either DATABASE_URL or DB_PASSWORD must be set. "
                     "For Docker: set DB_PASSWORD in .env. "
-                    "For local dev: set DATABASE_URL in .env.",
+                    "For local dev: set DATABASE_URL in .env."
                 )
-            from sqlalchemy.engine import URL as SA_URL
-
-            db_url = SA_URL.create(
-                drivername="postgresql+asyncpg",
-                username=self.db_user,
-                password=self.db_password,
-                host="localhost",
-                port=5432,
-                database=self.db_name,
+            self.database_url = (
+                f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
+                f"@localhost:5432/{self.db_name}"
             )
-            self.database_url = db_url.render_as_string(hide_password=False)
 
         # Validate SECRET_KEY
-        if not self.secret_key.strip():
+        if not self.secret_key:
             raise ValueError(
                 "SECRET_KEY is required. "
-                'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"',
+                'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
             )
 
-        secret_key_stripped = self.secret_key.strip()
         weak_defaults = (
             "change-me",
             "change-this-secret-key",
             "change-this-secret-key-for-testing-only-min-32-chars",
             "change-this-secret-key-for-local-dev-only-not-secure-32chars",
         )
-        if secret_key_stripped in weak_defaults:
+        if self.secret_key in weak_defaults:
             raise ValueError(
                 "SECRET_KEY must be changed from default value. "
-                'Generate a secure key with: python -c "import secrets; print(secrets.token_hex(32))"',
+                'Generate a secure key with: python -c "import secrets; print(secrets.token_hex(32))"'
             )
-        if len(secret_key_stripped) < 32:
+        if len(self.secret_key) < 32:
             raise ValueError("SECRET_KEY must be at least 32 characters for security")
 
         # Warn on wildcard CORS
@@ -94,59 +84,4 @@ class Settings(BaseSettings):
         return self
 
 
-# Lazy initialization: Settings instance is created on first access, not at import time
-class _SettingsHolder:
-    """Singleton holder for Settings instance."""
-
-    _instance: Settings | None = None
-
-    @classmethod
-    def get(cls) -> Settings:
-        if cls._instance is None:
-            cls._instance = Settings()
-        return cls._instance
-
-    @classmethod
-    def reload(cls) -> Settings:
-        """Force reload settings (useful for testing)."""
-        cls._instance = Settings()
-        return cls._instance
-
-
-def get_settings() -> Settings:
-    """Get the singleton Settings instance, creating it on first call.
-
-    This enables lazy initialization so that importing config doesn't fail
-    when environment variables are missing.
-    """
-    return _SettingsHolder.get()
-
-
-def reload_settings() -> Settings:
-    """Force reload settings (useful for testing)."""
-    return _SettingsHolder.reload()
-
-
-class _SettingsProxy:
-    """Lazy proxy for settings that delegates to _SettingsHolder.
-
-    This allows `from app.config import settings` to work without triggering
-    validation at import time. Both the proxy and the holder share the same
-    underlying Settings instance.
-    """
-
-    def __init__(self) -> None:
-        pass  # No internal instance — delegate to _SettingsHolder
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(_SettingsHolder.get(), name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name.startswith("_"):
-            super().__setattr__(name, value)
-        else:
-            setattr(_SettingsHolder.get(), name, value)
-
-
-# For backward compatibility: import settings from app.config works seamlessly
-settings = _SettingsProxy()
+settings = Settings()
