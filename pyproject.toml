@@ -16,6 +16,7 @@ dependencies = [
     "redis",
     "python-jose[cryptography]",
     "passlib[bcrypt]",
+    "bcrypt<4.1",
     "pydantic",
     "pydantic-settings",
     "yt-dlp",
