@@ -54,19 +54,13 @@ async def register(
     db.add(user)
     try:
         await db.commit()
-    except IntegrityError as e:
+    except IntegrityError:
         await db.rollback()
-        pgcode = getattr(e.orig, "pgcode", None)
-        if pgcode == "23505":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Email already registered",
-            ) from None
-        raise
-
-    # Re-fetch to get server-generated fields (created_at, updated_at)
-    result = await db.execute(select(User).where(User.id == user.id))
-    user = result.scalar_one()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        ) from None
+    await db.refresh(user)
 
     return UserResponse(id=user.id, email=user.email)
 
@@ -148,11 +142,10 @@ async def refresh(
         )
 
     access_token = create_access_token(user.id)
-    refresh_token = create_refresh_token(user.id)
 
     return Token(
         access_token=access_token,
-        refresh_token=refresh_token,
+        refresh_token=token_refresh.refresh_token,
         token_type="bearer",
     )
 
