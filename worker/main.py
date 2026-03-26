@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import signal
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -29,31 +29,19 @@ async def cleanup_expired_jobs() -> int:
 
         result = await db.execute(
             select(DownloadJob).where(
-                DownloadJob.expires_at < now, DownloadJob.status == "completed",
-            ),
+                DownloadJob.expires_at < now, DownloadJob.status == "completed"
+            )
         )
         expired_jobs = result.scalars().all()
 
         cleanup_count = 0
         for job in expired_jobs:
-            skip_file_deletion = False
-            if job.file_path:
-                # Validate path is within downloads directory before deletion
-                resolved_path = os.path.realpath(job.file_path)
-                downloads_base = os.path.realpath(os.path.join(settings.storage_path, "downloads"))
-                safe_downloads_dir = downloads_base + os.sep
-                if (
-                    not resolved_path.startswith(safe_downloads_dir)
-                    and resolved_path != downloads_base
-                ):
-                    logger.warning(f"Skipping deletion of path outside downloads: {job.file_path}")
-                    skip_file_deletion = True
-                if not skip_file_deletion and os.path.exists(resolved_path):
-                    try:
-                        os.remove(resolved_path)
-                        logger.info(f"Cleaned up expired file: {resolved_path}")
-                    except OSError as e:
-                        logger.warning(f"Failed to delete expired file {resolved_path}: {e}")
+            if job.file_path and os.path.exists(job.file_path):
+                try:
+                    os.remove(job.file_path)
+                    logger.info(f"Cleaned up expired file: {job.file_path}")
+                except OSError as e:
+                    logger.warning(f"Failed to delete expired file {job.file_path}: {e}")
 
             await db.delete(job)
             cleanup_count += 1
@@ -99,7 +87,7 @@ async def main() -> None:
         # Use wait with timeout instead of unconditional sleep for faster shutdown
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=1.0)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             pass
 
     logger.info("Worker stopped gracefully")

@@ -3,7 +3,7 @@ import os
 from app.config import settings
 
 # Mock redis in test environment
-if os.environ.get("TESTING") in ("1", "true"):
+if os.environ.get("TESTING"):
     from unittest.mock import AsyncMock, MagicMock
 
     # Use MagicMock for the client (pipeline is sync), but AsyncMock for async methods
@@ -17,7 +17,7 @@ if os.environ.get("TESTING") in ("1", "true"):
     redis_client.pipeline.return_value = pipe_mock
     redis_client.zrange = AsyncMock(return_value=[])
     redis_client.lpush = AsyncMock()
-    redis_client.rpop = AsyncMock(return_value=None)
+    redis_client.rpop = MagicMock(return_value=None)
 else:
     import redis.asyncio as aioredis
 
