@@ -63,8 +63,12 @@ COPY --from=builder /app/pyproject.toml ./pyproject.toml
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app
 
-# Switch to non-root user
-USER appuser
+# Copy worker entrypoint script
+COPY entrypoint-worker.sh ./entrypoint-worker.sh
+RUN chmod +x ./entrypoint-worker.sh
 
-# Run worker module
-CMD ["python", "-m", "worker.main"]
+# NOTE: Not switching to USER appuser here — entrypoint-worker.sh runs as root
+# to set up volume permissions, then drops to appuser via su-exec.
+
+# Run worker via entrypoint (sets up storage, drops to appuser)
+ENTRYPOINT ["./entrypoint-worker.sh"]
