@@ -1,13 +1,14 @@
 import os
 import warnings
+from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+asyncpg://user:pass@localhost:5432/ytprocessor"
-    secret_key: str = "change-me"
+    database_url: str = ""
+    secret_key: str = ""
     redis_url: str = "redis://localhost:6379"
     cors_origins: str = "http://localhost:3000"
     access_token_expire_minutes: int = 15
@@ -16,38 +17,71 @@ class Settings(BaseSettings):
     storage_path: str = "./storage"
     bcrypt_rounds: int = 12
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # Used to construct DATABASE_URL if not set directly
+    db_user: str = "postgres"
+    db_password: str = ""
+    db_name: str = "ytprocessor"
 
-    @field_validator("secret_key")
-    @classmethod
-    def validate_secret_key(cls, v: str) -> str:
-        """Validate that SECRET_KEY is not the default value."""
-        if v == "change-me":
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    @model_validator(mode="after")
+    def validate_and_construct(self) -> "Settings":
+        # TESTING override — skip all validation
+        if os.environ.get("TESTING"):
+            if not self.database_url:
+                self.database_url = "sqlite+aiosqlite:///:memory:"
+            return self
+
+        # Construct DATABASE_URL from components if not set directly
+        if not self.database_url:
+            if not self.db_password:
+                raise ValueError(
+                    "Either DATABASE_URL or DB_PASSWORD must be set. "
+                    "For Docker: set DB_PASSWORD in .env. "
+                    "For local dev: set DATABASE_URL in .env."
+                )
+            self.database_url = (
+                f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
+                f"@localhost:5432/{self.db_name}"
+            )
+
+        # Validate SECRET_KEY
+        if not self.secret_key:
+            raise ValueError(
+                "SECRET_KEY is required. "
+                'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
+            )
+
+        weak_defaults = (
+            "change-me",
+            "change-this-secret-key",
+            "change-this-secret-key-for-testing-only-min-32-chars",
+            "change-this-secret-key-for-local-dev-only-not-secure-32chars",
+        )
+        if self.secret_key in weak_defaults:
             raise ValueError(
                 "SECRET_KEY must be changed from default value. "
                 'Generate a secure key with: python -c "import secrets; print(secrets.token_hex(32))"'
             )
-        if len(v) < 32:
+        if len(self.secret_key) < 32:
             raise ValueError("SECRET_KEY must be at least 32 characters for security")
-        return v
 
-    @field_validator("cors_origins")
-    @classmethod
-    def validate_cors_origins(cls, v: str) -> str:
-        """Warn if CORS allows all origins."""
-        if v == "*":
+        # Warn on wildcard CORS
+        if self.cors_origins == "*":
             warnings.warn(
                 "CORS_ORIGINS is set to '*', allowing all origins. "
                 "This is insecure for production.",
                 stacklevel=2,
             )
-        return v
 
-    def __init__(self, **kwargs):
-        # If TESTING environment variable is set, use SQLite
-        if os.environ.get("TESTING"):
-            kwargs["database_url"] = "sqlite+aiosqlite:///:memory:"
-        super().__init__(**kwargs)
+        # Resolve storage path to absolute
+        self.storage_path = str(Path(self.storage_path).resolve())
+
+        return self
 
 
 settings = Settings()
