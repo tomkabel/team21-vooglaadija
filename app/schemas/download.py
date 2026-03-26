@@ -28,5 +28,12 @@ class DownloadResponse(BaseModel):
     expires_at: datetime | None = None
 
 
+class PaginationInfo(BaseModel):
+    page: int
+    per_page: int
+    total: int
+
+
 class DownloadListResponse(BaseModel):
     downloads: list[DownloadResponse]
+    pagination: PaginationInfo
