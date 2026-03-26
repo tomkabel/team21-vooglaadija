@@ -29,9 +29,9 @@ class DownloadResponse(BaseModel):
 
 
 class PaginationInfo(BaseModel):
-    page: int = Field(..., ge=1, description="Page number (1-based)")
-    per_page: int = Field(..., ge=1, description="Items per page")
-    total: int = Field(..., ge=0, description="Total number of items")
+    page: int
+    per_page: int
+    total: int
 
 
 class DownloadListResponse(BaseModel):
