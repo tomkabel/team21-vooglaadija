@@ -104,6 +104,9 @@ async def test_list_downloads_empty():
     assert response.status_code == 200
     data = response.json()
     assert data["downloads"] == []
+    assert data["pagination"]["total"] == 0
+    assert data["pagination"]["page"] == 1
+    assert data["pagination"]["per_page"] == 20
 
 
 @pytest.mark.asyncio
@@ -129,6 +132,32 @@ async def test_list_downloads_with_jobs():
     assert response.status_code == 200
     data = response.json()
     assert len(data["downloads"]) == 2
+    assert data["pagination"]["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_list_downloads_pagination():
+    """Test pagination parameters work."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = await create_test_user_and_login(client)
+        # Create 3 downloads
+        for _ in range(3):
+            await client.post(
+                "/api/v1/downloads",
+                json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        # Get page 1 with per_page=2
+        response = await client.get(
+            "/api/v1/downloads?page=1&per_page=2",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["downloads"]) == 2
+    assert data["pagination"]["total"] == 3
+    assert data["pagination"]["page"] == 1
+    assert data["pagination"]["per_page"] == 2
 
 
 @pytest.mark.asyncio

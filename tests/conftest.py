@@ -84,56 +84,17 @@ def sample_url() -> str:
     return "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 
-@pytest.fixture
-def sample_urls() -> list[str]:
-    return [
-        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-        "https://www.youtube.com/watch?v=jNQXAC9IVRw",
-        "https://youtu.be/dQw4w9WgXcQ",
-        "https://www.youtube.com/shorts/dQw4w9WgXcQ",
-    ]
-
-
-@pytest.fixture
-def invalid_urls() -> list[str]:
-    return [
-        "https://www.google.com",
-        "https://vimeo.com/123456",
-        "not-a-url",
-        "",
-        "ftp://youtube.com/video",
-    ]
-
-
-@pytest.fixture
-def sample_user_data() -> dict[str, str]:
-    return {
-        "email": "test@example.com",
-        "password": "securepassword123",
-    }
-
-
-@pytest.fixture
-async def auth_headers(db_session: AsyncSession) -> dict[str, str]:
-    from app.auth import create_access_token  # noqa: PLC0415
-    from app.models.user import User  # noqa: PLC0415
-    from app.services.auth_service import hash_password  # noqa: PLC0415
-
-    user = User(
-        id="test-user-id",
-        email="test@example.com",
-        password_hash=hash_password("password123"),
-        is_active=True,
+async def create_test_user_and_login(
+    client, email: str = "downloads@example.com", password: str = "securepassword123"
+) -> dict:
+    """Helper to register and login a test user, returning auth headers."""
+    await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": password},
     )
-    db_session.add(user)
-    await db_session.commit()
-
-    token = create_access_token("test-user-id")
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": password},
+    )
+    token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture
-def sample_download_data() -> dict[str, str]:
-    return {
-        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-    }

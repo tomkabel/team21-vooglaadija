@@ -22,7 +22,7 @@ async def test_register_creates_user():
 
 @pytest.mark.asyncio
 async def test_register_duplicate_email_fails():
-    """Test that registering with existing email returns 400."""
+    """Test that registering with existing email returns 409."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # First registration
         await client.post(
@@ -34,7 +34,7 @@ async def test_register_duplicate_email_fails():
             "/api/v1/auth/register",
             json={"email": "duplicate@example.com", "password": "testpassword123"},
         )
-    assert response.status_code == 400
+    assert response.status_code == 409
     assert "Email already registered" in response.json()["detail"]
 
 
