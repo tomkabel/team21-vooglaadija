@@ -8,7 +8,7 @@ mkdir -p /app/storage/downloads /app/storage/temp
 chown -R appuser:appuser /app/storage
 
 echo "Running database migrations..."
-gosu appuser python -m alembic upgrade head
+su -s /bin/sh appuser -c "python -m alembic upgrade head"
 
 echo "Starting application..."
-exec gosu appuser "$@"
+exec su -s /bin/sh appuser -c "$*"

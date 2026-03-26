@@ -1,7 +1,7 @@
 x-common-env: &common-env
-  DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-ytprocessor}
+  DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD:?DB_PASSWORD is required}@db:5432/${DB_NAME:-ytprocessor}
   REDIS_URL: redis://redis:6379
-  SECRET_KEY: ${SECRET_KEY:-changeme-32-char-minimum-for-local-dev-only}
+  SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
   FILE_EXPIRE_HOURS: ${FILE_EXPIRE_HOURS:-24}
   STORAGE_PATH: /app/storage
 
@@ -25,11 +25,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=5)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 10s
 
   worker:
     build:
@@ -47,11 +47,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import redis; redis.from_url('redis://redis:6379', socket_connect_timeout=5).ping()"]
+      test: ["CMD", "python", "-c", "import redis; r=redis.from_url('redis://redis:6379'); r.ping()"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 10s
 
   db:
     image: postgres:15

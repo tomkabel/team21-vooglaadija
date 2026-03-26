@@ -12,10 +12,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install system dependencies including ffmpeg for yt-dlp and gosu for privilege drop
+# Install system dependencies including ffmpeg for yt-dlp
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv first (separate layer for caching)
@@ -48,10 +47,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install ffmpeg and gosu in production stage (required for yt-dlp video processing and signal-safe privilege drop)
+# Install ffmpeg in production stage (required for yt-dlp video processing)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment from builder
@@ -74,14 +72,14 @@ RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app
 
 # NOTE: Not switching to USER appuser here — entrypoint.sh runs as root
-# to set up volume permissions, then drops to appuser via gosu.
+# to set up volume permissions, then drops to appuser via su-exec.
 
 # Expose port
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=5)"
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')" || exit 1
 
 # Run with entrypoint (migrations + uvicorn)
 ENTRYPOINT ["./entrypoint.sh"]
