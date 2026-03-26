@@ -56,20 +56,20 @@ def _validate_path_within(base_path: str, target_path: str) -> str:
     if not resolved_target.startswith(resolved_base):
         raise StorageError(
             f"Path traversal detected: resolved path {resolved_target} "
-            f"is outside allowed directory {resolved_base}",
+            f"is outside allowed directory {resolved_base}"
         )
     return resolved_target
 
 
 async def extract_media_url(url: str, storage_path: str) -> tuple[str, str]:
-    """Extract media URL from a YouTube URL using yt-dlp.
+    """
+    Extract media URL from a YouTube URL using yt-dlp.
 
     Returns:
         tuple of (file_path, file_name) where file_path is always within storage_path
 
     Raises:
         StorageError: If the download directory cannot be created or path is invalid.
-
     """
     download_dir = os.path.join(storage_path, "downloads")
     try:
