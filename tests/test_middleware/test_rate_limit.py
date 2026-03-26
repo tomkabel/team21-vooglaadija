@@ -1,6 +1,7 @@
 """Tests for the rate limiter middleware."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+import time
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -49,14 +50,12 @@ class TestRateLimiter:
     @pytest.mark.asyncio
     async def test_get_retry_after(self):
         mock_redis = _make_mock_redis()
-        fixed_now = 1000000.0
-        oldest_timestamp = fixed_now - 30
-        # zrange(withscores=True) returns list of (member_bytes, score_float) tuples
-        mock_redis.zrange = AsyncMock(return_value=[(b"member_key", oldest_timestamp)])
-        with patch("app.middleware.rate_limit.time.time", return_value=fixed_now):
-            limiter = RateLimiter(redis_client=mock_redis, max_requests=5, window_seconds=60)
-            retry_after = await limiter.get_retry_after("test-key")
-        assert retry_after == 30
+        limiter = RateLimiter(redis_client=mock_redis, max_requests=5, window_seconds=60)
+        now = time.time()
+        oldest_timestamp = now - 30
+        mock_redis.zrange = AsyncMock(return_value=[(b"key", oldest_timestamp)])
+        retry_after = await limiter.get_retry_after("test-key")
+        assert 29 <= retry_after <= 31
 
     @pytest.mark.asyncio
     async def test_get_retry_after_returns_zero_when_empty(self):

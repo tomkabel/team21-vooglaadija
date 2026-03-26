@@ -1,6 +1,5 @@
 """Tests for auth service (password hashing)."""
 
-import re
 
 from app.services.auth_service import hash_password, verify_password
 
@@ -8,7 +7,7 @@ from app.services.auth_service import hash_password, verify_password
 class TestHashPassword:
     def test_returns_bcrypt_hash(self):
         hashed = hash_password("testpassword123")
-        assert re.match(r"^\$2(?:a|b|y)\$", hashed), f"Unexpected bcrypt prefix in: {hashed}"
+        assert hashed.startswith("$2b$")
         assert hashed != "testpassword123"
 
     def test_different_hashes_for_same_password(self):
