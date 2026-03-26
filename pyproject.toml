@@ -10,18 +10,18 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
-    "sqlalchemy[asyncio]",
+    "sqlalchemy",
     "asyncpg",
+    "psycopg2-binary",
     "redis",
     "python-jose[cryptography]",
     "passlib[bcrypt]",
-    "bcrypt>=4.0.1,<5",
+    "bcrypt<4.1",
     "pydantic",
     "pydantic-settings",
     "yt-dlp",
     "alembic",
     "email-validator>=2.3.0",
-    "httpx",
 ]
 
 [project.optional-dependencies]
@@ -40,7 +40,6 @@ test = [
     "pytest-xdist",
     "httpx",
     "aiosqlite",
-    "psycopg2-binary",
 ]
 lint = [
     "ruff",
@@ -67,8 +66,7 @@ test = [
     "pytest-xdist>=3.0.0",
     "httpx>=0.24.0",
     "aiosqlite>=0.19.0",
-    "bcrypt>=4.0.1,<5",
-    "psycopg2-binary>=2.9.0",
+    "bcrypt==4.0.1",
 ]
 lint = [
     "ruff>=0.1.0",
@@ -163,7 +161,7 @@ dependency-groups = ["test"]
 # Override bcrypt to use a version compatible with passlib
 [tool.hatch.envs.test.overrides]
 dependency = "bcrypt"
-version = ">=4.0.1"
+version = "4.0.1"
 
 # Matrix configuration for testing different Python versions and configurations
 [[tool.hatch.envs.test.matrix]]
@@ -172,7 +170,7 @@ db = ["sqlite"]
 
 [tool.hatch.envs.test.scripts]
 unit = "pytest tests/ --ignore=tests/test_api -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
-integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n 1"
+integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 # Run all tests (both unit and integration)
 all = "pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 # Coverage scripts
@@ -198,7 +196,7 @@ lint = "ruff check app/ tests/ --output-format=github"
 type-check = "mypy app/ --ignore-missing-imports --install-types --non-interactive"
 # Tests
 unit = "pytest tests/ --ignore=tests/test_api -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
-integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n 1"
+integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 # Security
 "security-bandit" = "bandit -r app/ -f screen --confidence-level high --severity-level medium"
 "security-safety" = "safety check --json --output=security-report.json || true"
@@ -339,6 +337,7 @@ exclude_lines = [
 ]
 show_missing = true
 skip_covered = false
+exclude-programs = ["mypy", "ruff"]
 
 [tool.coverage.html]
 directory = "htmlcov"
@@ -388,7 +387,6 @@ ignore = [
     "E501",  # line too long (handled by formatter)
     "PLR0913",  # too many arguments
     "PLR2004",  # magic value comparison
-    "PLC0415",  # imports should be placed at the top (allow in test functions for circular import avoidance)
 ]
 
 [tool.ruff.format]
@@ -457,10 +455,3 @@ db = false
 ignore = [
     # Add CVEs to ignore here
 ]
-
-# ============================================
-# LOGGING CONFIGURATION
-# ============================================
-[tool.hatch.envs.default.env-vars]
-# Set default log level for development
-LOG_LEVEL = "INFO"
