@@ -160,8 +160,8 @@ jobs:
       - name: Create test environment
         run: |
           cp .env.example .env
-          sed -i 's|postgresql+asyncpg://user:pass@localhost:5432/ytprocessor|postgresql+asyncpg://test_user:test_pass@localhost:5432/test_db|g' .env
-          sed -i 's|change-this-secret-key|test-secret-key-for-ci-at-least-32-chars-long|g' .env
+          sed -i 's|^DB_PASSWORD=.*|DB_PASSWORD=test_pass|' .env
+          sed -i 's|^SECRET_KEY=$|SECRET_KEY=test-secret-key-for-ci-at-least-32-chars-long|' .env
 
       - name: Create database schema
         run: |

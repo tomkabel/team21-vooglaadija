@@ -30,6 +30,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Create .env from example
+        run: |
+          cp .env.example .env
+          # Set CI-safe values
+          sed -i 's|^DB_PASSWORD=.*|DB_PASSWORD=ci_test_password|' .env
+          sed -i 's|^SECRET_KEY=$|SECRET_KEY=ci-test-secret-key-minimum-32-characters-long|' .env
+
       - name: Verify nginx config exists
         run: |
           if [ ! -f "./infra/nginx/default.conf" ]; then
