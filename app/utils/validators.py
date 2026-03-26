@@ -1,8 +1,29 @@
 from urllib.parse import urlparse
 
+# Exact allowed YouTube domains
+_YOUTUBE_DOMAINS = {
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+}
+
+_YOUTUBE_SHORT_DOMAINS = {
+    "youtu.be",
+}
+
+_YOUTUBE_NOCOOKIE_DOMAINS = {
+    "youtube-nocookie.com",
+    "www.youtube-nocookie.com",
+}
+
 
 def is_youtube_url(url: str) -> bool:
-    """Validate if URL is a YouTube URL."""
+    """Validate if URL is a YouTube URL.
+
+    Uses exact domain matching to prevent subdomain bypass attacks
+    (e.g., youtube.com.evil.com must NOT match).
+    """
     try:
         parsed = urlparse(url)
         scheme = parsed.scheme.lower()
@@ -12,11 +33,15 @@ def is_youtube_url(url: str) -> bool:
             return False
 
         netloc = parsed.netloc.lower()
+        # Strip port if present (e.g., "youtube.com:443" -> "youtube.com")
+        hostname = netloc.rsplit(":", 1)[0] if ":" in netloc else netloc
 
-        # Check for youtube.com domains (with dot) - youtube.com, www.youtube.com, m.youtube.com
-        # or youtube-nocookie.com domains (with hyphen) - youtube-nocookie.com, www.youtube-nocookie.com
-        # or youtu.be short URLs
-        if "youtube.com" in netloc or "youtube-nocookie.com" in netloc or "youtu.be" in netloc:
+        # Exact domain matching — no substring checks
+        if hostname in _YOUTUBE_DOMAINS:
+            return True
+        if hostname in _YOUTUBE_SHORT_DOMAINS:
+            return True
+        if hostname in _YOUTUBE_NOCOOKIE_DOMAINS:
             return True
 
         return False
