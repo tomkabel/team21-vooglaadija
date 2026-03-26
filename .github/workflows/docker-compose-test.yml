@@ -35,7 +35,7 @@ jobs:
           cp .env.example .env
           # Set CI-safe values
           sed -i 's|^DB_PASSWORD=.*|DB_PASSWORD=ci_test_password|' .env
-          sed -i 's|^SECRET_KEY=.*|SECRET_KEY=ci-test-secret-key-minimum-32-characters-long|' .env
+          sed -i 's|^SECRET_KEY=$|SECRET_KEY=ci-test-secret-key-minimum-32-characters-long|' .env
 
       - name: Verify nginx config exists
         run: |
