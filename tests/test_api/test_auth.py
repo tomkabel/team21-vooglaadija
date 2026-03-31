@@ -213,3 +213,98 @@ async def test_me_invalid_token_fails():
             headers={"Authorization": "Bearer invalid-token"},
         )
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_login_inactive_user_fails(db_session):
+    """Test that inactive user cannot login (is_active=False check in login route)."""
+    from sqlalchemy import update  # noqa: PLC0415
+
+    from app.models.user import User  # noqa: PLC0415
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.post(
+            "/api/v1/auth/register",
+            json={"email": "inactive@example.com", "password": "testpassword123"},
+        )
+
+    # Deactivate the user directly in the database
+    await db_session.execute(
+        update(User).where(User.email == "inactive@example.com").values(is_active=False)
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "inactive@example.com", "password": "testpassword123"},
+        )
+    assert response.status_code == 401
+    assert "inactive" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_me_inactive_user_returns_401(db_session):
+    """Test that get_current_user rejects inactive users (is_active check in dependency)."""
+    from sqlalchemy import update  # noqa: PLC0415
+
+    from app.models.user import User  # noqa: PLC0415
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.post(
+            "/api/v1/auth/register",
+            json={"email": "inactive2@example.com", "password": "testpassword123"},
+        )
+        login_response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "inactive2@example.com", "password": "testpassword123"},
+        )
+        access_token = login_response.json()["access_token"]
+
+    # Deactivate the user after obtaining a valid token
+    await db_session.execute(
+        update(User).where(User.email == "inactive2@example.com").values(is_active=False)
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    assert response.status_code == 401
+    assert "inactive" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_refresh_with_access_token_fails():
+    """Test that using an access token as a refresh token returns 401 (type mismatch)."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.post(
+            "/api/v1/auth/register",
+            json={"email": "tokentype@example.com", "password": "testpassword123"},
+        )
+        login_response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "tokentype@example.com", "password": "testpassword123"},
+        )
+        access_token = login_response.json()["access_token"]
+
+        # Use access token where refresh token is expected
+        response = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": access_token},
+        )
+    assert response.status_code == 401
+    assert "Invalid token type" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_register_exactly_8_char_password_succeeds():
+    """Test that password of exactly 8 characters (boundary) is accepted."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/auth/register",
+            json={"email": "boundary@example.com", "password": "12345678"},
+        )
+    assert response.status_code == 201
