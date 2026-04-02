@@ -40,6 +40,7 @@ test = [
     "pytest-xdist",
     "httpx",
     "aiosqlite",
+    "psycopg2-binary",
 ]
 lint = [
     "ruff",
@@ -67,6 +68,7 @@ test = [
     "httpx>=0.24.0",
     "aiosqlite>=0.19.0",
     "bcrypt>=4.0.1,<5",
+    "psycopg2-binary>=2.9.0",
 ]
 lint = [
     "ruff>=0.1.0",
