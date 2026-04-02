@@ -172,7 +172,7 @@ db = ["sqlite"]
 
 [tool.hatch.envs.test.scripts]
 unit = "pytest tests/ --ignore=tests/test_api -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
-integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
+integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n 1"
 # Run all tests (both unit and integration)
 all = "pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 # Coverage scripts
@@ -198,7 +198,7 @@ lint = "ruff check app/ tests/ --output-format=github"
 type-check = "mypy app/ --ignore-missing-imports --install-types --non-interactive"
 # Tests
 unit = "pytest tests/ --ignore=tests/test_api -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
-integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
+integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n 1"
 # Security
 "security-bandit" = "bandit -r app/ -f screen --confidence-level high --severity-level medium"
 "security-safety" = "safety check --json --output=security-report.json || true"
