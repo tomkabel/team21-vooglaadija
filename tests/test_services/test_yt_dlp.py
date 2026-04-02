@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.services.yt_dlp_service import StorageError, _sanitize_title, _validate_path_within, extract_media_url
+from app.services.yt_dlp_service import (
+    StorageError,
+    _sanitize_title,
+    _validate_path_within,
+    extract_media_url,
+)
 from app.utils.validators import is_youtube_url
 
 

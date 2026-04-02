@@ -1,7 +1,7 @@
 """Downloads API endpoint tests."""
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -347,7 +347,6 @@ async def test_get_download_file_expired_returns_410(db_session: AsyncSession):
     Mocks datetime.now in the route to return a naive datetime well in the future
     so that the stored (naive) past datetime is considered expired.
     """
-    import os  # noqa: PLC0415
     from unittest.mock import MagicMock, patch  # noqa: PLC0415
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -359,8 +358,8 @@ async def test_get_download_file_expired_returns_410(db_session: AsyncSession):
         )
         job_id = create_response.json()["id"]
 
-        # Store a naive datetime in the past (SQLite loses tz info on retrieval)
-        past_naive = datetime(2000, 1, 1, 0, 0, 0)
+        # Store a datetime in the past (SQLite loses tz info on retrieval)
+        past_naive = datetime(2000, 1, 1, 0, 0, 0, tzinfo=UTC)
         await db_session.execute(
             update(DownloadJob)
             .where(DownloadJob.id == job_id)
@@ -372,8 +371,8 @@ async def test_get_download_file_expired_returns_410(db_session: AsyncSession):
         )
         await db_session.commit()
 
-        # Mock datetime.now to return a naive datetime in the future
-        future_naive = datetime(2099, 1, 1, 0, 0, 0)
+        # Mock datetime.now to return a datetime in the future
+        future_naive = datetime(2099, 1, 1, 0, 0, 0, tzinfo=UTC)
         mock_dt = MagicMock()
         mock_dt.now.return_value = future_naive
 
