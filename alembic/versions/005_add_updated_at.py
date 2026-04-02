@@ -1,7 +1,7 @@
 """add_updated_at_columns
 
-Revision ID: 003
-Revises: 002
+Revision ID: 005
+Revises: 004
 Create Date: 2024-01-01 00:00:00.000000
 """
 
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "003"
-down_revision: str | None = "002"
+revision: str = "005"
+down_revision: str | None = "004"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
