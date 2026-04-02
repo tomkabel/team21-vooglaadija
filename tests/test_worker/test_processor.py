@@ -150,7 +150,7 @@ class TestResetStuckJobs:
             user_id="user-456",
             url="https://www.youtube.com/watch?v=test",
             status="processing",
-            created_at=old_time,
+            updated_at=old_time,
         )
         db_session.add(job)
         await db_session.commit()
@@ -181,7 +181,7 @@ class TestResetStuckJobs:
             user_id="user-456",
             url="https://www.youtube.com/watch?v=test",
             status="processing",
-            created_at=recent_time,
+            updated_at=recent_time,
         )
         db_session.add(job)
         await db_session.commit()
@@ -207,7 +207,7 @@ class TestResetStuckJobs:
             user_id="user-456",
             url="https://www.youtube.com/watch?v=test",
             status="completed",
-            created_at=old_time,
+            updated_at=old_time,
         )
         db_session.add(job)
         await db_session.commit()

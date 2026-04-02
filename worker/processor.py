@@ -138,7 +138,7 @@ async def reset_stuck_jobs(timeout_minutes: int = 10) -> int:
             update(DownloadJob)
             .where(
                 DownloadJob.status == "processing",
-                DownloadJob.created_at < cutoff,
+                DownloadJob.updated_at < cutoff,
             )
             .values(
                 status="pending",
