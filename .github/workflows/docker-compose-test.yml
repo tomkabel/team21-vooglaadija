@@ -55,8 +55,8 @@ jobs:
 
       - name: Wait for services to initialize
         run: |
-          echo "Waiting for services to initialize (15s)..."
-          sleep 15
+          echo "Waiting for services to initialize (30s)..."
+          sleep 30
 
       # ============================================
       # 3. WAIT FOR DOCKER HEALTH CHECKS
@@ -79,6 +79,12 @@ jobs:
                 return 0
               elif [ "$status" = "unhealthy" ]; then
                 echo "ERROR: $service is unhealthy"
+                # Capture diagnostic info on failure
+                echo "=== API logs (last 50 lines) ==="
+                docker compose logs --tail=50 api 2>&1 || true
+                echo ""
+                echo "=== Container inspect ==="
+                docker inspect ytprocessor-api 2>&1 | head -100 || true
                 return 1
               else
                 echo "Attempt $attempt/$max_attempts: $service status = $status"
@@ -89,6 +95,9 @@ jobs:
             done
 
             echo "ERROR: $service did not become healthy within timeout"
+            # Capture diagnostic info on timeout
+            echo "=== API logs (last 50 lines) ==="
+            docker compose logs --tail=50 api 2>&1 || true
             return 1
           }
 
