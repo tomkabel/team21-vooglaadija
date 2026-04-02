@@ -52,7 +52,7 @@ This is **four interactions**, none of which require client-side state managemen
 
 ### Architecture Pattern
 
-```
+```text
 Browser → FastAPI Server → PostgreSQL / Redis
          (Jinja2 renders   (REST API,
           HTML directly)    business logic)
@@ -96,7 +96,7 @@ async def create_download(request: Request, url: str = Form(...)):
     )
 ```
 
-**No JSON serialization. No CORS. No client-side state. No build step.** The server returns HTML fragments that HTMX swaps into the page. ([TestDriven.io](https://testdriven.io/blog/fastapi-htmx/), [Medium, Neurobyte, Dec 2025](https://medium.com/%40kaushalsinh73/fastapi-htmx-alpine-progressive-apps-without-spa-overhead-08b4ea9a2f5f))
+**Server returns HTML fragments without JSON serialization, CORS, client-side state, or a build step.** The server returns HTML fragments that HTMX swaps into the page. ([TestDriven.io](https://testdriven.io/blog/fastapi-htmx/), [Medium, Neurobyte, Dec 2025](https://medium.com/%40kaushalsinh73/fastapi-htmx-alpine-progressive-apps-without-spa-overhead-08b4ea9a2f5f))
 
 ### Existing Precedent: YouTube Downloader + FastAPI + Svelte/HTMX
 
@@ -118,17 +118,17 @@ Choose **Next.js / React** instead if any of these become true:
 
 ## 1. The Framework Landscape in 2026: What Senior Developers Actually Use
 
-### Market Position (Stack Overflow 2025 / State of JS 2024)
+### Market Position (State of JS 2025 / npm stats)
 
 | Framework | Adoption | npm Weekly Downloads | Developer Satisfaction |
 |-----------|----------|---------------------|----------------------|
-| **React** | 44.7% | ~96M (React) / ~6M (Next.js) | 52.1% |
-| Vue | 17.6% | ~9M | 50.9% |
-| Svelte | 7.2% | ~1.7M | 62.4% |
-| Angular | 18.2% | ~3M | ~45% |
+| **React** | ~54.8% | ~50–81M (React) / ~6M (Next.js) | ~55% |
+| Vue | ~8% | ~7–9.6M | ~51% |
+| Svelte | ~7% | ~1.8–3.2M | ~62.4% |
+| Angular | ~4.6% | ~4.5M | ~45% |
 | Solid | <2% | ~200K | High |
 
-**Key finding:** React dominates by a wide margin in adoption, ecosystem, and hiring availability. However, developer satisfaction is highest for Svelte. ([ToolPal](https://toolboxhubs.com/en/blog/react-vs-vue-vs-svelte-2026), [Rajesh R Nair](https://rajeshrnair.com/blog/web-development-frameworks-comparison-2026.html))
+**Key finding:** React dominates by a wide margin in adoption, ecosystem, and hiring availability. However, developer satisfaction is highest for Svelte. ([State of JS 2025](https://2025.stateofjs.com/), [npm stats](https://www.npmjs.com/))
 
 ### The Meta-Framework is the Real Choice
 
@@ -160,7 +160,7 @@ For a complex app, Next.js integrates with FastAPI better than any other fronten
 
 3. **HttpOnly Cookie Auth**: JWT tokens stored in HttpOnly cookies flow from browser → Next.js server → FastAPI, enabling server-side rendered authenticated pages without exposing tokens to client JS. ([Full-Stack FastAPI Template](https://github.com/fastapi/full-stack-fastapi-template))
 
-4. **CORS Already Configured**: Your `app/config.py` already defaults `CORS_ORIGINS` to `http://localhost:3000`. ([Project analysis](app/config.py))
+4. **CORS Already Configured**: Your `app/config.py` already defaults `CORS_ORIGINS` to `http://localhost:3000`. ([Project analysis](../../app/config.py))
 
 ### 2.2 The Industry Standard Architecture (Senior Consensus)
 
@@ -173,7 +173,7 @@ Multiple authoritative 2026 sources converge on the same architectural pattern:
 4. **Presentation Layer** — UI components, views
 
 **Domain-Driven Component Organization** (DEV Community, Saqueib Ansari, Mar 2026):
-```
+```text
 src/
   features/
     checkout/
@@ -252,7 +252,7 @@ React 19's compiler (formerly React Forget) handles most memoization automatical
 | Ecosystem | Massive | Growing |
 | Hiring pool | Largest | Smallest |
 
-SvelteKit is the DX favorite and performance champion, but its ecosystem is smaller and hiring is harder. For a production app with a team, Next.js is safer. ([ToolPal](https://toolboxhubs.com/en/blog/react-vs-vue-vs-svelte-2026), [Solid-Web](http://www.solid-web.com/react-vs-vue-vs-svelte/))
+SvelteKit is the DX favorite and performance champion, but its ecosystem is smaller and hiring is harder. For a production app with a team, Next.js is safer. ([State of JS 2025](https://2025.stateofjs.com/), [npm stats](https://www.npmjs.com/))
 
 ---
 
@@ -260,13 +260,13 @@ SvelteKit is the DX favorite and performance champion, but its ecosystem is smal
 
 ### Architecture Pattern (Primary Recommendation)
 
-```
+```text
 Browser → FastAPI Server → PostgreSQL / Redis
          (Jinja2 renders   (REST API,
           HTML directly)    business logic)
 ```
 
-**FastAPI serves both the HTML pages and the API endpoints.** No separate frontend server. No CORS. Same-origin cookies for auth.
+**FastAPI serves both the HTML pages and the API endpoints.** A single server handles both, eliminating separate frontend infrastructure and CORS complexity. Same-origin cookies for auth.
 
 ### Key Integration Points
 
@@ -321,11 +321,11 @@ services:
 
 ### Angular
 - **Verdict**: Dramatic overkill
-- **Reason**: Angular is designed for large enterprise teams with strict architecture needs. It has the steepest learning curve and is far heavier than necessary. ([Rajesh R Nair](https://rajeshrnair.com/blog/web-development-frameworks-comparison-2026.html))
+- **Reason**: Angular is designed for large enterprise teams with strict architecture needs. It has the steepest learning curve and is far heavier than necessary. ([State of JS 2025](https://2025.stateofjs.com/))
 
 ### SvelteKit (for this scope)
 - **Verdict**: Better than React but still overkill
-- **Reason**: Svelte is the best JS framework for DX and performance, but it still requires a build step, separate dev server, and API client layer. For 4 interactions, HTMX is simpler. If you outgrow HTMX, SvelteKit is the best upgrade path. ([Solid-Web](http://www.solid-web.com/react-vs-vue-vs-svelte/))
+- **Reason**: Svelte is the best JS framework for DX and performance, but it still requires a build step, separate dev server, and API client layer. For 4 interactions, HTMX is simpler. If you outgrow HTMX, SvelteKit is the best upgrade path. ([State of JS 2025](https://2025.stateofjs.com/))
 
 ---
 
@@ -333,7 +333,7 @@ services:
 
 ### Primary: FastAPI + HTMX (for current scope)
 
-```
+```text
 app/
 ├── main.py                     # FastAPI app entry
 ├── templates/
