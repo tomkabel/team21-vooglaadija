@@ -2,7 +2,7 @@ import asyncio
 import os
 
 # CRITICAL: Set environment variables BEFORE any other imports
-os.environ["TESTING"] = "1"
+# DON'T set TESTING=1 here - let the config handle it based on CI_INTEGRATION
 os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-not-for-production-use-32chars"
 
 # Determine database URL based on environment
@@ -11,15 +11,21 @@ _use_postgres = os.environ.get("CI_INTEGRATION", "").strip().lower() in ("1", "t
 
 if _use_postgres:
     _test_db_url = "postgresql+asyncpg://test_user:test_pass@localhost:5432/test_db"
+    # For PostgreSQL, we don't set TESTING=1 so config uses the provided URL directly
 else:
     _worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
     _test_db_path = os.path.abspath(f"test_{_worker_id}.db")
     _test_db_url = f"sqlite+aiosqlite:///{_test_db_path}"
+    # For SQLite, set TESTING=1 to skip production validation
+    os.environ["TESTING"] = "1"
+
+# Set database URL BEFORE importing app.config so engine uses correct URL
+os.environ["DATABASE_URL"] = _test_db_url
 
 # Force reconfigure the database URL before any other imports
-# This ensures the app uses SQLite instead of PostgreSQL
 import app.config  # noqa: E402
 
+# Also set on the settings object in case DATABASE_URL wasn't used
 app.config.settings.database_url = _test_db_url
 
 from collections.abc import AsyncGenerator, Generator  # noqa: E402
@@ -48,32 +54,48 @@ test_engine = create_async_engine(TEST_DATABASE_URL, **_engine_kwargs)
 # Use the same engine for TestingSessionLocal
 TestingSessionLocal = sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 
+# Import models to ensure Base.metadata has all tables defined
+import app.models  # noqa: E402
 
-def _sync_create_tables():
-    """Create tables synchronously at import time."""
 
-    sync_url = TEST_DATABASE_URL.replace("sqlite+aiosqlite://", "sqlite://")
-    from sqlalchemy import create_engine as sync_create_engine
+def _create_tables_sync():
+    """Create tables synchronously."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
 
-    engine = sync_create_engine(sync_url)
+    if _use_postgres:
+        sync_url = "postgresql://test_user:test_pass@localhost:5432/test_db"
+        engine = create_engine(sync_url)
+    else:
+        sync_url = TEST_DATABASE_URL.replace("sqlite+aiosqlite://", "sqlite://")
+        engine = create_engine(
+            sync_url, connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+
     Base.metadata.create_all(engine)
     engine.dispose()
 
 
-def _sync_drop_tables():
-    """Drop tables synchronously at cleanup time."""
+def _drop_tables_sync():
+    """Drop tables synchronously."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
 
-    sync_url = TEST_DATABASE_URL.replace("sqlite+aiosqlite://", "sqlite://")
-    from sqlalchemy import create_engine as sync_create_engine
+    if _use_postgres:
+        sync_url = "postgresql://test_user:test_pass@localhost:5432/test_db"
+        engine = create_engine(sync_url)
+    else:
+        sync_url = TEST_DATABASE_URL.replace("sqlite+aiosqlite://", "sqlite://")
+        engine = create_engine(
+            sync_url, connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
 
-    engine = sync_create_engine(sync_url)
     Base.metadata.drop_all(engine)
     engine.dispose()
 
 
-# Create tables immediately when conftest is imported
-# This ensures tables exist before any test or fixture runs
-_sync_create_tables()
+# Create tables at import time
+_create_tables_sync()
 
 
 @pytest.fixture(scope="session")
@@ -102,7 +124,7 @@ async def setup_database_session() -> AsyncGenerator[None, None]:
     yield
     # Tables are dropped at session end - safe because all tests are done
     try:
-        _sync_drop_tables()
+        _drop_tables_sync()
     except Exception:
         pass  # Ignore errors during cleanup
 

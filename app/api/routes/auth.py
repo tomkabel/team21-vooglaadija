@@ -63,7 +63,10 @@ async def register(
                 detail="Email already registered",
             ) from None
         raise
-    await db.refresh(user)
+
+    # Re-fetch to get server-generated fields (created_at, updated_at)
+    result = await db.execute(select(User).where(User.id == user.id))
+    user = result.scalar_one()
 
     return UserResponse(id=user.id, email=user.email)
 

@@ -84,7 +84,10 @@ async def create_download(
 
     db.add(job)
     await db.commit()
-    await db.refresh(job)
+
+    # Re-fetch to get server-generated fields
+    result = await db.execute(select(DownloadJob).where(DownloadJob.id == job.id))
+    job = result.scalar_one()
 
     try:
         await enqueue_job(job_id)
@@ -96,7 +99,9 @@ async def create_download(
             .values(status="enqueue_failed", error="Failed to enqueue job"),
         )
         await db.commit()
-        await db.refresh(job)
+        # Re-fetch after status update
+        result = await db.execute(select(DownloadJob).where(DownloadJob.id == job.id))
+        job = result.scalar_one()
 
     return DownloadResponse(
         id=job.id,
