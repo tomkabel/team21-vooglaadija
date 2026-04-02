@@ -13,7 +13,7 @@ from app.models.download_job import DownloadJob
 
 
 async def create_test_user_and_login(
-    client: AsyncClient, email: str = "downloads@example.com"
+    client: AsyncClient, email: str = "downloads@example.com",
 ) -> str:
     """Helper: register a user and return access token."""
     await client.post(
@@ -281,7 +281,7 @@ async def test_get_download_file_not_found(db_session: AsyncSession):
         job_id = create_response.json()["id"]
         # Manually mark as completed but no file_path
         await db_session.execute(
-            update(DownloadJob).where(DownloadJob.id == job_id).values(status="completed")
+            update(DownloadJob).where(DownloadJob.id == job_id).values(status="completed"),
         )
         await db_session.commit()
         # Try to get file
@@ -369,7 +369,7 @@ async def test_get_download_file_expired_returns_410(db_session: AsyncSession):
                 status="completed",
                 file_path="/tmp/fake_file.mp4",
                 expires_at=past_naive,
-            )
+            ),
         )
         await db_session.commit()
 
@@ -411,7 +411,7 @@ async def test_get_download_file_path_traversal_returns_403(db_session: AsyncSes
                 status="completed",
                 file_path="/etc/passwd",
                 expires_at=None,
-            )
+            ),
         )
         await db_session.commit()
 
@@ -455,7 +455,7 @@ async def test_get_download_file_not_on_disk(db_session: AsyncSession):
                 status="completed",
                 file_path=nonexistent_path,
                 expires_at=None,
-            )
+            ),
         )
         await db_session.commit()
 

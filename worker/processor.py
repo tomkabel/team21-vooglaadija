@@ -51,7 +51,7 @@ async def process_next_job() -> None:
         await db.execute(
             update(DownloadJob)
             .where(DownloadJob.id == job_id)
-            .values(status="processing", updated_at=datetime.now(UTC))
+            .values(status="processing", updated_at=datetime.now(UTC)),
         )
         await db.commit()
 
@@ -68,7 +68,7 @@ async def process_next_job() -> None:
                     completed_at=datetime.now(UTC),
                     expires_at=datetime.now(UTC) + timedelta(hours=settings.file_expire_hours),
                     updated_at=datetime.now(UTC),
-                )
+                ),
             )
             await db.commit()
             logger.info(f"Job {job_id} completed successfully")
@@ -100,7 +100,7 @@ async def handle_job_failure(db, job: DownloadJob, error_message: str) -> None:
                 retry_count=new_retry_count,
                 error=f"Retry {new_retry_count}/{max_retries}: {error_message}",
                 updated_at=datetime.now(UTC),
-            )
+            ),
         )
         await db.commit()
 
@@ -108,7 +108,7 @@ async def handle_job_failure(db, job: DownloadJob, error_message: str) -> None:
         await enqueue_job(job.id)
         logger.info(
             f"Job {job.id} re-queued for retry {new_retry_count}/{max_retries} "
-            f"after {delay:.0f}s backoff"
+            f"after {delay:.0f}s backoff",
         )
     else:
         # Max retries exceeded, mark as permanently failed
@@ -120,7 +120,7 @@ async def handle_job_failure(db, job: DownloadJob, error_message: str) -> None:
                 error=f"Max retries ({max_retries}) exceeded: {error_message}",
                 completed_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
-            )
+            ),
         )
         await db.commit()
         logger.warning(f"Job {job.id} permanently failed after {max_retries} retries")
@@ -144,14 +144,14 @@ async def reset_stuck_jobs(timeout_minutes: int = 10) -> int:
                 status="pending",
                 error="Job timed out - will retry",
                 updated_at=datetime.now(UTC),
-            )
+            ),
         )
         await db.commit()
 
         count = result.rowcount
         if count > 0:
             logger.warning(
-                f"Reset {count} stuck jobs that exceeded {timeout_minutes} minute timeout"
+                f"Reset {count} stuck jobs that exceeded {timeout_minutes} minute timeout",
             )
             # Re-queue the reset jobs
             # Note: In a production system, we'd fetch the job IDs and re-queue them

@@ -64,19 +64,18 @@ class TestProcessNextJob:
         db_session.add(job)
         await db_session.commit()
 
-        with patch("worker.processor.redis_client", mock_redis_client):
-            with patch(
-                "worker.processor.extract_media_url", new_callable=AsyncMock
-            ) as mock_extract:
-                mock_extract.return_value = ("/storage/test.mp4", "test.mp4")
-                mock_redis_client.rpop = AsyncMock(return_value="test-job-123")
+        with patch("worker.processor.redis_client", mock_redis_client), patch(
+            "worker.processor.extract_media_url", new_callable=AsyncMock,
+        ) as mock_extract:
+            mock_extract.return_value = ("/storage/test.mp4", "test.mp4")
+            mock_redis_client.rpop = AsyncMock(return_value="test-job-123")
 
-                await process_next_job()
+            await process_next_job()
 
         # Use a fresh session to read the job (bypass session cache)
         async with AsyncSessionLocal() as new_session:
             result = await new_session.execute(
-                select(DownloadJob).where(DownloadJob.id == "test-job-123")
+                select(DownloadJob).where(DownloadJob.id == "test-job-123"),
             )
             completed_job = result.scalar_one()
             assert completed_job.status == "completed"
@@ -100,23 +99,22 @@ class TestProcessNextJob:
         db_session.add(job)
         await db_session.commit()
 
-        with patch("worker.processor.redis_client", mock_redis_client):
-            with patch(
-                "worker.processor.extract_media_url", new_callable=AsyncMock
-            ) as mock_extract:
-                with patch("worker.processor.enqueue_job", new_callable=AsyncMock) as mock_enqueue:
-                    mock_extract.side_effect = Exception("Download failed")
-                    mock_redis_client.rpop = AsyncMock(return_value="test-job-fail")
+        with patch("worker.processor.redis_client", mock_redis_client), patch(
+            "worker.processor.extract_media_url", new_callable=AsyncMock,
+        ) as mock_extract:
+            with patch("worker.processor.enqueue_job", new_callable=AsyncMock) as mock_enqueue:
+                mock_extract.side_effect = Exception("Download failed")
+                mock_redis_client.rpop = AsyncMock(return_value="test-job-fail")
 
-                    await process_next_job()
+                await process_next_job()
 
-                    # Verify job was re-queued for retry
-                    mock_enqueue.assert_called_once_with("test-job-fail")
+                # Verify job was re-queued for retry
+                mock_enqueue.assert_called_once_with("test-job-fail")
 
         # Use a fresh session to read the job (bypass session cache)
         async with AsyncSessionLocal() as new_session:
             result = await new_session.execute(
-                select(DownloadJob).where(DownloadJob.id == "test-job-fail")
+                select(DownloadJob).where(DownloadJob.id == "test-job-fail"),
             )
             # Job should be re-queued as pending for retry (not immediately failed)
             failed_job = result.scalar_one()
@@ -162,7 +160,7 @@ class TestResetStuckJobs:
         # Use a fresh session to read the job (bypass session cache)
         async with AsyncSessionLocal() as new_session:
             result = await new_session.execute(
-                select(DownloadJob).where(DownloadJob.id == "stuck-job-1")
+                select(DownloadJob).where(DownloadJob.id == "stuck-job-1"),
             )
             reset_job = result.scalar_one()
             # With retry mechanism, stuck jobs are re-queued as pending
@@ -218,7 +216,7 @@ class TestResetStuckJobs:
 
         # Verify job still has completed status
         result = await db_session.execute(
-            select(DownloadJob).where(DownloadJob.id == "completed-job")
+            select(DownloadJob).where(DownloadJob.id == "completed-job"),
         )
         still_completed = result.scalar_one()
         assert still_completed.status == "completed"

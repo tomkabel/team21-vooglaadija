@@ -29,8 +29,8 @@ async def cleanup_expired_jobs() -> int:
 
         result = await db.execute(
             select(DownloadJob).where(
-                DownloadJob.expires_at < now, DownloadJob.status == "completed"
-            )
+                DownloadJob.expires_at < now, DownloadJob.status == "completed",
+            ),
         )
         expired_jobs = result.scalars().all()
 

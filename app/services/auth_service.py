@@ -4,7 +4,7 @@ from app.config import settings
 
 # Configure bcrypt with configurable rounds
 pwd_context = CryptContext(
-    schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=settings.bcrypt_rounds
+    schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=settings.bcrypt_rounds,
 )
 
 

@@ -44,7 +44,7 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Either DATABASE_URL or DB_PASSWORD must be set. "
                     "For Docker: set DB_PASSWORD in .env. "
-                    "For local dev: set DATABASE_URL in .env."
+                    "For local dev: set DATABASE_URL in .env.",
                 )
             from sqlalchemy.engine import URL as SA_URL
 
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
         if not self.secret_key.strip():
             raise ValueError(
                 "SECRET_KEY is required. "
-                'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
+                'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"',
             )
 
         secret_key_stripped = self.secret_key.strip()
@@ -75,7 +75,7 @@ class Settings(BaseSettings):
         if secret_key_stripped in weak_defaults:
             raise ValueError(
                 "SECRET_KEY must be changed from default value. "
-                'Generate a secure key with: python -c "import secrets; print(secrets.token_hex(32))"'
+                'Generate a secure key with: python -c "import secrets; print(secrets.token_hex(32))"',
             )
         if len(secret_key_stripped) < 32:
             raise ValueError("SECRET_KEY must be at least 32 characters for security")

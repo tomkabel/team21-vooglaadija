@@ -66,8 +66,8 @@ class ErrorResponse(BaseModel):
                 "error": {"code": "NOT_FOUND", "message": "Resource not found"},
                 "message": "The requested download job does not exist.",
                 "details": {"job_id": "123"},
-            }
-        }
+            },
+        },
     )
 
     error: dict[str, str]
@@ -76,7 +76,7 @@ class ErrorResponse(BaseModel):
 
 
 def error_response(
-    code: ErrorCode, message: str, details: dict[str, Any] | None = None
+    code: ErrorCode, message: str, details: dict[str, Any] | None = None,
 ) -> ErrorResponse:
     """Helper to create a standardized error response."""
     return ErrorResponse(
@@ -87,7 +87,7 @@ def error_response(
 
 
 def error_response_dict(
-    code: ErrorCode, message: str, details: dict[str, Any] | None = None
+    code: ErrorCode, message: str, details: dict[str, Any] | None = None,
 ) -> dict:
     """Helper to create a standardized error response dict with detail for backward compatibility."""
     return {

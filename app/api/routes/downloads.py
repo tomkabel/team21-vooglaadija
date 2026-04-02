@@ -55,7 +55,7 @@ async def _get_user_job(db, user_id: str, job_id: str) -> DownloadJob:
         select(DownloadJob).where(
             DownloadJob.id == job_id,
             DownloadJob.user_id == user_id,
-        )
+        ),
     )
     job: DownloadJob | None = result.scalar_one_or_none()
     if not job:
@@ -93,7 +93,7 @@ async def create_download(
         await db.execute(
             update(DownloadJob)
             .where(DownloadJob.id == job_id)
-            .values(status="enqueue_failed", error="Failed to enqueue job")
+            .values(status="enqueue_failed", error="Failed to enqueue job"),
         )
         await db.commit()
         await db.refresh(job)
@@ -130,7 +130,7 @@ async def list_downloads(
         .where(DownloadJob.user_id == user_id)
         .order_by(DownloadJob.created_at.desc())
         .offset((page - 1) * per_page)
-        .limit(per_page)
+        .limit(per_page),
     )
     jobs = result.scalars().all()
 

@@ -26,6 +26,7 @@ class RateLimiter:
 
         Returns:
             True if request is allowed, False if rate limit exceeded
+
         """
         now = time.time()
         pipe = self.redis.pipeline()
@@ -65,6 +66,7 @@ class RateLimiter:
 
         Returns:
             Seconds until the oldest request expires
+
         """
         now = time.time()
         try:

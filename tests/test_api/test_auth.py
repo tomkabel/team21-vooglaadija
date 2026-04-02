@@ -240,7 +240,7 @@ async def test_login_inactive_user_fails(db_session):
 
     # Deactivate the user directly in the database
     await db_session.execute(
-        update(User).where(User.email == "inactive@example.com").values(is_active=False)
+        update(User).where(User.email == "inactive@example.com").values(is_active=False),
     )
     await db_session.commit()
 
@@ -273,7 +273,7 @@ async def test_me_inactive_user_returns_401(db_session):
 
     # Deactivate the user after obtaining a valid token
     await db_session.execute(
-        update(User).where(User.email == "inactive2@example.com").values(is_active=False)
+        update(User).where(User.email == "inactive2@example.com").values(is_active=False),
     )
     await db_session.commit()
 

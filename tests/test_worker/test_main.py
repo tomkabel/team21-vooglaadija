@@ -49,12 +49,11 @@ class TestCleanupExpiredJobs:
 
         # Mock file operations to avoid actual file deletion
         with patch(
-            "worker.main.os.path.realpath", return_value=f"{settings.storage_path}/test.mp4"
-        ):
-            with patch("worker.main.os.path.exists", return_value=False):
-                with patch("worker.main.os.remove", create=True):
-                    count = await cleanup_expired_jobs()
-                    assert count == 1
+            "worker.main.os.path.realpath", return_value=f"{settings.storage_path}/test.mp4",
+        ), patch("worker.main.os.path.exists", return_value=False):
+            with patch("worker.main.os.remove", create=True):
+                count = await cleanup_expired_jobs()
+                assert count == 1
 
     @pytest.mark.unit
     async def test_cleanup_expired_jobs_skips_path_traversal(self, db_session):
@@ -79,7 +78,7 @@ class TestCleanupExpiredJobs:
             def realpath_side_effect(path):
                 if path == "/etc/passwd":
                     return "/etc/passwd"  # Outside storage
-                elif path == settings.storage_path:
+                if path == settings.storage_path:
                     return storage_base  # Actual storage path
                 return path
 
@@ -110,14 +109,13 @@ class TestCleanupExpiredJobs:
 
         # os.path.exists returns False for missing file
         with patch(
-            "worker.main.os.path.realpath", return_value=f"{settings.storage_path}/nonexistent.mp4"
-        ):
-            with patch("worker.main.os.path.exists", return_value=False):
-                with patch("worker.main.os.remove") as mock_remove:
-                    count = await cleanup_expired_jobs()
-                    # Job should still be deleted even if file doesn't exist
-                    assert count == 1
-                    mock_remove.assert_not_called()
+            "worker.main.os.path.realpath", return_value=f"{settings.storage_path}/nonexistent.mp4",
+        ), patch("worker.main.os.path.exists", return_value=False):
+            with patch("worker.main.os.remove") as mock_remove:
+                count = await cleanup_expired_jobs()
+                # Job should still be deleted even if file doesn't exist
+                assert count == 1
+                mock_remove.assert_not_called()
 
     @pytest.mark.unit
     async def test_cleanup_expired_jobs_ignores_pending(self, db_session):
@@ -176,8 +174,7 @@ class TestCleanupExpiredJobs:
         await db_session.commit()
 
         with patch(
-            "worker.main.os.path.realpath", return_value=f"{settings.storage_path}/test0.mp4"
-        ):
-            with patch("worker.main.os.path.exists", return_value=False):
-                count = await cleanup_expired_jobs()
-                assert count == 3
+            "worker.main.os.path.realpath", return_value=f"{settings.storage_path}/test0.mp4",
+        ), patch("worker.main.os.path.exists", return_value=False):
+            count = await cleanup_expired_jobs()
+            assert count == 3

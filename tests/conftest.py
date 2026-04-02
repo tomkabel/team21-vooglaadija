@@ -68,18 +68,54 @@ def override_get_db():
 fastapi_app.dependency_overrides[get_db] = override_get_db()
 
 
-@pytest.fixture(scope="function", autouse=True)
-async def setup_database() -> AsyncGenerator[None, None]:
-    """Create tables before each test and drop after.
-
-    Uses IF NOT EXISTS / IF EXISTS to handle race conditions when
-    tests run in parallel with pytest-xdist on SQLite.
-    """
+@pytest.fixture(scope="session", autouse=True)
+async def setup_database_session() -> AsyncGenerator[None, None]:
+    """Create tables once per session. Tables persist until session end."""
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+    # Tables are dropped at session end - safe because all tests are done
+    try:
+        async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+    except Exception:
+        pass  # Ignore errors during cleanup
+
+
+@pytest.fixture(scope="function", autouse=True)
+async def setup_database(setup_database_session: None) -> AsyncGenerator[None, None]:
+    """Provide test isolation by cleaning data between tests.
+
+    Uses transaction rollback pattern: each test runs in a transaction
+    that is rolled back at teardown, ensuring clean state.
+    """
+    async with test_engine.connect() as conn:
+        trans = await conn.begin()
+        try:
+            yield
+        finally:
+            await trans.rollback()
+    # Tables are dropped at session end - safe because all tests are done
+    try:
+        async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+    except Exception:
+        pass  # Ignore errors during cleanup
+
+
+@pytest.fixture(scope="function", autouse=True)
+async def setup_database(setup_database_session: None) -> AsyncGenerator[None, None]:
+    """Provide test isolation by cleaning data between tests.
+
+    Uses transaction rollback pattern: each test runs in a transaction
+    that is rolled back at teardown, ensuring clean state.
+    """
+    async with test_engine.connect() as conn:
+        trans = await conn.begin()
+        try:
+            yield
+        finally:
+            await trans.rollback()
 
 
 @pytest.fixture
@@ -95,7 +131,9 @@ def sample_url() -> str:
 
 
 async def create_test_user_and_login(
-    client, email: str = "downloads@example.com", password: str = "securepassword123"
+    client,
+    email: str = "downloads@example.com",
+    password: str = "securepassword123",
 ) -> dict:
     """Helper to register and login a test user, returning auth headers."""
     register_resp = await client.post(

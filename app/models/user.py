@@ -19,10 +19,10 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
     )
 
     # Relationships
     download_jobs: Mapped[list["DownloadJob"]] = relationship(
-        "DownloadJob", back_populates="user", lazy="selectin"
+        "DownloadJob", back_populates="user", lazy="selectin",
     )
