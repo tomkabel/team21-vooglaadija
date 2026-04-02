@@ -104,3 +104,4 @@ site/
 tmp/
 temp/
 *.tmp
+coverage.xml
