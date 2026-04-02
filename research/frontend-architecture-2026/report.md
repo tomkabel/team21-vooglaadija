@@ -83,6 +83,7 @@ Browser → FastAPI Server → PostgreSQL / Redis
 ```python
 # app/main.py — FastAPI returns HTML fragments, not JSON
 from fastapi import FastAPI, Request, Form
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 templates = Jinja2Templates(directory="templates")
@@ -232,7 +233,7 @@ React 19's compiler (formerly React Forget) handles most memoization automatical
 | Layer | Technology | Rationale |
 |-------|-----------|-----------|
 | **Framework** | Next.js 16 (App Router) | Industry standard, largest ecosystem, RSC support |
-| **Language** | TypeScript 5 (strict mode) | Catches 82% of runtime errors at compile time |
+| **Language** | TypeScript 6.0+ (strict mode) | Catches 82% of runtime errors at compile time |
 | **UI Components** | shadcn/ui + Radix UI | Accessible, composable, copy-paste components |
 | **Styling** | Tailwind CSS v4 | Utility-first, zero-runtime, container queries |
 | **State: Server** | TanStack Query v5 | Caching, optimistic updates, background refetch |
@@ -354,7 +355,7 @@ app/
 └── config.py
 ```
 
-**No separate frontend directory. No `package.json`. No build step.**
+**No separate frontend directory, no `package.json`, and no build step.**
 
 ### Upgrade Path: Next.js (if complexity grows)
 
