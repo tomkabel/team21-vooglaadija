@@ -15,7 +15,7 @@ dependencies = [
     "redis",
     "python-jose[cryptography]",
     "passlib[bcrypt]",
-    "bcrypt>=4.0.1",
+    "bcrypt>=4.0.1,<5",
     "pydantic",
     "pydantic-settings",
     "yt-dlp",
@@ -66,7 +66,7 @@ test = [
     "pytest-xdist>=3.0.0",
     "httpx>=0.24.0",
     "aiosqlite>=0.19.0",
-    "bcrypt>=4.0.1",
+    "bcrypt>=4.0.1,<5",
 ]
 lint = [
     "ruff>=0.1.0",
@@ -337,7 +337,6 @@ exclude_lines = [
 ]
 show_missing = true
 skip_covered = false
-exclude-programs = ["mypy", "ruff"]
 
 [tool.coverage.html]
 directory = "htmlcov"
@@ -456,39 +455,6 @@ db = false
 ignore = [
     # Add CVEs to ignore here
 ]
-
-# ============================================
-# ALEMBIC CONFIGURATION
-# ============================================
-[tool.alembic]
-# Path to migration scripts
-script_location = "alembic"
-# Template for new migration files
-file_template = "%%(year)d_%%(month).2d_%%(day).2d_%%(rev)s_%%(slug)s"
-# Append revision instead of replacing
-append_revision = true
-
-version_path_separator = "os"  # Use os.pathsep. Default configuration used for new projects.
-# version_locations = "%(here)s/bar:%(here)s/bat:migrations"  # %()s refers to a function
-
-# [tool.alembic.test]
-# assert_extension = "mod"
-
-[tool.alembic.branch]
-# Branch labels can be used to indicate the branch the revision belongs to
-# branch_labels = %(branch_labels)s
-# # "legacy" or "heads" - determines how revision symbols are resolved
-# branch_merge_style = "heads"
-
-[tool.alembic.generate]
-# Template for new migration scripts
-# template_name = "generic"
-
-# [tool.alembic.opts]
-# Command line options that can be set using `alembic -c alembic.ini`
-# post_write_hooks = "lint"  # e.g. "lint foo"
-# post_write_hooks = "ruff check --fix"
-
 
 # ============================================
 # LOGGING CONFIGURATION
