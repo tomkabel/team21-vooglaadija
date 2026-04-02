@@ -64,7 +64,11 @@ fastapi_app.dependency_overrides[get_db] = override_get_db()
 
 @pytest.fixture(scope="function", autouse=True)
 async def setup_database() -> AsyncGenerator[None, None]:
-    """Create tables before each test and drop after."""
+    """Create tables before each test and drop after.
+
+    Uses IF NOT EXISTS / IF EXISTS to handle race conditions when
+    tests run in parallel with pytest-xdist on SQLite.
+    """
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
@@ -88,13 +92,22 @@ async def create_test_user_and_login(
     client, email: str = "downloads@example.com", password: str = "securepassword123"
 ) -> dict:
     """Helper to register and login a test user, returning auth headers."""
-    await client.post(
+    register_resp = await client.post(
         "/api/v1/auth/register",
         json={"email": email, "password": password},
     )
-    response = await client.post(
+    assert register_resp.status_code in (200, 201), (
+        f"Registration failed: {register_resp.status_code} - {register_resp.text}"
+    )
+
+    login_resp = await client.post(
         "/api/v1/auth/login",
         json={"email": email, "password": password},
     )
-    token = response.json()["access_token"]
+    assert login_resp.status_code == 200, (
+        f"Login failed: {login_resp.status_code} - {login_resp.text}"
+    )
+    login_data = login_resp.json()
+    assert "access_token" in login_data, f"access_token not in login response: {login_resp.text}"
+    token = login_data["access_token"]
     return {"Authorization": f"Bearer {token}"}

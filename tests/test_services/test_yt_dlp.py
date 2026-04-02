@@ -190,11 +190,11 @@ class TestExtractMediaUrl:
                 await extract_media_url(sample_url, temp_storage_path)
 
     @pytest.mark.asyncio
-    async def test_extract_media_url_raises_storage_error_if_dir_creation_fails(
-        self, sample_url
-    ):
+    async def test_extract_media_url_raises_storage_error_if_dir_creation_fails(self, sample_url):
         """StorageError raised when the download directory cannot be created."""
-        with patch("app.services.yt_dlp_service.os.makedirs", side_effect=OSError("Permission denied")):
+        with patch(
+            "app.services.yt_dlp_service.os.makedirs", side_effect=OSError("Permission denied")
+        ):
             with pytest.raises(StorageError, match="Failed to create download directory"):
                 await extract_media_url(sample_url, "/nonexistent/readonly/path")
 

@@ -12,15 +12,17 @@ from app.main import app
 from app.models.download_job import DownloadJob
 
 
-async def create_test_user_and_login(client: AsyncClient) -> tuple[str, str]:
+async def create_test_user_and_login(
+    client: AsyncClient, email: str = "downloads@example.com"
+) -> str:
     """Helper: register a user and return access token."""
     await client.post(
         "/api/v1/auth/register",
-        json={"email": "downloads@example.com", "password": "testpassword123"},
+        json={"email": email, "password": "testpassword123"},
     )
     response = await client.post(
         "/api/v1/auth/login",
-        json={"email": "downloads@example.com", "password": "testpassword123"},
+        json={"email": email, "password": "testpassword123"},
     )
     return response.json()["access_token"]
 
@@ -488,25 +490,12 @@ async def test_list_downloads_page_2(db_session: AsyncSession):
     assert data["pagination"]["per_page"] == 2
 
 
-async def _register_and_login(client, email: str) -> str:
-    """Helper: register a unique user and return their access token."""
-    await client.post(
-        "/api/v1/auth/register",
-        json={"email": email, "password": "testpassword123"},
-    )
-    response = await client.post(
-        "/api/v1/auth/login",
-        json={"email": email, "password": "testpassword123"},
-    )
-    return response.json()["access_token"]
-
-
 @pytest.mark.asyncio
 async def test_list_downloads_user_isolation():
     """Test that user A cannot see user B's download jobs."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        token_a = await _register_and_login(client, "isolation_a@example.com")
-        token_b = await _register_and_login(client, "isolation_b@example.com")
+        token_a = await create_test_user_and_login(client, "isolation_a@example.com")
+        token_b = await create_test_user_and_login(client, "isolation_b@example.com")
 
         # User A creates a download
         create_resp = await client.post(

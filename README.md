@@ -8,6 +8,8 @@ High-performance YouTube media extraction API with async processing
 [![License](https://img.shields.io/badge/License-GPLv3-A41E35?style=for-the-badge&logo=gnu&logoColor=white)](https://www.gnu.org/licenses/gpl-3.0.html)
 [![Version](https://img.shields.io/badge/Version-0.0.1-22D3EE?style=for-the-badge)](https://github.com/yourusername/vooglaadija)
 [![FastAPI](https://img.shields.io/badge/FastAPI-26A69A?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![HTMX](https://img.shields.io/badge/HTMX-5967AF?style=for-the-badge)](https://htmx.org/)
+[![Jinja2](https://img.shields.io/badge/Jinja2-B41717?style=for-the-badge&logo=jinja2)](https://jinja.palletsprojects.com/)
 [![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Redis](https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io/)
@@ -28,6 +30,7 @@ High-performance YouTube media extraction API with async processing
 ## 📋 Table of Contents
 
 - [Overview](#-overview)
+- [Project Roadmap](#-project-roadmap)
 - [Features](#-features)
 - [Quick Start](#-quick-start)
 - [Usage](#-usage)
@@ -47,6 +50,27 @@ High-performance YouTube media extraction API with async processing
 
 The system employs a decoupled architecture: the FastAPI application handles authentication, job management, and file delivery, while a dedicated worker process consumes jobs from Redis and performs media extraction using yt-dlp.
 
+A modern **HTMX-powered web interface** provides users with a seamless experience for registering, logging in, and managing their downloads directly from the browser.
+
+---
+
+## 🎯 Project Roadmap
+
+This project follows an 8-week development timeline designed for working group projects:
+
+| Week | Focus Area | Deliverables |
+|------|------------|--------------|
+| Week 1 | Foundation | HTMX setup, Jinja2 templates, base layout |
+| Week 2 | Auth UI | Login/register pages, CSRF protection |
+| Week 3 | Downloads Dashboard | Downloads list, create form, job status |
+| Week 4 | Job Status & Polling | Real-time status updates |
+| Week 5 | Validation & Errors | URL validation, error messages |
+| Week 6 | Swagger Docs | Enhanced API documentation |
+| Week 7 | Testing & Polish | Manual testing, edge cases |
+| Week 8 | Cloud (Optional) | AWS deployment if required |
+
+See [PROJECT_ROADMAP.md](./PROJECT_ROADMAP.md) for the detailed timeline.
+
 ---
 
 ## ✨ Features
@@ -58,6 +82,9 @@ The system employs a decoupled architecture: the FastAPI application handles aut
 - **⏰ Expiring Downloads** — Time-limited download links (configurable, default 24h)
 - **🐳 Container-Ready** — Multi-stage Docker builds with multi-arch support
 - **🧪 Test Suite** — Comprehensive pytest coverage with async test support
+- **🌐 HTMX Frontend** — Dynamic web UI with login, register, and downloads dashboard
+- **📥 Download Dashboard** — User-friendly interface to manage download jobs
+- **🔄 Real-time Status** — HTMX-powered polling for live job status updates
 
 ---
 
@@ -94,12 +121,23 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your settings
 
+# Run database migrations
+alembic upgrade head
+
 # Run the API
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 # Run the worker (separate terminal)
 python -m worker.main
 ```
+
+### Access the Web Interface
+
+Once running, access the HTMX frontend at:
+- **Home:** http://localhost:8000/
+- **Login:** http://localhost:8000/login
+- **Register:** http://localhost:8000/register
+- **Downloads:** http://localhost:8000/downloads (requires login)
 
 ---
 
@@ -168,6 +206,21 @@ curl -X GET "http://localhost:8000/api/v1/downloads/550e8400-e29b-41d4-a716-4466
 
 ## 🔌 API Reference
 
+### Web UI Routes
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/` | Home page |
+| `GET` | `/login` | Login page |
+| `POST` | `/login` | Login form submission |
+| `GET` | `/register` | Registration page |
+| `POST` | `/register` | Registration form submission |
+| `GET` | `/logout` | Logout and redirect |
+| `GET` | `/downloads` | Downloads dashboard |
+| `GET` | `/downloads/{id}/status` | Job status (HTMX partial) |
+
+### REST API Endpoints
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/v1/auth/register` | Register new user account |
@@ -216,6 +269,22 @@ curl -X GET "http://localhost:8000/api/v1/downloads/550e8400-e29b-41d4-a716-4466
 - `passlib[bcrypt]` — Password hashing
 - `yt-dlp` — Media extraction engine
 - `pytest` — Testing framework
+- `Jinja2` — Template engine for HTMX pages
+- `HTMX` — Dynamic frontend interactions
+
+### Project Structure
+
+```
+app/
+├── api/routes/
+│   ├── pages.py         # HTMX page routes
+│   └── downloads.py     # Download API endpoints
+├── templates/           # Jinja2 templates
+│   ├── base.html
+│   ├── pages/          # Login, register, downloads
+│   └── partials/       # Navbar, cards, forms
+└── static/css/         # Stylesheets
+```
 
 ---
 
@@ -268,6 +337,15 @@ We welcome contributions! Please follow these guidelines:
 4. **Push** to your fork and **create** a Pull Request
 5. **Ensure** all tests pass before merging
 
+### Week-by-Week Workflow
+
+This is designed as an 8-week working group project. Each week has specific deliverables:
+
+- **Week 1-2:** Complete foundation and authentication UI
+- **Week 3-4:** Complete downloads dashboard and status polling
+- **Week 5-7:** Polish and testing
+- **Week 8:** Cloud deployment (if required)
+
 ### Branch Strategy
 
 - `main` — Production-ready code only
@@ -290,6 +368,18 @@ pytest tests/ --cov=app --cov-report=term-missing
 # Run specific test file
 pytest tests/test_api/test_auth.py -v
 ```
+
+### Manual Test Checklist
+
+Before demoing, verify:
+- [ ] Register new user works
+- [ ] Login with wrong password shows error
+- [ ] Login with correct password redirects
+- [ ] Create download with invalid URL shows error
+- [ ] Create download with valid URL appears in list
+- [ ] Status updates during processing
+- [ ] Completed file downloads successfully
+- [ ] Logout redirects to login
 
 ---
 

@@ -54,12 +54,15 @@ async def register(
     db.add(user)
     try:
         await db.commit()
-    except IntegrityError:
+    except IntegrityError as e:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Email already registered",
-        ) from None
+        pgcode = getattr(e.orig, "pgcode", None)
+        if pgcode == "23505":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email already registered",
+            ) from None
+        raise
     await db.refresh(user)
 
     return UserResponse(id=user.id, email=user.email)

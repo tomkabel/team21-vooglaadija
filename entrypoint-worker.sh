@@ -8,4 +8,4 @@ mkdir -p /app/storage/downloads /app/storage/temp
 chown -R appuser:appuser /app/storage
 
 echo "Starting worker..."
-exec su -s /bin/sh appuser -c "python -m worker.main"
+exec gosu appuser python -m worker.main

@@ -137,13 +137,38 @@ See `DOCKER-MONITORING.md` for detailed options:
 
 ## Testing
 
-```bash
-# Run tests
-pytest tests/ --cov=app
+This project uses **Hatch** as the test runner with **pytest-xdist** for parallel execution.
 
-# Specific test file
-pytest tests/test_api/test_auth.py -v
+```bash
+# Run all tests
+hatch run test:all
+
+# Run unit tests only
+hatch run test:unit
+
+# Run integration tests only
+hatch run test:integration
+
+# Run with coverage
+hatch run test:cov
+
+# Generate HTML coverage report
+hatch run test:cov-html
 ```
+
+### Test Markers
+
+The project defines custom pytest markers:
+- `@pytest.mark.unit` - Unit tests
+- `@pytest.mark.integration` - Integration tests
+- `@pytest.mark.slow` - Slow tests (skip with `-m "not slow"`)
+
+### Test Database
+
+Tests use **SQLite with aiosqlite** for isolation:
+- Per-worker database files: `test_{worker_id}.db`
+- Automatically handles parallel execution via pytest-xdist
+- No external database required for most tests
 
 ---
 

@@ -32,18 +32,12 @@ def is_youtube_url(url: str) -> bool:
         if scheme not in ("http", "https"):
             return False
 
-        netloc = parsed.netloc.lower()
-        # Strip port if present (e.g., "youtube.com:443" -> "youtube.com")
-        hostname = netloc.rsplit(":", 1)[0] if ":" in netloc else netloc
+        hostname = parsed.hostname
+        if hostname is None:
+            return False
+        hostname = hostname.lower()
 
         # Exact domain matching — no substring checks
-        if hostname in _YOUTUBE_DOMAINS:
-            return True
-        if hostname in _YOUTUBE_SHORT_DOMAINS:
-            return True
-        if hostname in _YOUTUBE_NOCOOKIE_DOMAINS:
-            return True
-
-        return False
+        return hostname in (_YOUTUBE_DOMAINS | _YOUTUBE_SHORT_DOMAINS | _YOUTUBE_NOCOOKIE_DOMAINS)
     except (ValueError, AttributeError):
         return False

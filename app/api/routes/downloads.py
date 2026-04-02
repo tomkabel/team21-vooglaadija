@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.api.dependencies import CurrentUser, DbSession
 from app.config import settings
@@ -57,7 +57,7 @@ async def _get_user_job(db, user_id: str, job_id: str) -> DownloadJob:
             DownloadJob.user_id == user_id,
         )
     )
-    job = result.scalar_one_or_none()
+    job: DownloadJob | None = result.scalar_one_or_none()
     if not job:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -86,7 +86,17 @@ async def create_download(
     await db.commit()
     await db.refresh(job)
 
-    await enqueue_job(job_id)
+    try:
+        await enqueue_job(job_id)
+    except Exception:
+        logger.error(f"Failed to enqueue job {job_id}, marking as enqueue_failed")
+        await db.execute(
+            update(DownloadJob)
+            .where(DownloadJob.id == job_id)
+            .values(status="enqueue_failed", error="Failed to enqueue job")
+        )
+        await db.commit()
+        await db.refresh(job)
 
     return DownloadResponse(
         id=job.id,
@@ -189,11 +199,16 @@ async def get_download_file(
         )
 
     # Check if download has expired
-    if job.expires_at and job.expires_at < datetime.now(UTC):
-        raise HTTPException(
-            status_code=status.HTTP_410_GONE,
-            detail="Download link has expired",
-        )
+    now = datetime.now(UTC)
+    expires_at = job.expires_at
+    if expires_at:
+        if expires_at.tzinfo is None:  # type: ignore[attr-defined]
+            expires_at = expires_at.replace(tzinfo=UTC)  # type: ignore[attr-defined]
+        if expires_at <= now:  # type: ignore[operator]
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail="Download link has expired",
+            )
 
     # Validate path is within storage directory (prevents path traversal)
     safe_path = _validate_file_path(job.file_path)
@@ -224,19 +239,20 @@ async def delete_download(
     """Delete a download job and its associated file."""
     job = await _get_user_job(db, str(current_user.id), job_id)
 
-    # Delete DB record first (source of truth), then clean up file
-    await db.delete(job)
-    await db.commit()
-
+    # Validate and clean up file before DB deletion
     if job.file_path:
         try:
-            # Validate path before deletion
             safe_path = _validate_file_path(job.file_path)
             if os.path.isfile(safe_path):
                 os.remove(safe_path)
                 logger.info(f"Deleted file: {safe_path}")
         except HTTPException:
-            raise
+            # Path validation failed — log and proceed with DB cleanup
+            safe_job_id = job_id.replace("\r", "").replace("\n", "")
+            logger.warning(f"Invalid file path for job {safe_job_id}: {job.file_path}")
         except OSError as e:
-            # File deletion failure is non-fatal — DB record is already gone
             logger.warning(f"Failed to delete file {job.file_path}: {e}")
+
+    # Delete DB record (source of truth)
+    await db.delete(job)
+    await db.commit()

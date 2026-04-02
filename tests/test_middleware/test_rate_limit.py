@@ -53,7 +53,8 @@ class TestRateLimiter:
         limiter = RateLimiter(redis_client=mock_redis, max_requests=5, window_seconds=60)
         now = time.time()
         oldest_timestamp = now - 30
-        mock_redis.zrange = AsyncMock(return_value=[(b"key", oldest_timestamp)])
+        # zrange(withscores=True) returns list of (member_bytes, score_float) tuples
+        mock_redis.zrange = AsyncMock(return_value=[(b"member_key", oldest_timestamp)])
         retry_after = await limiter.get_retry_after("test-key")
         assert 29 <= retry_after <= 31
 

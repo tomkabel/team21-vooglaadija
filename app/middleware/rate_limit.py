@@ -42,7 +42,11 @@ class RateLimiter:
         # Set expiry on the key
         pipe.expire(key, self.window)
 
-        results = await pipe.execute()
+        try:
+            results = await pipe.execute()
+        except aioredis.ConnectionError:
+            # Fail open on Redis connection errors
+            return True
 
         # Handle case where redis is not available
         if not results or len(results) < 4:
@@ -63,7 +67,11 @@ class RateLimiter:
             Seconds until the oldest request expires
         """
         now = time.time()
-        oldest = await self.redis.zrange(key, 0, 0, withscores=True)
+        try:
+            oldest = await self.redis.zrange(key, 0, 0, withscores=True)
+        except aioredis.ConnectionError:
+            # Fail open on Redis connection errors
+            return 0
         if not oldest:
             return 0
         oldest_timestamp = oldest[0][1]

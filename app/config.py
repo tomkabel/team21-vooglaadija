@@ -31,43 +31,52 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_and_construct(self) -> "Settings":
         # TESTING override — skip all validation
-        if os.environ.get("TESTING"):
-            if not self.database_url:
+        testing_env = os.environ.get("TESTING", "").strip().lower()
+        if testing_env in ("1", "true", "yes", "y", "on"):
+            if not self.database_url.strip():
                 self.database_url = "sqlite+aiosqlite:///:memory:"
             return self
 
         # Construct DATABASE_URL from components if not set directly
-        if not self.database_url:
-            if not self.db_password:
+        if not self.database_url.strip():
+            if not self.db_password.strip():
                 raise ValueError(
                     "Either DATABASE_URL or DB_PASSWORD must be set. "
                     "For Docker: set DB_PASSWORD in .env. "
                     "For local dev: set DATABASE_URL in .env."
                 )
-            self.database_url = (
-                f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
-                f"@localhost:5432/{self.db_name}"
+            from sqlalchemy.engine import URL as SA_URL  # noqa: PLC0415  # noqa: PLC0415
+
+            db_url = SA_URL.create(
+                drivername="postgresql+asyncpg",
+                username=self.db_user,
+                password=self.db_password,
+                host="localhost",
+                port=5432,
+                database=self.db_name,
             )
+            self.database_url = db_url.render_as_string(hide_password=False)
 
         # Validate SECRET_KEY
-        if not self.secret_key:
+        if not self.secret_key.strip():
             raise ValueError(
                 "SECRET_KEY is required. "
                 'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
             )
 
+        secret_key_stripped = self.secret_key.strip()
         weak_defaults = (
             "change-me",
             "change-this-secret-key",
             "change-this-secret-key-for-testing-only-min-32-chars",
             "change-this-secret-key-for-local-dev-only-not-secure-32chars",
         )
-        if self.secret_key in weak_defaults:
+        if secret_key_stripped in weak_defaults:
             raise ValueError(
                 "SECRET_KEY must be changed from default value. "
                 'Generate a secure key with: python -c "import secrets; print(secrets.token_hex(32))"'
             )
-        if len(self.secret_key) < 32:
+        if len(secret_key_stripped) < 32:
             raise ValueError("SECRET_KEY must be at least 32 characters for security")
 
         # Warn on wildcard CORS
