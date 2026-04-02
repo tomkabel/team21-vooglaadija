@@ -64,9 +64,13 @@ class TestProcessNextJob:
         db_session.add(job)
         await db_session.commit()
 
-        with patch("worker.processor.redis_client", mock_redis_client), patch(
-            "worker.processor.extract_media_url", new_callable=AsyncMock,
-        ) as mock_extract:
+        with (
+            patch("worker.processor.redis_client", mock_redis_client),
+            patch(
+                "worker.processor.extract_media_url",
+                new_callable=AsyncMock,
+            ) as mock_extract,
+        ):
             mock_extract.return_value = ("/storage/test.mp4", "test.mp4")
             mock_redis_client.rpop = AsyncMock(return_value="test-job-123")
 
@@ -99,9 +103,13 @@ class TestProcessNextJob:
         db_session.add(job)
         await db_session.commit()
 
-        with patch("worker.processor.redis_client", mock_redis_client), patch(
-            "worker.processor.extract_media_url", new_callable=AsyncMock,
-        ) as mock_extract:
+        with (
+            patch("worker.processor.redis_client", mock_redis_client),
+            patch(
+                "worker.processor.extract_media_url",
+                new_callable=AsyncMock,
+            ) as mock_extract,
+        ):
             with patch("worker.processor.enqueue_job", new_callable=AsyncMock) as mock_enqueue:
                 mock_extract.side_effect = Exception("Download failed")
                 mock_redis_client.rpop = AsyncMock(return_value="test-job-fail")

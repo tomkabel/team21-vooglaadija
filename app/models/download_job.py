@@ -24,7 +24,10 @@ class DownloadJob(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id"), nullable=False, index=True,
+        String(36),
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
     )
     url: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
@@ -35,11 +38,15 @@ class DownloadJob(Base):
     max_retries: Mapped[int] = mapped_column(Integer, default=DEFAULT_MAX_RETRIES)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
     )
     completed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[DateTime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True,
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
     )
 
     # Relationships

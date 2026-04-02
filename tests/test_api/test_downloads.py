@@ -13,7 +13,8 @@ from app.models.download_job import DownloadJob
 
 
 async def create_test_user_and_login(
-    client: AsyncClient, email: str = "downloads@example.com",
+    client: AsyncClient,
+    email: str = "downloads@example.com",
 ) -> str:
     """Helper: register a user and return access token."""
     await client.post(

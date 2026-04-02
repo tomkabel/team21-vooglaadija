@@ -30,7 +30,6 @@ High-performance YouTube media extraction API with async processing
 ## 📋 Table of Contents
 
 - [Overview](#-overview)
-- [Project Roadmap](#-project-roadmap)
 - [Features](#-features)
 - [Quick Start](#-quick-start)
 - [Usage](#-usage)
@@ -51,25 +50,6 @@ High-performance YouTube media extraction API with async processing
 The system employs a decoupled architecture: the FastAPI application handles authentication, job management, and file delivery, while a dedicated worker process consumes jobs from Redis and performs media extraction using yt-dlp.
 
 A modern **HTMX-powered web interface** provides users with a seamless experience for registering, logging in, and managing their downloads directly from the browser.
-
----
-
-## 🎯 Project Roadmap
-
-This project follows an 8-week development timeline designed for working group projects:
-
-| Week | Focus Area | Deliverables |
-|------|------------|--------------|
-| Week 1 | Foundation | HTMX setup, Jinja2 templates, base layout |
-| Week 2 | Auth UI | Login/register pages, CSRF protection |
-| Week 3 | Downloads Dashboard | Downloads list, create form, job status |
-| Week 4 | Job Status & Polling | Real-time status updates |
-| Week 5 | Validation & Errors | URL validation, error messages |
-| Week 6 | Swagger Docs | Enhanced API documentation |
-| Week 7 | Testing & Polish | Manual testing, edge cases |
-| Week 8 | Cloud (Optional) | AWS deployment if required |
-
-See [PROJECT_ROADMAP.md](./PROJECT_ROADMAP.md) for the detailed timeline.
 
 ---
 

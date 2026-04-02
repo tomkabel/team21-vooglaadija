@@ -128,29 +128,24 @@ def reload_settings() -> Settings:
 
 
 class _SettingsProxy:
-    """Lazy proxy for settings that initializes on first attribute access.
+    """Lazy proxy for settings that delegates to _SettingsHolder.
 
     This allows `from app.config import settings` to work without triggering
-    validation at import time. Validation occurs only when settings attributes
-    are actually accessed.
+    validation at import time. Both the proxy and the holder share the same
+    underlying Settings instance.
     """
 
     def __init__(self) -> None:
-        self._instance: Settings | None = None
-
-    def _get_instance(self) -> Settings:
-        if self._instance is None:
-            self._instance = Settings()
-        return self._instance
+        pass  # No internal instance — delegate to _SettingsHolder
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._get_instance(), name)
+        return getattr(_SettingsHolder.get(), name)
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name.startswith("_"):
             super().__setattr__(name, value)
         else:
-            setattr(self._get_instance(), name, value)
+            setattr(_SettingsHolder.get(), name, value)
 
 
 # For backward compatibility: import settings from app.config works seamlessly

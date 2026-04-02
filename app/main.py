@@ -61,6 +61,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         404: ErrorCode.NOT_FOUND,
         405: ErrorCode.VALIDATION_ERROR,
         406: ErrorCode.VALIDATION_ERROR,
+        409: ErrorCode.RESOURCE_CONFLICT,
         415: ErrorCode.VALIDATION_ERROR,
         422: ErrorCode.VALIDATION_ERROR,
         429: ErrorCode.RATE_LIMIT_EXCEEDED,

@@ -9,6 +9,8 @@ from app.config import settings
 from app.models.download_job import DownloadJob
 from worker.main import cleanup_expired_jobs
 
+_DOWNLOADS_DIR = f"{settings.storage_path}/downloads"
+
 
 class TestCleanupExpiredJobs:
     """Tests for cleanup_expired_jobs function."""
@@ -33,8 +35,8 @@ class TestCleanupExpiredJobs:
 
     @pytest.mark.unit
     async def test_cleanup_expired_jobs_deletes_expired(self, db_session):
-        """Test cleanup deletes expired jobs."""
-        # Create an expired job with file path within storage
+        """Test cleanup deletes expired jobs and their files."""
+        # Create an expired job with file path within downloads directory
         past_time = datetime.now(UTC) - timedelta(hours=1)
         job = DownloadJob(
             id="expired-job-1",
@@ -42,18 +44,23 @@ class TestCleanupExpiredJobs:
             url="https://www.youtube.com/watch?v=test",
             status="completed",
             expires_at=past_time,
-            file_path=f"{settings.storage_path}/test.mp4",
+            file_path=f"{_DOWNLOADS_DIR}/test.mp4",
         )
         db_session.add(job)
         await db_session.commit()
 
-        # Mock file operations to avoid actual file deletion
-        with patch(
-            "worker.main.os.path.realpath", return_value=f"{settings.storage_path}/test.mp4",
-        ), patch("worker.main.os.path.exists", return_value=False):
-            with patch("worker.main.os.remove", create=True):
+        # Mock file operations: realpath resolves to downloads dir, file exists
+        with (
+            patch(
+                "worker.main.os.path.realpath",
+                return_value=f"{_DOWNLOADS_DIR}/test.mp4",
+            ),
+            patch("worker.main.os.path.exists", return_value=True),
+        ):
+            with patch("worker.main.os.remove") as mock_remove:
                 count = await cleanup_expired_jobs()
                 assert count == 1
+                mock_remove.assert_called_once_with(f"{_DOWNLOADS_DIR}/test.mp4")
 
     @pytest.mark.unit
     async def test_cleanup_expired_jobs_skips_path_traversal(self, db_session):
@@ -102,15 +109,19 @@ class TestCleanupExpiredJobs:
             url="https://www.youtube.com/watch?v=test",
             status="completed",
             expires_at=past_time,
-            file_path=f"{settings.storage_path}/nonexistent.mp4",
+            file_path=f"{_DOWNLOADS_DIR}/nonexistent.mp4",
         )
         db_session.add(job)
         await db_session.commit()
 
         # os.path.exists returns False for missing file
-        with patch(
-            "worker.main.os.path.realpath", return_value=f"{settings.storage_path}/nonexistent.mp4",
-        ), patch("worker.main.os.path.exists", return_value=False):
+        with (
+            patch(
+                "worker.main.os.path.realpath",
+                return_value=f"{_DOWNLOADS_DIR}/nonexistent.mp4",
+            ),
+            patch("worker.main.os.path.exists", return_value=False),
+        ):
             with patch("worker.main.os.remove") as mock_remove:
                 count = await cleanup_expired_jobs()
                 # Job should still be deleted even if file doesn't exist
@@ -168,13 +179,17 @@ class TestCleanupExpiredJobs:
                 url="https://www.youtube.com/watch?v=test",
                 status="completed",
                 expires_at=past_time,
-                file_path=f"{settings.storage_path}/test{i}.mp4",
+                file_path=f"{_DOWNLOADS_DIR}/test{i}.mp4",
             )
             db_session.add(job)
         await db_session.commit()
 
-        with patch(
-            "worker.main.os.path.realpath", return_value=f"{settings.storage_path}/test0.mp4",
-        ), patch("worker.main.os.path.exists", return_value=False):
+        with (
+            patch(
+                "worker.main.os.path.realpath",
+                return_value=f"{_DOWNLOADS_DIR}/test0.mp4",
+            ),
+            patch("worker.main.os.path.exists", return_value=False),
+        ):
             count = await cleanup_expired_jobs()
             assert count == 3

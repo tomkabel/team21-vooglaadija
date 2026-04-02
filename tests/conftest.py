@@ -16,7 +16,7 @@ else:
     _test_db_path = os.path.abspath(f"test_{_worker_id}.db")
     _test_db_url = f"sqlite+aiosqlite:///{_test_db_path}"
 
-# Force reconfigure the database URL before any app imports
+# Force reconfigure the database URL before any other imports
 # This ensures the app uses SQLite instead of PostgreSQL
 import app.config  # noqa: E402
 
@@ -38,14 +38,42 @@ from app.main import app as fastapi_app  # noqa: E402
 TEST_DATABASE_URL = _test_db_url
 
 
-test_engine = create_async_engine(
-    TEST_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=NullPool,
-)
+# Build connect_args only for SQLite (asyncpg doesn't accept check_same_thread)
+_engine_kwargs: dict = {"poolclass": NullPool}
+if not _use_postgres:
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+
+test_engine = create_async_engine(TEST_DATABASE_URL, **_engine_kwargs)
 
 # Use the same engine for TestingSessionLocal
 TestingSessionLocal = sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+
+
+def _sync_create_tables():
+    """Create tables synchronously at import time."""
+
+    sync_url = TEST_DATABASE_URL.replace("sqlite+aiosqlite://", "sqlite://")
+    from sqlalchemy import create_engine as sync_create_engine
+
+    engine = sync_create_engine(sync_url)
+    Base.metadata.create_all(engine)
+    engine.dispose()
+
+
+def _sync_drop_tables():
+    """Drop tables synchronously at cleanup time."""
+
+    sync_url = TEST_DATABASE_URL.replace("sqlite+aiosqlite://", "sqlite://")
+    from sqlalchemy import create_engine as sync_create_engine
+
+    engine = sync_create_engine(sync_url)
+    Base.metadata.drop_all(engine)
+    engine.dispose()
+
+
+# Create tables immediately when conftest is imported
+# This ensures tables exist before any test or fixture runs
+_sync_create_tables()
 
 
 @pytest.fixture(scope="session")
@@ -70,52 +98,26 @@ fastapi_app.dependency_overrides[get_db] = override_get_db()
 
 @pytest.fixture(scope="session", autouse=True)
 async def setup_database_session() -> AsyncGenerator[None, None]:
-    """Create tables once per session. Tables persist until session end."""
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """Tables are created at import time. This fixture handles cleanup."""
     yield
     # Tables are dropped at session end - safe because all tests are done
     try:
-        async with test_engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
+        _sync_drop_tables()
     except Exception:
         pass  # Ignore errors during cleanup
 
 
 @pytest.fixture(scope="function", autouse=True)
 async def setup_database(setup_database_session: None) -> AsyncGenerator[None, None]:
-    """Provide test isolation by cleaning data between tests.
+    """Provide test isolation by truncating all tables between tests.
 
-    Uses transaction rollback pattern: each test runs in a transaction
-    that is rolled back at teardown, ensuring clean state.
+    Tables are created once at import time, then truncated before each test
+    to ensure clean state.
     """
-    async with test_engine.connect() as conn:
-        trans = await conn.begin()
-        try:
-            yield
-        finally:
-            await trans.rollback()
-    # Tables are dropped at session end - safe because all tests are done
-    try:
-        async with test_engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
-    except Exception:
-        pass  # Ignore errors during cleanup
-
-
-@pytest.fixture(scope="function", autouse=True)
-async def setup_database(setup_database_session: None) -> AsyncGenerator[None, None]:
-    """Provide test isolation by cleaning data between tests.
-
-    Uses transaction rollback pattern: each test runs in a transaction
-    that is rolled back at teardown, ensuring clean state.
-    """
-    async with test_engine.connect() as conn:
-        trans = await conn.begin()
-        try:
-            yield
-        finally:
-            await trans.rollback()
+    async with test_engine.begin() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            await conn.execute(table.delete())
+    yield
 
 
 @pytest.fixture
