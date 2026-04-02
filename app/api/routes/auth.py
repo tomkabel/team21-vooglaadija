@@ -145,10 +145,11 @@ async def refresh(
         )
 
     access_token = create_access_token(user.id)
+    refresh_token = create_refresh_token(user.id)
 
     return Token(
         access_token=access_token,
-        refresh_token=token_refresh.refresh_token,
+        refresh_token=refresh_token,
         token_type="bearer",
     )
 

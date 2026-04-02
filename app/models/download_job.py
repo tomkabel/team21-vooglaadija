@@ -1,8 +1,13 @@
+from typing import TYPE_CHECKING
+
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 # Default retry configuration
 DEFAULT_MAX_RETRIES = 3
@@ -36,3 +41,6 @@ class DownloadJob(Base):
     expires_at: Mapped[DateTime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
+
+    # Relationships
+    user: Mapped["User"] = relationship("User", back_populates="download_jobs")

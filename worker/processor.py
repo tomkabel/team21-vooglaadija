@@ -5,7 +5,7 @@ from sqlalchemy import select, update
 
 from app.config import settings
 from app.database import AsyncSessionLocal
-from app.models.download_job import DownloadJob
+from app.models.download_job import DEFAULT_MAX_RETRIES, DownloadJob
 from app.services.yt_dlp_service import extract_media_url
 from worker.queue import enqueue_job, redis_client
 
@@ -85,7 +85,7 @@ async def handle_job_failure(db, job: DownloadJob, error_message: str) -> None:
     Otherwise marks as permanently failed.
     """
     retry_count = job.retry_count or 0
-    max_retries = job.max_retries or 3
+    max_retries = job.max_retries or DEFAULT_MAX_RETRIES
 
     if retry_count < max_retries:
         # Increment retry count and re-queue
