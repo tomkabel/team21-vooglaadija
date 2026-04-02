@@ -1,6 +1,5 @@
 """Tests for the rate limiter middleware."""
 
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

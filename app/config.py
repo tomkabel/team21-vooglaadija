@@ -45,7 +45,7 @@ class Settings(BaseSettings):
                     "For Docker: set DB_PASSWORD in .env. "
                     "For local dev: set DATABASE_URL in .env."
                 )
-            from sqlalchemy.engine import URL as SA_URL  # noqa: PLC0415  # noqa: PLC0415
+            from sqlalchemy.engine import URL as SA_URL
 
             db_url = SA_URL.create(
                 drivername="postgresql+asyncpg",

@@ -18,7 +18,7 @@ def _make_production_settings(**kwargs):
     ``app.config.settings`` singleton is left untouched.
     """
     # Import the Settings class (not the singleton) for direct instantiation
-    from app.config import Settings  # noqa: PLC0415
+    from app.config import Settings
 
     saved = {k: os.environ.pop(k, None) for k in _CONFTEST_ENV_VARS}
     try:
@@ -34,20 +34,20 @@ class TestSettingsTestingMode:
 
     def test_testing_env_skips_validation_and_has_sqlite(self):
         """TESTING=1 skips production validation; database_url uses SQLite."""
-        from app.config import settings  # noqa: PLC0415
+        from app.config import settings
 
         assert "sqlite" in settings.database_url
 
     def test_secret_key_is_set_in_test_env(self):
         """In test env, SECRET_KEY comes from the conftest override."""
-        from app.config import settings  # noqa: PLC0415
+        from app.config import settings
 
         assert settings.secret_key != ""
         assert len(settings.secret_key) >= 32
 
     def test_settings_instance_is_populated(self):
         """Settings should have all required fields populated in test mode."""
-        from app.config import settings  # noqa: PLC0415
+        from app.config import settings
 
         assert settings.database_url
         assert settings.secret_key
@@ -59,7 +59,7 @@ class TestPaginationInfoSchema:
     """PaginationInfo schema — new in this PR."""
 
     def test_valid_pagination_info(self):
-        from app.schemas.download import PaginationInfo  # noqa: PLC0415
+        from app.schemas.download import PaginationInfo
 
         p = PaginationInfo(page=1, per_page=20, total=100)
         assert p.page == 1
@@ -67,13 +67,13 @@ class TestPaginationInfoSchema:
         assert p.total == 100
 
     def test_pagination_info_zero_total(self):
-        from app.schemas.download import PaginationInfo  # noqa: PLC0415
+        from app.schemas.download import PaginationInfo
 
         p = PaginationInfo(page=1, per_page=20, total=0)
         assert p.total == 0
 
     def test_pagination_info_large_page(self):
-        from app.schemas.download import PaginationInfo  # noqa: PLC0415
+        from app.schemas.download import PaginationInfo
 
         p = PaginationInfo(page=100, per_page=100, total=9999)
         assert p.page == 100
@@ -83,7 +83,7 @@ class TestDownloadListResponseSchema:
     """DownloadListResponse now requires pagination — new in this PR."""
 
     def test_requires_pagination_field(self):
-        from app.schemas.download import DownloadListResponse, PaginationInfo  # noqa: PLC0415
+        from app.schemas.download import DownloadListResponse, PaginationInfo
 
         response = DownloadListResponse(
             downloads=[],
@@ -93,7 +93,7 @@ class TestDownloadListResponseSchema:
         assert response.pagination.total == 0
 
     def test_missing_pagination_raises_validation_error(self):
-        from app.schemas.download import DownloadListResponse  # noqa: PLC0415
+        from app.schemas.download import DownloadListResponse
 
         with pytest.raises((ValidationError, TypeError)):
             DownloadListResponse(downloads=[])  # type: ignore[PGH003]
@@ -103,14 +103,14 @@ class TestTokenDataRemoved:
     """TokenData was removed from app.schemas.token in this PR."""
 
     def test_token_data_not_present(self):
-        import app.schemas.token as token_module  # noqa: PLC0415
+        import app.schemas.token as token_module
 
         assert not hasattr(token_module, "TokenData"), (
             "TokenData should have been removed from token schemas"
         )
 
     def test_token_and_token_refresh_still_present(self):
-        from app.schemas.token import Token, TokenRefresh  # noqa: PLC0415
+        from app.schemas.token import Token, TokenRefresh
 
         t = Token(access_token="a", refresh_token="r", token_type="bearer")
         assert t.access_token == "a"
@@ -122,26 +122,26 @@ class TestStorageErrorInExceptions:
     """StorageError was added to app.utils.exceptions in this PR."""
 
     def test_storage_error_importable(self):
-        from app.utils.exceptions import StorageError  # noqa: PLC0415
+        from app.utils.exceptions import StorageError
 
         err = StorageError("storage failed")
         assert str(err) == "storage failed"
         assert isinstance(err, Exception)
 
     def test_yt_dlp_error_still_present(self):
-        from app.utils.exceptions import YTDLPError  # noqa: PLC0415
+        from app.utils.exceptions import YTDLPError
 
         err = YTDLPError("yt-dlp failed")
         assert isinstance(err, Exception)
 
     def test_storage_error_and_yt_dlp_error_are_distinct(self):
-        from app.utils.exceptions import StorageError, YTDLPError  # noqa: PLC0415
+        from app.utils.exceptions import StorageError, YTDLPError
 
         assert not issubclass(StorageError, YTDLPError)
         assert not issubclass(YTDLPError, StorageError)
 
     def test_storage_error_is_catchable_as_exception(self):
-        from app.utils.exceptions import StorageError  # noqa: PLC0415
+        from app.utils.exceptions import StorageError
 
         with pytest.raises(StorageError):
             raise StorageError("test error")

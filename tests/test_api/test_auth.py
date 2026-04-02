@@ -29,7 +29,7 @@ async def test_register_duplicate_email_fails():
     IntegrityError to add a pgcode attribute so the 409 path is exercised
     regardless of the test database backend.
     """
-    import sqlite3  # noqa: PLC0415
+    import sqlite3
 
     # Save original and patch SQLite IntegrityError to have pgcode
     original_init = sqlite3.IntegrityError.__init__
@@ -228,9 +228,9 @@ async def test_me_no_token_fails():
 @pytest.mark.asyncio
 async def test_login_inactive_user_fails(db_session):
     """Test that inactive user cannot login (is_active=False check in login route)."""
-    from sqlalchemy import update  # noqa: PLC0415
+    from sqlalchemy import update
 
-    from app.models.user import User  # noqa: PLC0415
+    from app.models.user import User
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         await client.post(
@@ -256,9 +256,9 @@ async def test_login_inactive_user_fails(db_session):
 @pytest.mark.asyncio
 async def test_me_inactive_user_returns_401(db_session):
     """Test that get_current_user rejects inactive users (is_active check in dependency)."""
-    from sqlalchemy import update  # noqa: PLC0415
+    from sqlalchemy import update
 
-    from app.models.user import User  # noqa: PLC0415
+    from app.models.user import User
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         await client.post(

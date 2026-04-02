@@ -349,7 +349,7 @@ async def test_get_download_file_expired_returns_410(db_session: AsyncSession):
     Mocks datetime.now in the route to return a naive datetime well in the future
     so that the stored (naive) past datetime is considered expired.
     """
-    from unittest.mock import MagicMock, patch  # noqa: PLC0415
+    from unittest.mock import MagicMock, patch
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         token = await create_test_user_and_login(client)
@@ -430,9 +430,9 @@ async def test_get_download_file_not_on_disk(db_session: AsyncSession):
     Uses expires_at=None so the expiry check is skipped.
     The file_path is within storage dir but doesn't exist on disk.
     """
-    import os  # noqa: PLC0415
+    import os
 
-    from app.config import settings  # noqa: PLC0415
+    from app.config import settings
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         token = await create_test_user_and_login(client)
