@@ -59,17 +59,25 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         401: ErrorCode.UNAUTHORIZED,
         403: ErrorCode.FORBIDDEN,
         404: ErrorCode.NOT_FOUND,
+        405: ErrorCode.VALIDATION_ERROR,
+        406: ErrorCode.VALIDATION_ERROR,
+        415: ErrorCode.VALIDATION_ERROR,
         422: ErrorCode.VALIDATION_ERROR,
         429: ErrorCode.RATE_LIMIT_EXCEEDED,
         500: ErrorCode.INTERNAL_ERROR,
         503: ErrorCode.SERVICE_UNAVAILABLE,
     }
 
-    code = error_code_map.get(exc.status_code, ErrorCode.INTERNAL_ERROR)
+    # Default to VALIDATION_ERROR for unmapped 4xx, INTERNAL_ERROR for 5xx
+    code = error_code_map.get(
+        exc.status_code,
+        ErrorCode.VALIDATION_ERROR if 400 <= exc.status_code < 500 else ErrorCode.INTERNAL_ERROR,
+    )
 
     return JSONResponse(
         status_code=exc.status_code,
         content=error_response_dict(code, str(exc.detail)),
+        headers=exc.headers if exc.headers else None,
     )
 
 
