@@ -1,6 +1,7 @@
 import os
 import warnings
 from pathlib import Path
+from typing import Any
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -93,4 +94,64 @@ class Settings(BaseSettings):
         return self
 
 
-settings = Settings()
+# Lazy initialization: Settings instance is created on first access, not at import time
+class _SettingsHolder:
+    """Singleton holder for Settings instance."""
+
+    _instance: Settings | None = None
+
+    @classmethod
+    def get(cls) -> Settings:
+        if cls._instance is None:
+            cls._instance = Settings()
+        return cls._instance
+
+    @classmethod
+    def reload(cls) -> Settings:
+        """Force reload settings (useful for testing)."""
+        cls._instance = Settings()
+        return cls._instance
+
+
+def get_settings() -> Settings:
+    """Get the singleton Settings instance, creating it on first call.
+
+    This enables lazy initialization so that importing config doesn't fail
+    when environment variables are missing.
+    """
+    return _SettingsHolder.get()
+
+
+def reload_settings() -> Settings:
+    """Force reload settings (useful for testing)."""
+    return _SettingsHolder.reload()
+
+
+class _SettingsProxy:
+    """Lazy proxy for settings that initializes on first attribute access.
+
+    This allows `from app.config import settings` to work without triggering
+    validation at import time. Validation occurs only when settings attributes
+    are actually accessed.
+    """
+
+    def __init__(self) -> None:
+        self._instance: Settings | None = None
+
+    def _get_instance(self) -> Settings:
+        if self._instance is None:
+            self._instance = Settings()
+        return self._instance
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._get_instance(), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name.startswith("_"):
+            super().__setattr__(name, value)
+        else:
+            setattr(self._get_instance(), name, value)
+
+
+# For backward compatibility: import settings from app.config works seamlessly
+settings = _SettingsProxy()
