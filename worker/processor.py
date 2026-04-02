@@ -11,19 +11,6 @@ from worker.queue import enqueue_job, redis_client
 
 logger = logging.getLogger(__name__)
 
-# Exponential backoff base for retry delays
-RETRY_BACKOFF_BASE = 2  # seconds
-
-
-def calculate_retry_delay(retry_count: int) -> float:
-    """Calculate exponential backoff delay for retry.
-
-    Returns delay in seconds using exponential backoff: base^retry_count
-    Max delay capped at 5 minutes (300 seconds).
-    """
-    delay = RETRY_BACKOFF_BASE**retry_count
-    return min(delay, 300.0)
-
 
 async def process_next_job() -> None:
     """Process the next job in the queue.
@@ -90,7 +77,6 @@ async def handle_job_failure(db, job: DownloadJob, error_message: str) -> None:
     if retry_count < max_retries:
         # Increment retry count and re-queue
         new_retry_count = retry_count + 1
-        delay = calculate_retry_delay(new_retry_count)
 
         await db.execute(
             update(DownloadJob)
@@ -104,11 +90,10 @@ async def handle_job_failure(db, job: DownloadJob, error_message: str) -> None:
         )
         await db.commit()
 
-        # Re-queue the job (delay is handled by the worker's wait loop)
+        # Re-queue the job immediately
         await enqueue_job(job.id)
         logger.info(
-            f"Job {job.id} re-queued for retry {new_retry_count}/{max_retries} "
-            f"after {delay:.0f}s backoff",
+            f"Job {job.id} re-queued for retry {new_retry_count}/{max_retries}",
         )
     else:
         # Max retries exceeded, mark as permanently failed
@@ -134,26 +119,43 @@ async def reset_stuck_jobs(timeout_minutes: int = 10) -> int:
     cutoff = datetime.now(UTC) - timedelta(minutes=timeout_minutes)
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            update(DownloadJob)
-            .where(
+        # First, select the IDs of stuck jobs to re-queue after update
+        select_result = await db.execute(
+            select(DownloadJob.id).where(
                 DownloadJob.status == "processing",
                 DownloadJob.updated_at < cutoff,
-            )
-            .values(
-                status="pending",
-                error="Job timed out - will retry",
-                updated_at=datetime.now(UTC),
             ),
         )
-        await db.commit()
+        stuck_job_ids = list(select_result.scalars().all())
 
-        count = result.rowcount
-        if count > 0:
-            logger.warning(
-                f"Reset {count} stuck jobs that exceeded {timeout_minutes} minute timeout",
+        if stuck_job_ids:
+            # Update the jobs to pending status
+            await db.execute(
+                update(DownloadJob)
+                .where(
+                    DownloadJob.status == "processing",
+                    DownloadJob.updated_at < cutoff,
+                )
+                .values(
+                    status="pending",
+                    error="Job timed out - will retry",
+                    updated_at=datetime.now(UTC),
+                ),
             )
-            # Re-queue the reset jobs
-            # Note: In a production system, we'd fetch the job IDs and re-queue them
+            await db.commit()
 
-        return count
+            # Re-queue the stuck jobs
+            requeued_count = 0
+            for job_id in stuck_job_ids:
+                try:
+                    await enqueue_job(job_id)
+                    requeued_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to re-queue stuck job {job_id}: {e}")
+
+            logger.warning(
+                f"Reset {len(stuck_job_ids)} stuck jobs that exceeded {timeout_minutes} minute timeout, "
+                f"re-queued {requeued_count}",
+            )
+
+        return len(stuck_job_ids)
