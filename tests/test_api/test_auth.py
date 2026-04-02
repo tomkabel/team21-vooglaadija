@@ -27,35 +27,54 @@ async def test_register_duplicate_email_fails():
     Under SQLite, the IntegrityError lacks a pgcode attribute, so the
     production code re-raises the exception. We monkey-patch the SQLite
     IntegrityError to add a pgcode attribute so the 409 path is exercised
-    regardless of the test database backend.
+    for SQLite only. For PostgreSQL, the IntegrityError naturally has pgcode.
     """
+    import os
     import sqlite3
 
-    # Save original and patch SQLite IntegrityError to have pgcode
-    original_init = sqlite3.IntegrityError.__init__
+    # Only apply SQLite monkey-patch when using SQLite
+    # PostgreSQL's IntegrityError naturally has pgcode="23505"
+    _use_postgres = os.environ.get("CI_INTEGRATION", "").strip().lower() in ("1", "true")
 
-    def patched_init(self, *args, **kwargs):
-        original_init(self, *args, **kwargs)
-        self.pgcode = "23505"
+    original_init = None
+    if not _use_postgres:
+        # Save original and patch SQLite IntegrityError to have pgcode
+        original_init = sqlite3.IntegrityError.__init__
 
-    sqlite3.IntegrityError.__init__ = patched_init
+        def patched_init(self, *args, **kwargs):
+            original_init(self, *args, **kwargs)
+            self.pgcode = "23505"
+
+        sqlite3.IntegrityError.__init__ = patched_init
+
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             # First registration
-            await client.post(
+            resp1 = await client.post(
                 "/api/v1/auth/register",
                 json={"email": "duplicate@example.com", "password": "testpassword123"},
             )
+            # Log for debugging
+            print(
+                f"[test_register_duplicate_email_fails] First registration: {resp1.status_code} - {resp1.text}"
+            )
+
             # Second registration with same email — triggers IntegrityError
             # with pgcode="23505" → returns 409
             response = await client.post(
                 "/api/v1/auth/register",
                 json={"email": "duplicate@example.com", "password": "testpassword123"},
             )
+            print(
+                f"[test_register_duplicate_email_fails] Second registration: {response.status_code} - {response.text}"
+            )
     finally:
-        sqlite3.IntegrityError.__init__ = original_init
+        if original_init is not None:
+            sqlite3.IntegrityError.__init__ = original_init
 
-    assert response.status_code == 409
+    assert response.status_code == 409, (
+        f"Expected 409 but got {response.status_code}: {response.text}"
+    )
     assert "Email already registered" in response.json()["detail"]
 
 

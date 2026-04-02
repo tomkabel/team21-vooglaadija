@@ -9,15 +9,16 @@ os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-not-for-production-
 # In CI integration tests, use PostgreSQL service; otherwise use SQLite per-worker
 _use_postgres = os.environ.get("CI_INTEGRATION", "").strip().lower() in ("1", "true")
 
+# Always set TESTING=1 for tests - this ensures consistent behavior
+# between SQLite (local) and PostgreSQL (CI) environments
+os.environ["TESTING"] = "1"
+
 if _use_postgres:
     _test_db_url = "postgresql+asyncpg://test_user:test_pass@localhost:5432/test_db"
-    # For PostgreSQL, we don't set TESTING=1 so config uses the provided URL directly
 else:
     _worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
     _test_db_path = os.path.abspath(f"test_{_worker_id}.db")
     _test_db_url = f"sqlite+aiosqlite:///{_test_db_path}"
-    # For SQLite, set TESTING=1 to skip production validation
-    os.environ["TESTING"] = "1"
 
 # Set database URL BEFORE importing app.config so engine uses correct URL
 os.environ["DATABASE_URL"] = _test_db_url
@@ -95,7 +96,17 @@ def _drop_tables_sync():
 
 
 # Create tables at import time
-_create_tables_sync()
+print(f"\n[TEST SETUP] Database: {TEST_DATABASE_URL}")
+print(f"[TEST SETUP] Using PostgreSQL: {_use_postgres}")
+print(f"[TEST SETUP] TESTING flag: {os.environ.get('TESTING')}")
+print(f"[TEST SETUP] CI_INTEGRATION: {os.environ.get('CI_INTEGRATION')}")
+
+try:
+    _create_tables_sync()
+    print(f"[TEST SETUP] Tables created successfully: {list(Base.metadata.tables.keys())}")
+except Exception as e:
+    print(f"[TEST SETUP] ERROR creating tables: {e}")
+    raise
 
 
 @pytest.fixture(scope="session")
