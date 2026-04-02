@@ -159,17 +159,19 @@ gh project create --owner team21-vooglaadija \
   --public
 
 # Create views
-gh project view create --project-number 1 \
-  --name "Board" \
-  --layout BOARD
-
-gh project view create --project-number 1 \
-  --name "Roadmap" \
-  --layout ROADMAP
-
-gh project view create --project-number 1 \
-  --name "Table" \
-  --layout TABLE
+# Note: GitHub CLI does not support creating project views.
+# Create the Board, Roadmap, and Table views via the GitHub Projects web UI:
+#   1. Open your project at https://github.com/orgs/{org}/projects/{number}
+#   2. Click the view dropdown (top-left) → "New view"
+#   3. Choose layout: Board (kanban), Roadmap (timeline), or Table (spreadsheet)
+#   4. Name the view and configure filters/grouping as needed
+#
+# Alternatively, create views programmatically via the GraphQL API:
+#   mutation {
+#     createProjectView(input: {projectId: "PROJECT_ID", name: "Board", layout: BOARD_LAYOUT}) {
+#       projectView { id name }
+#     }
+#   }
 ```
 
 ### Field Creation
