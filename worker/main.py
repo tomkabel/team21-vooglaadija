@@ -38,14 +38,15 @@ async def cleanup_expired_jobs() -> int:
         for job in expired_jobs:
             skip_file_deletion = False
             if job.file_path:
-                # Validate path is within storage directory before deletion
+                # Validate path is within downloads directory before deletion
                 resolved_path = os.path.realpath(job.file_path)
-                storage_base = os.path.realpath(settings.storage_path)
+                downloads_base = os.path.realpath(os.path.join(settings.storage_path, "downloads"))
+                safe_downloads_dir = downloads_base + os.sep
                 if (
-                    not resolved_path.startswith(storage_base + os.sep)
-                    and resolved_path != storage_base
+                    not resolved_path.startswith(safe_downloads_dir)
+                    and resolved_path != downloads_base
                 ):
-                    logger.warning(f"Skipping deletion of path outside storage: {job.file_path}")
+                    logger.warning(f"Skipping deletion of path outside downloads: {job.file_path}")
                     skip_file_deletion = True
                 if not skip_file_deletion and os.path.exists(resolved_path):
                     try:

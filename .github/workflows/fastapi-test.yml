@@ -104,6 +104,7 @@ jobs:
           files: ./coverage.xml
           flags: unittests
           name: unit-tests
+          fail_ci_if_error: false
 
   # ============================================
   # INTEGRATION TESTS - Full API with real services
@@ -163,24 +164,9 @@ jobs:
           sed -i 's|^DB_PASSWORD=.*|DB_PASSWORD=test_pass|' .env
           sed -i 's|^SECRET_KEY=.*|SECRET_KEY=test-secret-key-for-ci-at-least-32-chars-long|' .env
 
-      - name: Create database schema
-        run: |
-          uv run python -c "
-          import asyncio
-          from sqlalchemy.ext.asyncio import create_async_engine
-          from app.database import Base
-          from app.models import User, DownloadJob
-
-          async def init_db():
-              engine = create_async_engine('postgresql+asyncpg://test_user:test_pass@localhost:5432/test_db')
-              async with engine.begin() as conn:
-                  await conn.run_sync(Base.metadata.create_all)
-              await engine.dispose()
-
-          asyncio.run(init_db())
-          "
-
       - name: Run API integration tests
+        env:
+          CI_INTEGRATION: "true"
         run: hatch run test:integration
 
       - name: Upload integration coverage to Codecov
@@ -189,6 +175,7 @@ jobs:
           files: ./coverage.xml
           flags: integrationtests
           name: integration-tests
+          fail_ci_if_error: false
 
   # ============================================
   # SECURITY SCAN - Dependency and code security

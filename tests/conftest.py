@@ -5,10 +5,16 @@ import os
 os.environ["TESTING"] = "1"
 os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-not-for-production-use-32chars"
 
-# Determine unique database URL per xdist worker to avoid race conditions
-_worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
-_test_db_path = os.path.abspath(f"test_{_worker_id}.db")
-_test_db_url = f"sqlite+aiosqlite:///{_test_db_path}"
+# Determine database URL based on environment
+# In CI integration tests, use PostgreSQL service; otherwise use SQLite per-worker
+_use_postgres = os.environ.get("CI_INTEGRATION", "").strip().lower() in ("1", "true")
+
+if _use_postgres:
+    _test_db_url = "postgresql+asyncpg://test_user:test_pass@localhost:5432/test_db"
+else:
+    _worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
+    _test_db_path = os.path.abspath(f"test_{_worker_id}.db")
+    _test_db_url = f"sqlite+aiosqlite:///{_test_db_path}"
 
 # Force reconfigure the database URL before any app imports
 # This ensures the app uses SQLite instead of PostgreSQL
