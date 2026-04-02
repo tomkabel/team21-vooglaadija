@@ -45,9 +45,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install ffmpeg in production stage (required for yt-dlp video processing)
+# Install ffmpeg and gosu in production stage (required for yt-dlp video processing and signal-safe privilege drop)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment from builder
@@ -63,8 +64,12 @@ COPY --from=builder /app/pyproject.toml ./pyproject.toml
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app
 
-# Switch to non-root user
-USER appuser
+# Copy worker entrypoint script
+COPY entrypoint-worker.sh ./entrypoint-worker.sh
+RUN chmod +x ./entrypoint-worker.sh
 
-# Run worker module
-CMD ["python", "-m", "worker.main"]
+# NOTE: Not switching to USER appuser here — entrypoint-worker.sh runs as root
+# to set up volume permissions, then drops to appuser via gosu.
+
+# Run worker via entrypoint (sets up storage, drops to appuser)
+ENTRYPOINT ["./entrypoint-worker.sh"]

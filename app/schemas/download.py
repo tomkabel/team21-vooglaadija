@@ -28,5 +28,12 @@ class DownloadResponse(BaseModel):
     expires_at: datetime | None = None
 
 
+class PaginationInfo(BaseModel):
+    page: int = Field(..., ge=1, description="Page number (1-based)")
+    per_page: int = Field(..., ge=1, description="Items per page")
+    total: int = Field(..., ge=0, description="Total number of items")
+
+
 class DownloadListResponse(BaseModel):
     downloads: list[DownloadResponse]
+    pagination: PaginationInfo

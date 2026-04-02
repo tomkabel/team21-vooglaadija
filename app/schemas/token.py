@@ -1,3 +1,5 @@
+"""Token schemas."""
+
 from pydantic import BaseModel
 
 
@@ -9,7 +11,3 @@ class Token(BaseModel):
 
 class TokenRefresh(BaseModel):
     refresh_token: str
-
-
-class TokenData(BaseModel):
-    sub: str | None = None

@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import CurrentUser, DbSession
 from app.auth import create_access_token, create_refresh_token, verify_token
@@ -45,23 +46,27 @@ async def register(
     db: DbSession,
     _: Annotated[None, Depends(check_auth_rate_limit)],
 ) -> UserResponse:
-    result = await db.execute(select(User).where(User.email == user_data.email))
-    existing_user = result.scalar_one_or_none()
-
-    if existing_user is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered",
-        )
-
     user = User(
         id=str(uuid.uuid4()),
         email=user_data.email,
         password_hash=hash_password(user_data.password),
     )
     db.add(user)
-    await db.commit()
-    await db.refresh(user)
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        pgcode = getattr(e.orig, "pgcode", None)
+        if pgcode == "23505":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email already registered",
+            ) from None
+        raise
+
+    # Re-fetch to get server-generated fields (created_at, updated_at)
+    result = await db.execute(select(User).where(User.id == user.id))
+    user = result.scalar_one()
 
     return UserResponse(id=user.id, email=user.email)
 
@@ -143,10 +148,11 @@ async def refresh(
         )
 
     access_token = create_access_token(user.id)
+    refresh_token = create_refresh_token(user.id)
 
     return Token(
         access_token=access_token,
-        refresh_token=token_refresh.refresh_token,
+        refresh_token=refresh_token,
         token_type="bearer",
     )
 

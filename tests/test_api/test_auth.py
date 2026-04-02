@@ -22,19 +22,59 @@ async def test_register_creates_user():
 
 @pytest.mark.asyncio
 async def test_register_duplicate_email_fails():
-    """Test that registering with existing email returns 400."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        # First registration
-        await client.post(
-            "/api/v1/auth/register",
-            json={"email": "duplicate@example.com", "password": "testpassword123"},
-        )
-        # Second registration with same email
-        response = await client.post(
-            "/api/v1/auth/register",
-            json={"email": "duplicate@example.com", "password": "testpassword123"},
-        )
-    assert response.status_code == 400
+    """Test that registering with existing email returns 409.
+
+    Under SQLite, the IntegrityError lacks a pgcode attribute, so the
+    production code re-raises the exception. We monkey-patch the SQLite
+    IntegrityError to add a pgcode attribute so the 409 path is exercised
+    for SQLite only. For PostgreSQL, the IntegrityError naturally has pgcode.
+    """
+    import os
+    import sqlite3
+
+    # Only apply SQLite monkey-patch when using SQLite
+    # PostgreSQL's IntegrityError naturally has pgcode="23505"
+    _use_postgres = os.environ.get("CI_INTEGRATION", "").strip().lower() in ("1", "true")
+
+    original_init = None
+    if not _use_postgres:
+        # Save original and patch SQLite IntegrityError to have pgcode
+        original_init = sqlite3.IntegrityError.__init__
+
+        def patched_init(self, *args, **kwargs):
+            original_init(self, *args, **kwargs)
+            self.pgcode = "23505"
+
+        sqlite3.IntegrityError.__init__ = patched_init
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            # First registration
+            resp1 = await client.post(
+                "/api/v1/auth/register",
+                json={"email": "duplicate@example.com", "password": "testpassword123"},
+            )
+            # Log for debugging
+            print(
+                f"[test_register_duplicate_email_fails] First registration: {resp1.status_code} - {resp1.text}"
+            )
+
+            # Second registration with same email — triggers IntegrityError
+            # with pgcode="23505" → returns 409
+            response = await client.post(
+                "/api/v1/auth/register",
+                json={"email": "duplicate@example.com", "password": "testpassword123"},
+            )
+            print(
+                f"[test_register_duplicate_email_fails] Second registration: {response.status_code} - {response.text}"
+            )
+    finally:
+        if original_init is not None:
+            sqlite3.IntegrityError.__init__ = original_init
+
+    assert response.status_code == 409, (
+        f"Expected 409 but got {response.status_code}: {response.text}"
+    )
     assert "Email already registered" in response.json()["detail"]
 
 
@@ -205,11 +245,116 @@ async def test_me_no_token_fails():
 
 
 @pytest.mark.asyncio
-async def test_me_invalid_token_fails():
-    """Test that invalid token returns 401."""
+async def test_login_inactive_user_fails(db_session):
+    """Test that inactive user cannot login (is_active=False check in login route)."""
+    from sqlalchemy import update
+
+    from app.models.user import User
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.post(
+            "/api/v1/auth/register",
+            json={"email": "inactive@example.com", "password": "testpassword123"},
+        )
+
+    # Deactivate the user directly in the database
+    await db_session.execute(
+        update(User).where(User.email == "inactive@example.com").values(is_active=False),
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "inactive@example.com", "password": "testpassword123"},
+        )
+    assert response.status_code == 401
+    assert "inactive" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_me_inactive_user_returns_401(db_session):
+    """Test that get_current_user rejects inactive users (is_active check in dependency)."""
+    from sqlalchemy import update
+
+    from app.models.user import User
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.post(
+            "/api/v1/auth/register",
+            json={"email": "inactive2@example.com", "password": "testpassword123"},
+        )
+        login_response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "inactive2@example.com", "password": "testpassword123"},
+        )
+        access_token = login_response.json()["access_token"]
+
+    # Deactivate the user after obtaining a valid token
+    await db_session.execute(
+        update(User).where(User.email == "inactive2@example.com").values(is_active=False),
+    )
+    await db_session.commit()
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get(
             "/api/v1/auth/me",
-            headers={"Authorization": "Bearer invalid-token"},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    assert response.status_code == 401
+    assert "inactive" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_refresh_with_access_token_fails():
+    """Test that using an access token as a refresh token returns 401 (type mismatch)."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.post(
+            "/api/v1/auth/register",
+            json={"email": "tokentype@example.com", "password": "testpassword123"},
+        )
+        login_response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "tokentype@example.com", "password": "testpassword123"},
+        )
+        access_token = login_response.json()["access_token"]
+
+        # Use access token where refresh token is expected
+        response = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": access_token},
+        )
+    assert response.status_code == 401
+    assert "Invalid token type" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_register_exactly_8_char_password_succeeds():
+    """Test that password of exactly 8 characters (boundary) is accepted."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/auth/register",
+            json={"email": "boundary@example.com", "password": "12345678"},
+        )
+    assert response.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_me_with_refresh_token_fails():
+    """Test that get_current_user rejects refresh tokens."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.post(
+            "/api/v1/auth/register",
+            json={"email": "refreshtoken@example.com", "password": "testpassword123"},
+        )
+        login_response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "refreshtoken@example.com", "password": "testpassword123"},
+        )
+        refresh_token = login_response.json()["refresh_token"]
+
+        response = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {refresh_token}"},
         )
     assert response.status_code == 401

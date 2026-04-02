@@ -12,9 +12,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install system dependencies including ffmpeg for yt-dlp
+# Install system dependencies including ffmpeg for yt-dlp and gosu for privilege drop
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv first (separate layer for caching)
@@ -31,6 +32,8 @@ COPY pyproject.toml .
 # This installs all dependencies defined in [project] and [project.optional-dependencies] server
 COPY app ./app
 COPY worker ./worker
+COPY alembic.ini .
+COPY alembic ./alembic
 RUN uv pip install ".[server]"
 
 # ============================================
@@ -45,9 +48,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install ffmpeg in production stage (required for yt-dlp video processing)
+# Install ffmpeg and gosu in production stage (required for yt-dlp video processing and signal-safe privilege drop)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment from builder
@@ -58,20 +62,27 @@ ENV PATH="/app/.venv/bin:$PATH"
 COPY --from=builder /app/app ./app
 COPY --from=builder /app/worker ./worker
 COPY --from=builder /app/pyproject.toml ./pyproject.toml
+COPY --from=builder /app/alembic.ini ./alembic.ini
+COPY --from=builder /app/alembic ./alembic
+
+# Copy entrypoint script
+COPY entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
 
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app
 
-# Switch to non-root user
-USER appuser
+# NOTE: Not switching to USER appuser here — entrypoint.sh runs as root
+# to set up volume permissions, then drops to appuser via gosu.
 
 # Expose port
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')" || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=5)"
 
-# Run with uvicorn
+# Run with entrypoint (migrations + uvicorn)
+ENTRYPOINT ["./entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

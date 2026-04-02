@@ -1,8 +1,8 @@
-"""Rate limiting middleware for FastAPI."""
+"""Rate limiting middleware for FastAPI using async Redis."""
 
 import time
 
-import redis
+import redis.asyncio as aioredis
 
 
 class RateLimiter:
@@ -10,7 +10,7 @@ class RateLimiter:
 
     def __init__(
         self,
-        redis_client: redis.Redis,
+        redis_client: aioredis.Redis,
         max_requests: int = 5,
         window_seconds: int = 60,
     ):
@@ -26,6 +26,7 @@ class RateLimiter:
 
         Returns:
             True if request is allowed, False if rate limit exceeded
+
         """
         now = time.time()
         pipe = self.redis.pipeline()
@@ -42,9 +43,13 @@ class RateLimiter:
         # Set expiry on the key
         pipe.expire(key, self.window)
 
-        results = pipe.execute()
+        try:
+            results = await pipe.execute()
+        except aioredis.ConnectionError:
+            # Fail open on Redis connection errors
+            return True
 
-        # Handle case where redis is not available (e.g., MagicMock in tests)
+        # Handle case where redis is not available
         if not results or len(results) < 4:
             return True
 
@@ -61,9 +66,14 @@ class RateLimiter:
 
         Returns:
             Seconds until the oldest request expires
+
         """
         now = time.time()
-        oldest = self.redis.zrange(key, 0, 0, withscores=True)
+        try:
+            oldest = await self.redis.zrange(key, 0, 0, withscores=True)
+        except aioredis.ConnectionError:
+            # Fail open on Redis connection errors
+            return 0
         if not oldest:
             return 0
         oldest_timestamp = oldest[0][1]

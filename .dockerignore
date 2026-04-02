@@ -67,7 +67,7 @@ docker-compose*.yml
 .env
 .env.local
 .env.*.local
-!env.example
+!.env.example
 *.log
 cookies.json
 
