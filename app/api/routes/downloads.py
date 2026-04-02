@@ -200,7 +200,9 @@ async def get_download_file(
 
     # Check file exists on disk
     if not os.path.isfile(safe_path):
-        logger.error(f"File missing from disk for job {job_id}: {safe_path}")
+        # Sanitize user-controlled job_id before logging to prevent log injection
+        safe_job_id = job_id.replace("\r", "").replace("\n", "")
+        logger.error(f"File missing from disk for job {safe_job_id}: {safe_path}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found on disk",
