@@ -5,7 +5,9 @@ from unittest.mock import patch
 
 import pytest
 
+from app.config import settings
 from app.models.download_job import DownloadJob
+from worker.main import cleanup_expired_jobs
 
 
 class TestCleanupExpiredJobs:
@@ -14,8 +16,6 @@ class TestCleanupExpiredJobs:
     @pytest.mark.unit
     async def test_cleanup_expired_jobs_no_expired(self, db_session):
         """Test cleanup when no jobs are expired."""
-        from worker.main import cleanup_expired_jobs
-
         # Create a job that expires in the future
         future_time = datetime.now(UTC) + timedelta(hours=24)
         job = DownloadJob(
@@ -34,9 +34,6 @@ class TestCleanupExpiredJobs:
     @pytest.mark.unit
     async def test_cleanup_expired_jobs_deletes_expired(self, db_session):
         """Test cleanup deletes expired jobs."""
-        from app.config import settings
-        from worker.main import cleanup_expired_jobs
-
         # Create an expired job with file path within storage
         past_time = datetime.now(UTC) - timedelta(hours=1)
         job = DownloadJob(
@@ -62,9 +59,6 @@ class TestCleanupExpiredJobs:
     @pytest.mark.unit
     async def test_cleanup_expired_jobs_skips_path_traversal(self, db_session):
         """Test cleanup skips files outside storage directory."""
-        from app.config import settings
-        from worker.main import cleanup_expired_jobs
-
         # Create an expired job with a path outside storage
         past_time = datetime.now(UTC) - timedelta(hours=1)
         job = DownloadJob(
@@ -101,9 +95,6 @@ class TestCleanupExpiredJobs:
     @pytest.mark.unit
     async def test_cleanup_expired_jobs_handles_missing_file(self, db_session):
         """Test cleanup handles missing files gracefully."""
-        from app.config import settings
-        from worker.main import cleanup_expired_jobs
-
         # Create an expired job pointing to non-existent file
         past_time = datetime.now(UTC) - timedelta(hours=1)
         job = DownloadJob(
@@ -131,8 +122,6 @@ class TestCleanupExpiredJobs:
     @pytest.mark.unit
     async def test_cleanup_expired_jobs_ignores_pending(self, db_session):
         """Test cleanup ignores pending jobs even if expired."""
-        from worker.main import cleanup_expired_jobs
-
         # Create a pending job that's past its expiry
         past_time = datetime.now(UTC) - timedelta(hours=1)
         job = DownloadJob(
@@ -152,8 +141,6 @@ class TestCleanupExpiredJobs:
     @pytest.mark.unit
     async def test_cleanup_expired_jobs_ignores_failed(self, db_session):
         """Test cleanup ignores failed jobs even if expired."""
-        from worker.main import cleanup_expired_jobs
-
         # Create a failed job that's past its expiry
         past_time = datetime.now(UTC) - timedelta(hours=1)
         job = DownloadJob(
@@ -173,9 +160,6 @@ class TestCleanupExpiredJobs:
     @pytest.mark.unit
     async def test_cleanup_expired_jobs_multiple(self, db_session):
         """Test cleanup handles multiple expired jobs."""
-        from app.config import settings
-        from worker.main import cleanup_expired_jobs
-
         past_time = datetime.now(UTC) - timedelta(hours=1)
 
         # Create multiple expired jobs
