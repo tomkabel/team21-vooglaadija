@@ -1,9 +1,31 @@
+import math
 import os
 import warnings
 from pathlib import Path
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _estimate_entropy(text: str) -> float:
+    """Estimate Shannon entropy of a string in bits.
+
+    A truly random hex string has 4 bits per character.
+    A truly random alphanumeric string has ~6.5 bits per character.
+    We flag anything below 3 bits/char as suspiciously low-entropy.
+    """
+    if not text:
+        return 0.0
+    freq: dict[str, int] = {}
+    for c in text:
+        freq[c] = freq.get(c, 0) + 1
+    length = len(text)
+    entropy = 0.0
+    for count in freq.values():
+        p = count / length
+        if p > 0:
+            entropy -= p * math.log2(p)
+    return entropy
 
 
 class Settings(BaseSettings):
@@ -16,6 +38,9 @@ class Settings(BaseSettings):
     file_expire_hours: int = 24
     storage_path: str = "./storage"
     bcrypt_rounds: int = 12
+
+    # Cookie security — False for local dev (no HTTPS), True for production
+    cookie_secure: bool = False
 
     # Used to construct DATABASE_URL if not set directly
     db_user: str = "postgres"
@@ -49,22 +74,19 @@ class Settings(BaseSettings):
                 f"@localhost:5432/{self.db_name}"
             )
 
-        # Validate SECRET_KEY
+        # Validate SECRET_KEY — reject known weak values
         if not self.secret_key:
             raise ValueError(
                 "SECRET_KEY is required. "
                 'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
             )
 
-        weak_defaults = (
-            "change-me",
-            "change-this-secret-key",
-            "change-this-secret-key-for-testing-only-min-32-chars",
-            "change-this-secret-key-for-local-dev-only-not-secure-32chars",
-        )
-        if self.secret_key in weak_defaults:
+        # Check for low-entropy keys (repetitive patterns, dictionary words, etc.)
+        entropy_per_char = _estimate_entropy(self.secret_key)
+        if entropy_per_char < 2.9:
             raise ValueError(
-                "SECRET_KEY must be changed from default value. "
+                "SECRET_KEY has insufficient entropy "
+                f"(~{entropy_per_char:.1f} bits/char, need >= 2.9). "
                 'Generate a secure key with: python -c "import secrets; print(secrets.token_hex(32))"'
             )
         if len(self.secret_key) < 32:

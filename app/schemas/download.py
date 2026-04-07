@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Annotated
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -18,11 +19,16 @@ class DownloadCreate(BaseModel):
 
 
 class DownloadResponse(BaseModel):
-    id: str
+    model_config = {"from_attributes": True}
+
+    id: UUID
     url: str
     status: str
     file_name: str | None = None
     error: str | None = None
+    retry_count: int = 0
+    max_retries: int = 3
+    next_retry_at: datetime | None = None
     created_at: datetime
     completed_at: datetime | None = None
     expires_at: datetime | None = None

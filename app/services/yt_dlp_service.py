@@ -1,4 +1,5 @@
 import asyncio
+import atexit
 import logging
 import os
 import re
@@ -11,6 +12,17 @@ logger = logging.getLogger(__name__)
 
 # Shared thread pool for yt-dlp operations (avoids per-request leak)
 _executor = ThreadPoolExecutor(max_workers=4)
+
+# Timeout for yt-dlp operations in seconds (5 minutes)
+YT_DLP_TIMEOUT = 300
+
+
+def _shutdown_executor():
+    """Gracefully shut down the thread pool on process exit."""
+    _executor.shutdown(wait=False, cancel_futures=True)
+
+
+atexit.register(_shutdown_executor)
 
 
 class StorageError(Exception):
@@ -29,16 +41,18 @@ def _sanitize_title(title: str) -> str:
 
 
 def _extract_sync(url: str, output_template: str) -> dict:
-    """Synchronous wrapper for yt_dlp.extract_info."""
+    """Synchronous wrapper for yt_dlp.extract_info with timeout enforcement."""
     ydl_opts = {
-        "format": "best[ext=mp4]/best",
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "outtmpl": output_template,
         "quiet": True,
         "no_warnings": True,
         "socket_timeout": 60,
         "retries": 3,
+        # Prevent yt-dlp from hanging indefinitely
+        "extractor_args": {"youtube": {"player_client": ["web", "ios"]}},
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type]
         return ydl.extract_info(url, download=True)  # type: ignore[no-any-return]
 
 
@@ -70,12 +84,13 @@ async def extract_media_url(url: str, storage_path: str) -> tuple[str, str]:
 
     Raises:
         StorageError: If the download directory cannot be created or path is invalid.
+        asyncio.TimeoutError: If the extraction takes longer than YT_DLP_TIMEOUT.
     """
     download_dir = os.path.join(storage_path, "downloads")
     try:
         os.makedirs(download_dir, exist_ok=True)
     except OSError as e:
-        logger.error(f"Failed to create download directory {download_dir}: {e}")
+        logger.error("Failed to create download directory %s: %s", download_dir, e)
         raise StorageError(f"Failed to create download directory: {e}") from e
 
     file_id = str(uuid.uuid4())
@@ -83,7 +98,11 @@ async def extract_media_url(url: str, storage_path: str) -> tuple[str, str]:
     output_template = os.path.join(download_dir, f"{file_id}.%(ext)s")
 
     loop = asyncio.get_running_loop()
-    info = await loop.run_in_executor(_executor, _extract_sync, url, output_template)
+    # Run with timeout to prevent thread pool exhaustion from hung yt-dlp calls
+    info = await asyncio.wait_for(
+        loop.run_in_executor(_executor, _extract_sync, url, output_template),
+        timeout=YT_DLP_TIMEOUT,
+    )
 
     title = info.get("title") or file_id
     ext = info.get("ext") or "mp4"
