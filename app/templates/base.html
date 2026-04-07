@@ -27,7 +27,7 @@
 
     <!-- Configure HTMX -->
     <meta name="htmx-config" content='{"historyRestoreAsHxRequest":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true},{"code":"...","swap":false}]}'>
-    <script>
+    <script nonce="{{ nonce }}">
         htmx.config.defaultFocusScroll = false;
         htmx.config.defaultSwapStyle = 'outerHTML';
         htmx.config.indicatorClass = 'htmx-indicator';
@@ -123,7 +123,7 @@
         </div>
     </div>
 
-    <script>
+    <script nonce="{{ nonce }}">
         document.body.addEventListener('htmx:beforeRequest', function(evt) {
             // Only show global indicator if no element-specific indicator is specified
             if (!evt.detail.elt.getAttribute('hx-indicator')) {

@@ -48,19 +48,23 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     """Add Content-Security-Policy and other security headers to all responses."""
+    # Generate a secure nonce for inline script tags
+    nonce = uuid.uuid4().hex
+    request.state.nonce = nonce
+
     response = await call_next(request)
 
-    # CSP: Allow same-origin scripts, styles, and fonts; allow Google Fonts CDN
+    # CSP: Allow same-origin scripts with nonce for inline scripts, allow Google Fonts CDN
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "script-src 'self' https://fonts.googleapis.com; "
-        "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
-        "font-src 'self' https://fonts.gstatic.com; "
-        "img-src 'self' data: blob:; "
-        "connect-src 'self'; "
-        "frame-ancestors 'none'; "
-        "base-uri 'self'; "
-        "form-action 'self'"
+        f"default-src 'self'; "
+        f"script-src 'self' https://fonts.googleapis.com 'nonce-{nonce}'; "
+        f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
+        f"font-src 'self' https://fonts.gstatic.com; "
+        f"img-src 'self' data: blob:; "
+        f"connect-src 'self'; "
+        f"frame-ancestors 'none'; "
+        f"base-uri 'self'; "
+        f"form-action 'self'"
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"

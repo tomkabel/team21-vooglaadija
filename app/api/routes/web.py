@@ -95,7 +95,7 @@ def set_csrf_token_cookie(response: Response, token: str) -> None:
 
 
 def get_template_context(request: Request, csrf_token: str | None = None, **extra_context):
-    """Get common template context including current year and CSRF token.
+    """Get common template context including current year, CSRF token, and CSP nonce.
 
     Args:
         request: The FastAPI request object
@@ -105,10 +105,13 @@ def get_template_context(request: Request, csrf_token: str | None = None, **extr
                     the cookie and the template context.
     """
     token = csrf_token if csrf_token is not None else get_csrf_token(request)
+    # Get nonce from request.state (set by security headers middleware)
+    nonce = getattr(request.state, "nonce", "")
     context = {
         "request": request,
         "current_year": datetime.now(UTC).year,
         "csrf_token": token,
+        "nonce": nonce,
     }
     context.update(extra_context)
     return context
