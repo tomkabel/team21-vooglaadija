@@ -152,7 +152,7 @@ services:
     security_opt:
       - no-new-privileges=true
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8081)); s.close()\""]
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8081)); s.close()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -233,7 +233,7 @@ services:
       - --appendfilename
       - "appendonly.aof"
     volumes:
-      - ./data/redis:/data:Z
+      - redis_data:/data:Z
     security_opt:
       - no-new-privileges=true
     logging:
@@ -251,11 +251,13 @@ services:
           cpus: "0.25"
           memory: 64M
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 5s
+      env:
+        - REDISCLI_AUTH=${REDIS_PASSWORD}
     networks:
       ytprocessor-network:
         aliases:
@@ -281,14 +283,6 @@ services:
         max-size: "10m"
         max-file: "3"
         compress: "true"
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-        reservations:
-          cpus: "0.25"
-          memory: 64M
     networks:
       ytprocessor-network:
         aliases:

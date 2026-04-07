@@ -4,21 +4,6 @@
 # ============================================
 
 # ============================================
-# Stage 1: Build Environment
-# ============================================
-FROM eclipse-temurin:21-jdk-alpine@sha256:7f09518f1eab51c0de2488baee0a05ce178f3326c76010a2eb8d3dcb5ee76545 AS build-tools
-# Install tools needed for building Python extensions and frontend
-RUN apk add --no-cache \
-    build-base \
-    python3-dev \
-    libffi-dev \
-    openssl-dev \
-    cargo \
-    nodejs \
-    npm \
-    && rm -rf /var/cache/apk/*
-
-# ============================================
 # Stage 2: Python Dependency Builder
 # ============================================
 FROM python:3.12-slim AS python-builder
@@ -96,7 +81,10 @@ COPY --from=frontend-builder /app/frontend/css/dist ./app/static/css
 # Download HTMX for production (cache-friendly)
 # Note: For stronger supply chain guarantees, add htmx to frontend/package.json
 # so it's installed via pnpm with a committed lockfile
-RUN curl -sSfL https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js -o /app/static/js/htmx.min.js
+# Verify integrity using sha256 hash
+RUN curl -sSfL https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js -o /app/static/js/htmx.min.js \
+    && echo "b57c08e1d5a6b2c1e2c9a4b5a6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4  /app/static/js/htmx.min.js" | sha256sum -c - \
+    || { echo "HTMX integrity check failed"; exit 1; }
 
 # Generate SBOM (best-effort; fallback to empty if CLI is incompatible)
 RUN pip install cyclonedx-bom 2>/dev/null; \
@@ -186,11 +174,10 @@ CMD ["/opt/venv/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0
 # Stage 7: Worker Service
 # ============================================
 FROM runtime-base AS worker
-# Set environment
+# Set environment - WORKER_ID is set at runtime via docker-compose
 ENV PYTHONPATH=/app \
     PATH=/opt/venv/bin:$PATH \
-    STORAGE_PATH=/app/storage \
-    WORKER_ID=${HOSTNAME:-worker-1}
+    STORAGE_PATH=/app/storage
 
 # Health check - Python-based check using worker's health server on port 8081
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

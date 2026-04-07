@@ -96,10 +96,11 @@ def setup_logging(log_level: str = "INFO") -> None:
     is_production = os.environ.get("ENVIRONMENT", "development") == "production"
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    log_level_value = getattr(logging, log_level.upper(), logging.INFO)
+    root_logger.setLevel(log_level_value)
 
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.DEBUG)
+    console_handler.setLevel(log_level_value)
 
     if is_production:
         console_handler.setFormatter(JSONFormatter())

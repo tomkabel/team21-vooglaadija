@@ -77,9 +77,14 @@ def write_health_sync() -> bool:
     }
 
     r = redis.from_url(redis_url)
-    r.setex(f"worker:health:{worker_id}", 30, json.dumps(health_data))
-    r.close()
-    return True
+    try:
+        r.setex(f"worker:health:{worker_id}", 30, json.dumps(health_data))
+        return True
+    except Exception as e:
+        logger.error("Failed to write sync health: %s", e)
+        return False
+    finally:
+        r.close()
 
 
 async def write_health_async() -> bool:
@@ -100,8 +105,6 @@ async def write_health_async() -> bool:
     try:
         await client.setex(f"worker:health:{worker_id}", 30, json.dumps(health_data))
         return True
-    except Exception:
-        raise
     finally:
         # Always close the Redis client
         if hasattr(client, "aclose"):

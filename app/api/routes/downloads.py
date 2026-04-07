@@ -59,7 +59,7 @@ def _job_to_response(job: DownloadJob) -> DownloadResponse:
     return DownloadResponse.model_validate(job)
 
 
-async def _get_user_job(db, user_id, job_id) -> DownloadJob:
+async def _get_user_job(db: DbSession, user_id: uuid.UUID, job_id: str) -> DownloadJob:
     """Fetch a download job belonging to the specified user.
 
     Raises HTTPException(404) if not found.
@@ -79,7 +79,7 @@ async def _get_user_job(db, user_id, job_id) -> DownloadJob:
             DownloadJob.user_id == user_id,
         )
     )
-    job: DownloadJob | None = result.scalar_one_or_none()
+    job: DownloadJob | None = result.scalars().one_or_none()
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

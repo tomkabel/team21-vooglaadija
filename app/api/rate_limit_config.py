@@ -54,12 +54,15 @@ def _parse_retry_after(detail: str) -> int:
     }
     multiplier = multipliers.get(unit)
     if multiplier is None:
-        raise ValueError(f"Unknown time unit in rate limit detail: {unit}")
+        # Fall back to 60 seconds (minute) for unknown units
+        multiplier = 60
     return window * multiplier
 
 
-async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle rate limit exceeded errors with standardized error response."""
+    if not isinstance(exc, RateLimitExceeded):
+        raise exc
     retry_after = _parse_retry_after(str(exc.detail))
     return JSONResponse(
         status_code=429,

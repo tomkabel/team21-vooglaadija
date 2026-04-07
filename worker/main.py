@@ -98,7 +98,9 @@ async def main() -> None:
     cleanup_interval = timedelta(minutes=cleanup_interval_minutes)
     last_cleanup = datetime.now(UTC) - cleanup_interval
     heartbeat_counter = 0
-    heartbeat_interval = 10  # Write heartbeat every 10 iterations (~10 seconds)
+    heartbeat_interval = (
+        10  # Write heartbeat every 10 iterations (~20 seconds, since brpop_timeout=2)
+    )
     brpop_timeout = 2  # Seconds to block on BRPOP
 
     # Mark worker as running
@@ -141,6 +143,11 @@ async def main() -> None:
                 await sync_outbox_to_queue()
                 cleanup_count = await cleanup_expired_jobs()
                 stuck_count = await reset_stuck_jobs(timeout_minutes=10)
+                logger.info(
+                    "Cleanup completed: cleaned up %d expired jobs, reset %d stuck jobs",
+                    cleanup_count,
+                    stuck_count,
+                )
                 last_cleanup = now
                 update_worker_state(last_cleanup=last_cleanup.isoformat())
             except Exception as e:

@@ -2,6 +2,7 @@ import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -97,7 +98,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.mount(
+    "/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static"
+)
 
 
 # Global exception handlers

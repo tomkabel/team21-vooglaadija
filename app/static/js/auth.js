@@ -5,17 +5,6 @@
     const PUBLIC_PAGES = ['/web/login', '/web/register', '/web/health'];
     
     /**
-     * Show toast notification
-     */
-    function showToast(message, type) {
-        const toast = document.createElement('div');
-        toast.className = `toast toast-${type}`;
-        toast.textContent = message;
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 5000);
-    }
-    
-    /**
      * Refresh access token
      */
     async function refreshAccessToken() {
@@ -41,13 +30,13 @@
         // Check for logged out session message FIRST
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('logged_out') === '1') {
-            showToast('You have been logged out successfully.', 'info');
+            window.showToast('You have been logged out successfully.', 'info');
             window.history.replaceState({}, '', window.location.pathname);
         }
         
         // Check for expired session message
         if (urlParams.get('expired') === '1') {
-            showToast('Your session has expired. Please log in again.', 'info');
+            window.showToast('Your session has expired. Please log in again.', 'info');
             window.history.replaceState({}, '', window.location.pathname);
         }
         
@@ -60,7 +49,6 @@
     
     // Expose functions globally for manual use
     window.auth = {
-        refreshAccessToken,
-        showToast
+        refreshAccessToken
     };
 })();
