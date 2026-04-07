@@ -10,6 +10,7 @@ from sqlalchemy import func, select, update
 from app.api.dependencies import CurrentUser, DbSession
 from app.config import settings
 from app.models.download_job import DownloadJob
+from app.schemas.error import ErrorCode, build_error_example, error_response_doc, success_response_doc
 from app.schemas.download import (
     DownloadCreate,
     DownloadListResponse,
@@ -66,7 +67,50 @@ async def _get_user_job(db, user_id: str, job_id: str) -> DownloadJob:
     return job
 
 
-@router.post("", response_model=DownloadResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=DownloadResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create download job",
+    description="Queue a new YouTube download job for the authenticated user.",
+    responses={
+        201: success_response_doc(
+            "Download job created",
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "status": "pending",
+                "file_name": None,
+                "error": None,
+                "created_at": "2026-04-07T12:00:00Z",
+                "completed_at": None,
+                "expires_at": None,
+            },
+        ),
+        401: error_response_doc("Unauthorized", ErrorCode.UNAUTHORIZED, "Could not validate credentials"),
+        422: {
+            "description": "Validation error",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/ErrorResponse"},
+                    "example": build_error_example(
+                        ErrorCode.VALIDATION_ERROR,
+                        "Request validation failed",
+                        details={
+                            "validation_errors": [
+                                {
+                                    "field": "url",
+                                    "message": "Value error, Must be a valid YouTube URL",
+                                    "type": "value_error",
+                                },
+                            ],
+                        },
+                    ),
+                },
+            },
+        },
+    },
+)
 async def create_download(
     data: DownloadCreate,
     current_user: CurrentUser,
@@ -115,7 +159,54 @@ async def create_download(
     )
 
 
-@router.get("", response_model=DownloadListResponse)
+@router.get(
+    "",
+    response_model=DownloadListResponse,
+    summary="List download jobs",
+    description="Return paginated download jobs belonging to the authenticated user.",
+    responses={
+        200: success_response_doc(
+            "List of download jobs",
+            {
+                "downloads": [
+                    {
+                        "id": "550e8400-e29b-41d4-a716-446655440000",
+                        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                        "status": "completed",
+                        "file_name": "video.mp4",
+                        "error": None,
+                        "created_at": "2026-04-07T12:00:00Z",
+                        "completed_at": "2026-04-07T12:01:00Z",
+                        "expires_at": "2026-04-08T12:01:00Z",
+                    },
+                ],
+                "pagination": {"page": 1, "per_page": 20, "total": 1},
+            },
+        ),
+        401: error_response_doc("Unauthorized", ErrorCode.UNAUTHORIZED, "Could not validate credentials"),
+        422: {
+            "description": "Validation error",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/ErrorResponse"},
+                    "example": build_error_example(
+                        ErrorCode.VALIDATION_ERROR,
+                        "Request validation failed",
+                        details={
+                            "validation_errors": [
+                                {
+                                    "field": "query.page",
+                                    "message": "Input should be greater than or equal to 1",
+                                    "type": "greater_than_equal",
+                                },
+                            ],
+                        },
+                    ),
+                },
+            },
+        },
+    },
+)
 async def list_downloads(
     current_user: CurrentUser,
     db: DbSession,
@@ -161,7 +252,34 @@ async def list_downloads(
     )
 
 
-@router.get("/{job_id}", response_model=DownloadResponse)
+@router.get(
+    "/{job_id}",
+    response_model=DownloadResponse,
+    summary="Get download job",
+    description="Return a specific download job by id if it belongs to the current user.",
+    responses={
+        200: success_response_doc(
+            "Download job details",
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "status": "processing",
+                "file_name": None,
+                "error": None,
+                "created_at": "2026-04-07T12:00:00Z",
+                "completed_at": None,
+                "expires_at": None,
+            },
+        ),
+        401: error_response_doc("Unauthorized", ErrorCode.UNAUTHORIZED, "Could not validate credentials"),
+        404: error_response_doc(
+            "Download job not found",
+            ErrorCode.NOT_FOUND,
+            "Download job not found",
+            details={"job_id": "unknown-id"},
+        ),
+    },
+)
 async def get_download(
     job_id: str,
     current_user: CurrentUser,
@@ -182,7 +300,28 @@ async def get_download(
     )
 
 
-@router.get("/{job_id}/file")
+@router.get(
+    "/{job_id}/file",
+    summary="Download output file",
+    description="Download the processed file for a completed, non-expired download job.",
+    responses={
+        200: {"description": "Binary file stream"},
+        400: error_response_doc(
+            "Job not completed",
+            ErrorCode.VALIDATION_ERROR,
+            "Job is not completed. Current status: processing",
+        ),
+        401: error_response_doc("Unauthorized", ErrorCode.UNAUTHORIZED, "Could not validate credentials"),
+        403: error_response_doc("Invalid file path", ErrorCode.FORBIDDEN, "Access denied: invalid file path"),
+        404: error_response_doc(
+            "Job or file not found",
+            ErrorCode.NOT_FOUND,
+            "File not found",
+            details={"job_id": "550e8400-e29b-41d4-a716-446655440000"},
+        ),
+        410: error_response_doc("Download link expired", ErrorCode.VALIDATION_ERROR, "Download link has expired"),
+    },
+)
 async def get_download_file(
     job_id: str,
     current_user: CurrentUser,
@@ -235,7 +374,22 @@ async def get_download_file(
     )
 
 
-@router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{job_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete download job",
+    description="Delete a download job and remove its file from storage when present.",
+    responses={
+        204: {"description": "Download job deleted"},
+        401: error_response_doc("Unauthorized", ErrorCode.UNAUTHORIZED, "Could not validate credentials"),
+        404: error_response_doc(
+            "Download job not found",
+            ErrorCode.NOT_FOUND,
+            "Download job not found",
+            details={"job_id": "unknown-id"},
+        ),
+    },
+)
 async def delete_download(
     job_id: str,
     current_user: CurrentUser,

@@ -64,15 +64,52 @@ class ErrorResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "error": {"code": "NOT_FOUND", "message": "Resource not found"},
-                "message": "The requested download job does not exist.",
                 "details": {"job_id": "123"},
             },
         },
     )
 
     error: dict[str, str]
-    message: str | None = None
     details: dict[str, Any] | None = None
+
+
+def build_error_example(
+    code: ErrorCode | ErrorCodeType,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a standardized OpenAPI error example payload."""
+    code_value = code.value if isinstance(code, ErrorCode) else code
+    return {
+        "error": {"code": code_value, "message": message},
+        "details": details,
+    }
+
+
+def error_response_doc(
+    description: str,
+    code: ErrorCode | ErrorCodeType,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build an OpenAPI response object for standardized error payloads."""
+    return {
+        "model": ErrorResponse,
+        "description": description,
+        "content": {
+            "application/json": {
+                "example": build_error_example(code, message, details),
+            },
+        },
+    }
+
+
+def success_response_doc(description: str, example: dict[str, Any]) -> dict[str, Any]:
+    """Build an OpenAPI response object for success payloads."""
+    return {
+        "description": description,
+        "content": {"application/json": {"example": example}},
+    }
 
 
 def error_response(
@@ -83,7 +120,6 @@ def error_response(
     """Helper to create a standardized error response."""
     return ErrorResponse(
         error={"code": code.value, "message": message},
-        message=message,
         details=details,
     )
 
@@ -93,10 +129,8 @@ def error_response_dict(
     message: str,
     details: dict[str, Any] | None = None,
 ) -> dict:
-    """Helper to create a standardized error response dict with detail for backward compatibility."""
+    """Helper to create a standardized error response dict."""
     return {
         "error": {"code": code.value, "message": message},
-        "message": message,
         "details": details,
-        "detail": message,  # Backward compatibility for tests
     }
