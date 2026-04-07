@@ -96,7 +96,7 @@ async def main() -> None:
 
     cleanup_interval_minutes: int = int(os.environ.get("CLEANUP_INTERVAL_MINUTES", "5"))
     cleanup_interval = timedelta(minutes=cleanup_interval_minutes)
-    last_cleanup = datetime.now(UTC)
+    last_cleanup = datetime.now(UTC) - cleanup_interval
     heartbeat_counter = 0
     heartbeat_interval = 10  # Write heartbeat every 10 iterations (~10 seconds)
     brpop_timeout = 2  # Seconds to block on BRPOP

@@ -55,6 +55,11 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
                 await redis_client.zadd("retry_queue", {str(job_id): retry_ts})
                 return
 
+        # Only process if job is still pending
+        if job.status != "pending":
+            logger.info("Job %s is not pending (status=%s), skipping", job_id, job.status)
+            return
+
         # Mark as processing so reset_stuck_jobs can detect crashes
         await db.execute(
             update(DownloadJob).where(DownloadJob.id == job_id).values(status="processing")
@@ -124,6 +129,7 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
                         error=f"Retry {job.retry_count + 1}/{job.max_retries}: {error_str}",
                     )
                 )
+                await db.commit()
                 await enqueue_job(job_id)
                 logger.info(
                     "Job %s scheduled for retry %d/%d",
@@ -209,10 +215,8 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
             return 0
 
         # Update claimed entries to enqueuing status
-        entry_ids = [e.job_id for e in entries]
-        await db.execute(
-            update(Outbox).where(Outbox.job_id.in_(entry_ids)).values(status="enqueuing")
-        )
+        entry_ids = [e.id for e in entries]
+        await db.execute(update(Outbox).where(Outbox.id.in_(entry_ids)).values(status="enqueuing"))
         await db.commit()
 
         # Phase 2: Push to Redis and finalize

@@ -43,7 +43,7 @@
         {% endif %}
 
         <button hx-delete="/web/downloads/{{ job.id }}"
-                hx-target="this"
+                hx-target="closest .download-row"
                 hx-swap="outerHTML"
                 hx-confirm="Delete this download?"
                 class="btn-danger">

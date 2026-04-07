@@ -18,7 +18,6 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         method = request.method
-        endpoint = self._get_path_template(request)
         start_time = time.time()
 
         try:
@@ -26,6 +25,8 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
         except Exception:
             # Record metrics even on exceptions
             duration = time.time() - start_time
+            route = request.scope.get("route")
+            endpoint = self._get_endpoint_from_route(route)
             HTTP_REQUESTS.labels(
                 method=method,
                 endpoint=endpoint,
@@ -36,6 +37,9 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
                 endpoint=endpoint,
             ).observe(duration)
             raise
+
+        route = request.scope.get("route")
+        endpoint = self._get_endpoint_from_route(route)
 
         duration = time.time() - start_time
         status_code = response.status_code
@@ -53,13 +57,12 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
 
         return response
 
-    def _get_path_template(self, request: Request) -> str:
-        """Get the path template for metrics (without path parameters)."""
-        path = request.url.path
-        if path.startswith("/downloads/"):
-            return "/downloads/{id}"
-        if path.startswith("/api/v1/download"):
-            return "/api/v1/download"
-        if path.startswith("/api/v1/downloads"):
-            return "/api/v1/downloads"
-        return path
+    def _get_endpoint_from_route(self, route) -> str:
+        """Get the endpoint path from the matched route."""
+        if route is None:
+            return "**unmatched**"
+        if hasattr(route, "path_format"):
+            return route.path_format
+        if hasattr(route, "path"):
+            return route.path
+        return "**unmatched**"

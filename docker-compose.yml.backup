@@ -131,7 +131,7 @@ services:
         condition: service_healthy
     <<: [*resource-limits, *security-context, *healthcheck, *logging]
     healthcheck:
-      test: ["CMD", "redis-cli", "-u", "$REDIS_URL", "ping"]
+      test: ["CMD-SHELL", "redis-cli -u $$REDIS_URL ping"]
       <<: *healthcheck
     # Worker might need slightly more resources for processing
     deploy:

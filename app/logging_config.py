@@ -66,7 +66,7 @@ class JSONFormatter(logging.Formatter):
             if extra_fields:
                 log_data["extra"] = extra_fields
 
-        return json.dumps(log_data)
+        return json.dumps(log_data, default=str)
 
 
 class ContextLoggerAdapter(logging.LoggerAdapter):

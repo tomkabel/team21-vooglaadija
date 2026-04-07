@@ -341,7 +341,6 @@ exclude_lines = [
 ]
 show_missing = true
 skip_covered = false
-exclude-programs = ["mypy", "ruff"]
 
 [tool.coverage.html]
 directory = "htmlcov"

@@ -7,6 +7,9 @@
     function showToast(message, type) {
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;
+        toast.setAttribute('role', 'alert');
+        toast.setAttribute('aria-live', 'assertive');
+        toast.setAttribute('aria-atomic', 'true');
         toast.textContent = message;
         toast.style.cssText = `
             position: fixed;

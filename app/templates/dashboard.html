@@ -49,9 +49,11 @@
                 </svg>
                 <input type="url"
                        name="url"
+                       id="new-download-url"
                        placeholder="https://www.youtube.com/watch?v=..."
                        required
-                       class="form-input">
+                       class="form-input"
+                       aria-label="New download URL">
             </div>
 
             <button type="submit"
@@ -76,8 +78,7 @@
     <div class="mb-8 slide-up animate-stagger-2 opacity-0-initial animate-fill-forwards"
          hx-ext="sse"
          sse-connect="/web/downloads/stream"
-         sse-swap="job_update"
-         hx-swap="none"
+         hx-trigger="sse:job_update"
          hx-history="false">
 
         <div class="card p-6 sm:p-8">
@@ -182,9 +183,29 @@
             badge.className = `status-badge status-${data.status}`;
         }
 
-        const downloadBtn = row.querySelector('.download-btn');
-        if (downloadBtn) {
-            downloadBtn.style.display = data.status === 'completed' ? 'inline-flex' : 'none';
+        let downloadBtn = row.querySelector('.download-btn');
+        if (data.status === 'completed') {
+            if (!downloadBtn) {
+                // Create download button if it doesn't exist
+                downloadBtn = document.createElement('a');
+                downloadBtn.href = `/api/v1/downloads/${data.id}/file`;
+                downloadBtn.className = 'download-btn btn-download text-xs';
+                downloadBtn.download = '';
+                downloadBtn.target = '_blank';
+                downloadBtn.setAttribute('hx-boost', 'false');
+                downloadBtn.innerHTML = `
+                    <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                    Save
+                `;
+                downloadBtn.style.display = 'inline-flex';
+                row.querySelector('.flex.items-center.gap-3').appendChild(downloadBtn);
+            } else {
+                downloadBtn.style.display = 'inline-flex';
+            }
+        } else if (downloadBtn) {
+            downloadBtn.style.display = 'none';
         }
     }
 
@@ -227,7 +248,8 @@
                         hx-target="this"
                         hx-swap="outerHTML"
                         hx-confirm="Delete this download?"
-                        class="btn-danger">
+                        class="btn-danger"
+                        aria-label="Delete download">
                     <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
                     </svg>

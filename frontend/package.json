@@ -6,7 +6,7 @@
     "dev": "tailwindcss -c ./tailwind.config.js -i ./css/src/styles.css -o ./css/dist/styles.css --watch",
     "build": "tailwindcss -c ./tailwind.config.js -i ./css/src/styles.css -o ./css/dist/styles.css --minify",
     "deploy": "tailwindcss -c ./tailwind.config.js -i ./css/src/styles.css -o ./css/dist/styles.css --minify && cp ./css/dist/styles.css ../app/static/css/styles.css",
-    "watch:deploy": "tailwindcss -c ./tailwind.config.js -i ./css/src/styles.css -o ./css/dist/styles.css --watch && cp ./css/dist/styles.css ../app/static/css/styles.css"
+    "watch:deploy": "tailwindcss -c ./tailwind.config.js -i ./css/src/styles.css -o ../app/static/css/styles.css --watch"
   },
   "devDependencies": {
     "tailwindcss": "^3.4.0",

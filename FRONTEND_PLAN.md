@@ -301,9 +301,11 @@ async def download_status_stream(
             
             # Heartbeat to keep connection alive (every 30s)
             yield {"event": "heartbeat", "data": ""}
-            
-            # Poll every 1 second internally (efficient, not per-user HTTP)
-            await asyncio.sleep(1)
+
+            # Poll every 5 seconds to reduce DB load
+            # Trade-off: ~12 queries/min/user vs 60 queries/min/user at 1s interval
+            # For push-driven approach, subscribe to Redis pub/sub instead
+            await asyncio.sleep(5)
     
     return EventSourceResponse(event_generator())
 ```
@@ -312,9 +314,9 @@ async def download_status_stream(
 | Metric | Polling (5s) | SSE |
 |--------|--------------|-----|
 | Requests/min/user | 12 | 1 (connection) |
-| DB queries/min/user | 12 | 60 |
+| DB queries/min/user | 12 | 12 |
 | Latency | 0-5s delay | Instant |
-| Server load | High | Low |
+| Server load | Medium | Low |
 | Real-time | No | Yes |
 
 ### Issue #6: Dual Response Pattern - SOLVED ✅
@@ -453,8 +455,9 @@ app.include_router(health.router, prefix="/api/v1")
 
 # NEW: Web/HTMX routes
 # SSE mounted BEFORE web router so /web/downloads/stream is matched first
-app.include_router(sse_router, prefix="/web")  
-app.include_router(web_router, prefix="/web")
+# Note: prefix is defined on the routers themselves, not here
+app.include_router(sse_router)
+app.include_router(web_router)
 ```
 
 ### Issue #7: Missing Error Handling for 401/403 - SOLVED ✅
@@ -503,7 +506,7 @@ document.body.addEventListener('htmx:responseError', function(evt) {
 
 **Problem**: No flow for handling expired access tokens.
 
-**Solution**: JavaScript checks token expiry and refreshes proactively.
+**Solution**: Token expiry is handled reactively by the global 401 error handler (Issue #7). Since `access_token` is HttpOnly, JavaScript cannot read it proactively. Instead, when any request returns 401, the user is redirected to login with an expiry message.
 
 ```javascript
 // In base.html - run on every page load
@@ -511,50 +514,19 @@ async function initAuth() {
     // Check if we're on a public page (no auth needed)
     const publicPages = ['/login', '/register', '/health'];
     if (publicPages.includes(window.location.pathname)) return;
-    
-    // Check for expired session message
+
+    // Check for expired session message from URL param
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('expired') === '1') {
         showToast('Your session has expired. Please log in again.', 'info');
         window.history.replaceState({}, '', window.location.pathname);
     }
-    
-    // Proactively refresh token if it expires soon (5 min buffer)
-    const token = getAccessTokenFromCookie();
-    if (token) {
-        const expiry = parseJwtExpiry(token);
-        const now = Date.now() / 1000;
-        const bufferSeconds = 300; // 5 minutes
-        
-        if (expiry - now < bufferSeconds) {
-            await refreshAccessToken();
-        }
-    }
-}
-
-async function refreshAccessToken() {
-    try {
-        const response = await fetch('/api/v1/auth/refresh', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',  // Include cookies automatically
-        });
-        
-        if (!response.ok) throw new Error('Refresh failed');
-        return true;
-    } catch (error) {
-        window.location.href = '/login';
-        return false;
-    }
-}
-
-function parseJwtExpiry(token) {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    return payload.exp;
 }
 
 initAuth();
 ```
+
+**Note**: The reactive 401 handler in Issue #7 handles all token expiry cases. The refresh token (also HttpOnly) is automatically sent with requests to `/api/v1/auth/refresh` when the backend detects an expired access token.
 
 ---
 
@@ -1222,7 +1194,7 @@ async def create_download(
                 
                 <form hx-post="/downloads"
                       hx-target="#download-list"
-                      hx-swap="innerHTML"
+                      hx-swap="afterbegin"
                       hx-indicator="#submit-spinner"
                       class="flex gap-4">
                     <input type="url" 
@@ -1594,8 +1566,9 @@ async def logout(request: Request, response: Response):
     
     Logout is a POST action to prevent CSRF from logout links.
     """
-    clear_token_cookies(response)
-    return RedirectResponse(url="/login?logged_out=1", status_code=303)
+    redirect = RedirectResponse(url="/login?logged_out=1", status_code=303)
+    clear_token_cookies(redirect)  # Clear cookies on the returned response
+    return redirect
 ```
 
 ```html

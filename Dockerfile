@@ -126,6 +126,14 @@ COPY --from=app-builder /tmp/sbom.xml ./sbom.xml
 COPY --from=app-builder /tmp/sbom.json ./sbom.json
 COPY --from=app-builder /tmp/slsa-provenance.json ./slsa-provenance.json
 
+# Create non-root user
+RUN groupadd -r appuser -g 1000 && \
+    useradd -r -g appuser -u 1000 appuser
+
+# Create storage directory and set ownership
+RUN mkdir -p /app/storage && \
+    chown -R appuser:appuser /app /opt/venv
+
 # Note: ffmpeg is not copied as it's not required for basic operation
 # yt-dlp will work without ffmpeg for basic downloading (some post-processing features limited)
 # For production use with ffmpeg post-processing, consider:
@@ -144,7 +152,8 @@ ENV PYTHONPATH=/app \
 
 # Copy entrypoint script
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh && \
+    chown appuser:appuser /app/entrypoint.sh
 
 # Health check - internal TCP check (no external deps)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
@@ -161,6 +170,9 @@ LABEL org.opencontainers.image.source="https://github.com/team21/vooglaadija" \
       org.opencontainers.image.revision=${GIT_SHA:-unknown} \
       io.buildkit.sbom="true" \
       io.sigstore.cosign.signature="true"
+
+# Switch to non-root user
+USER appuser
 
 # Run application via entrypoint script
 ENTRYPOINT ["/app/entrypoint.sh"]
@@ -182,6 +194,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Copy worker entrypoint
 COPY --from=app-builder /app/worker/entrypoint-worker.sh ./entrypoint-worker.sh
+RUN chmod +x ./entrypoint-worker.sh && \
+    chown appuser:appuser ./entrypoint-worker.sh
+
+# Switch to non-root user
+USER appuser
 
 # Run worker
 ENTRYPOINT ["./entrypoint-worker.sh"]

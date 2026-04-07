@@ -2,7 +2,7 @@
     'use strict';
     
     // Public pages that don't need auth
-    const PUBLIC_PAGES = ['/login', '/register', '/health'];
+    const PUBLIC_PAGES = ['/web/login', '/web/register', '/web/health'];
     
     /**
      * Get access token from cookie
@@ -64,10 +64,7 @@
      * Initialize authentication on page load
      */
     async function initAuth() {
-        // Check if we're on a public page (no auth needed)
-        if (PUBLIC_PAGES.includes(window.location.pathname)) return;
-        
-        // Check for logged out session message
+        // Check for logged out session message FIRST
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('logged_out') === '1') {
             showToast('You have been logged out successfully.', 'info');
@@ -80,21 +77,8 @@
             window.history.replaceState({}, '', window.location.pathname);
         }
         
-        // Proactively refresh token if it expires soon (5 min buffer)
-        const token = getAccessTokenFromCookie();
-        if (token) {
-            const expiry = parseJwtExpiry(token);
-            const now = Date.now() / 1000;
-            const bufferSeconds = 300; // 5 minutes
-            
-            if (expiry && expiry - now < bufferSeconds) {
-                const refreshed = await refreshAccessToken();
-                if (!refreshed) {
-                    window.location.href = '/login';
-                    return;
-                }
-            }
-        }
+        // Check if we're on a public page (no auth needed) - AFTER query param handling
+        if (PUBLIC_PAGES.includes(window.location.pathname)) return;
     }
     
     // Run on every page load

@@ -132,7 +132,7 @@ services:
         condition: service_healthy
     <<: [*resource-limits, *security-context, *healthcheck, *logging]
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8000)); s.close()\""]
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8081)); s.close()\""]
       <<: *healthcheck
     # Worker might need slightly more resources for processing
     deploy:

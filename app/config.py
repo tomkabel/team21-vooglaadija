@@ -2,6 +2,7 @@ import math
 import os
 import warnings
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -46,6 +47,8 @@ class Settings(BaseSettings):
     db_user: str = "postgres"
     db_password: str = ""
     db_name: str = "ytprocessor"
+    db_host: str = "localhost"
+    db_port: str = "5432"
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -56,7 +59,9 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_and_construct(self) -> "Settings":
         # TESTING override — skip all validation
-        if os.environ.get("TESTING"):
+        testing_val = os.environ.get("TESTING", "").lower()
+        is_testing = testing_val in ("1", "true", "yes", "on")
+        if is_testing:
             if not self.database_url:
                 self.database_url = "sqlite+aiosqlite:///:memory:"
             return self
@@ -69,9 +74,10 @@ class Settings(BaseSettings):
                     "For Docker: set DB_PASSWORD in .env. "
                     "For local dev: set DATABASE_URL in .env."
                 )
+            encoded_password = quote_plus(self.db_password)
             self.database_url = (
-                f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
-                f"@localhost:5432/{self.db_name}"
+                f"postgresql+asyncpg://{self.db_user}:{encoded_password}"
+                f"@{self.db_host}:{self.db_port}/{self.db_name}"
             )
 
         # Validate SECRET_KEY — reject known weak values

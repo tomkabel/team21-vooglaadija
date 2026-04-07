@@ -162,8 +162,9 @@ def _login_success_response(
         resp.headers["HX-Redirect"] = safe_redirect
         set_token_cookies(resp, access_token, refresh_token, secure=settings.cookie_secure)
         return resp
-    set_token_cookies(response, access_token, refresh_token, secure=settings.cookie_secure)
-    return RedirectResponse(url=safe_redirect, status_code=303)
+    redirect = RedirectResponse(url=safe_redirect, status_code=303)
+    set_token_cookies(redirect, access_token, refresh_token, secure=settings.cookie_secure)
+    return redirect
 
 
 def _register_success_response(
@@ -177,7 +178,9 @@ def _register_success_response(
         resp.headers["HX-Redirect"] = "/web/login?registered=1"
         set_token_cookies(resp, access_token, refresh_token, secure=settings.cookie_secure)
         return resp
-    return RedirectResponse(url="/web/login?registered=1", status_code=303)
+    redirect = RedirectResponse(url="/web/login?registered=1", status_code=303)
+    set_token_cookies(redirect, access_token, refresh_token, secure=settings.cookie_secure)
+    return redirect
 
 
 def _validate_file_path(file_path: str) -> str:
@@ -201,11 +204,14 @@ def _validate_file_path(file_path: str) -> str:
 @router.get("/login")
 async def login_page(request: Request, return_url: str = "/web/downloads"):
     """Render login page."""
-    return templates.TemplateResponse(
+    token = get_csrf_token(request)
+    response = templates.TemplateResponse(
         request,
         "login.html",
         get_template_context(request, return_url=return_url),
     )
+    set_csrf_token_cookie(response, token)
+    return response
 
 
 @router.post("/login")
@@ -249,11 +255,14 @@ async def login_form(
 @router.get("/register")
 async def register_page(request: Request):
     """Render register page."""
-    return templates.TemplateResponse(
+    token = get_csrf_token(request)
+    response = templates.TemplateResponse(
         request,
         "register.html",
         get_template_context(request),
     )
+    set_csrf_token_cookie(response, token)
+    return response
 
 
 @router.post("/register")
@@ -326,8 +335,9 @@ async def register_form(
 @router.post("/logout")
 async def logout(request: Request, response: Response):
     """Clear auth cookies and redirect to login."""
-    clear_token_cookies(response)
-    return RedirectResponse(url="/web/login?logged_out=1", status_code=303)
+    redirect = RedirectResponse(url="/web/login?logged_out=1", status_code=303)
+    clear_token_cookies(redirect)
+    return redirect
 
 
 # ========================
@@ -350,11 +360,14 @@ async def dashboard_page(
     )
     jobs = result.scalars().all()
 
-    return templates.TemplateResponse(
+    token = get_csrf_token(request)
+    response = templates.TemplateResponse(
         request,
         "dashboard.html",
         get_template_context(request, current_user=current_user, jobs=jobs),
     )
+    set_csrf_token_cookie(response, token)
+    return response
 
 
 @router.post("/downloads")

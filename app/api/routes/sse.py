@@ -1,5 +1,6 @@
 import asyncio
 import json
+import uuid
 from collections import OrderedDict
 
 from fastapi import APIRouter, Request
@@ -19,7 +20,7 @@ POLL_INTERVAL_SECONDS = 15
 async def event_generator(
     request: Request,
     db_session_factory,
-    user_id: str,
+    user_id: uuid.UUID,
 ):
     """SSE event generator that polls for job status changes.
 
@@ -37,10 +38,17 @@ async def event_generator(
                 break
 
             async with db_session_factory()() as db:
+                # Order by created_at for initial load, updated_at for subsequent polls
+                order_by = (
+                    DownloadJob.updated_at.desc()
+                    if last_updated_at is not None
+                    else DownloadJob.created_at.desc()
+                )
+
                 query = (
                     select(DownloadJob)
                     .where(DownloadJob.user_id == user_id)
-                    .order_by(DownloadJob.created_at.desc())
+                    .order_by(order_by)
                     .limit(50)
                 )
 
@@ -100,6 +108,6 @@ async def download_status_stream(
     Requires authentication — unauthenticated requests are rejected with 401.
     """
     return EventSourceResponse(
-        event_generator(request, get_async_session_factory, str(current_user.id)),
+        event_generator(request, get_async_session_factory, current_user.id),
         media_type="text/event-stream",
     )
