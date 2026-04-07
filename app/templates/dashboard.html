@@ -151,14 +151,20 @@
 </div>
 
 <script nonce="{{ nonce }}">
-    document.body.addEventListener('job_update', function(evt) {
+    document.body.addEventListener('sse:job_update', function(evt) {
         const data = JSON.parse(evt.detail.data);
 
         let row = document.querySelector(`[data-job-id="${data.id}"]`);
 
         if (!row) {
             row = createDownloadRow(data);
-            document.getElementById('download-list').prepend(row);
+            const downloadRows = document.getElementById('download-rows');
+            const downloadList = document.getElementById('download-list');
+            if (downloadRows) {
+                downloadRows.prepend(row);
+            } else if (downloadList) {
+                downloadList.prepend(row);
+            }
         } else {
             updateDownloadRow(row, data);
         }
