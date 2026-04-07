@@ -1,0 +1,17 @@
+{
+  "packageManager": "pnpm@10.33.0+sha512.10568bb4a6afb58c9eb3630da90cc9516417abebd3fabbe6739f0ae795728da1491e9db5a544c76ad8eb7570f5c4bb3d6c637b2cb41bfdcdb47fa823c8649319",
+  "scripts": {
+    "frontend:build": "cd frontend && pnpm run build",
+    "frontend:dev": "cd frontend && pnpm run dev",
+    "frontend:deploy": "cd frontend && pnpm run deploy",
+    "build": "pnpm run frontend:build",
+    "dev": "pnpm run frontend:dev",
+    "clean": "rm -rf frontend/css/dist app/static/css styles.css"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.0",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "update-browserslist-db": "^1.2.3"
+  }
+}
