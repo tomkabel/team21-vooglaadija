@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
+from urllib.parse import urlparse
 
 from app.api.dependencies import CurrentUserFromCookie, DbSession
 from app.api.rate_limit_config import limiter
@@ -43,15 +44,28 @@ def _validate_redirect_url(url: str | None, default: str) -> str:
     """
     if not url:
         return default
-    # Reject absolute URLs (contains ://)
-    if "://" in url:
+
+    # Normalize and strip whitespace / backslashes
+    normalized = url.strip().replace("\\", "/")
+
+    # Parse the URL to detect schemes and hosts robustly
+    parsed = urlparse(normalized)
+
+    # Reject any URL with a scheme or network location (host)
+    if parsed.scheme or parsed.netloc:
         return default
-    # Reject protocol-relative URLs
-    if url.startswith("//"):
+
+    # Reject protocol-relative URLs like //example.com
+    if normalized.startswith("//"):
         return default
-    # Only allow known safe prefixes
-    if any(url.startswith(prefix) for prefix in _ALLOWED_REDIRECT_HOSTS):
-        return url
+
+    # Only allow absolute paths that start with known safe prefixes
+    if not normalized.startswith("/"):
+        return default
+
+    if any(normalized.startswith(prefix) for prefix in _ALLOWED_REDIRECT_HOSTS):
+        return normalized
+
     return default
 
 
