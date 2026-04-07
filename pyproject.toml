@@ -8,6 +8,7 @@ version = "1.0.0"
 description = "YouTube Link Processor - REST API Service"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic",
     "fastapi",
     "uvicorn[standard]",
     "sqlalchemy",
@@ -20,8 +21,13 @@ dependencies = [
     "pydantic",
     "pydantic-settings",
     "yt-dlp",
-    "alembic",
     "email-validator>=2.3.0",
+    "sse-starlette>=1.6.0",
+    "jinja2",
+    "python-multipart",
+    "prometheus-client>=0.19.0",
+    "slowapi>=0.1.9",
+    "yt-dlp>=2025.3.0",
 ]
 
 [project.optional-dependencies]
@@ -31,7 +37,7 @@ server = [
 ]
 worker = [
     "redis",
-    "yt-dlp",
+    "yt-dlp>=2025.3.0",
 ]
 test = [
     "pytest",
@@ -114,13 +120,11 @@ cov = "pytest tests/ -v --cov=app --cov-report=term-missing --cov-report=xml"
 "cov-html" = "coverage html"
 # Clean script
 clean = "find . -type d -name __pycache__ -exec rm -rf {} +"
-# Alembic database migration scripts
-"db-migrate" = "alembic upgrade head"
-"db-rollback" = "alembic downgrade -1"
-"db-status" = "alembic current"
-"db-history" = "alembic history"
-"db-check" = "alembic check"
-"db-revision" = "alembic revision --autogenerate -m"
+# Database scripts
+db-migrate = "alembic upgrade head"
+db-rollback = "alembic downgrade -1"
+db-history = "alembic history"
+db-current = "alembic current"
 
 # ============================================
 # LINT ENVIRONMENT (detached - no project install)

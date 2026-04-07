@@ -94,21 +94,24 @@ docker-compose up -d
 git clone https://github.com/yourusername/vooglaadija.git
 cd vooglaadija
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies using hatch
+hatch env create
+
+# Or install with specific features
+pip install "vooglaadija[test,lint]"
 
 # Configure environment
 cp .env.example .env
 # Edit .env with your settings
 
 # Run database migrations
-alembic upgrade head
+hatch run db-migrate
 
 # Run the API
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+hatch run dev
 
 # Run the worker (separate terminal)
-python -m worker.main
+hatch run python -m worker.main
 ```
 
 ### Access the Web Interface

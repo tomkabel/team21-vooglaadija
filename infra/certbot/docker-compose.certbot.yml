@@ -1,0 +1,8 @@
+services:
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./ssl:/etc/letsencrypt:rw
+      - ./data:/var/www/certbot:rw
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h; done;'"
+    restart: unless-stopped
