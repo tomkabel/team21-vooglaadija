@@ -1,5 +1,6 @@
 """Rate limiting configuration using slowapi."""
 
+import os
 import re
 
 from slowapi import Limiter
@@ -10,7 +11,27 @@ from starlette.responses import JSONResponse
 
 from app.schemas.error import ErrorCode, error_response_dict
 
-limiter = Limiter(key_func=get_remote_address)
+# Disable rate limiting in test mode
+is_testing = os.environ.get("TESTING", "").lower() in ("1", "true", "yes", "on")
+
+
+class NoOpLimiter:
+    """A no-op limiter that doesn't enforce rate limits."""
+
+    def limit(self, *args, **kwargs):
+        """Return a no-op decorator."""
+
+        def noop_decorator(func):
+            return func
+
+        return noop_decorator
+
+    async def __call__(self, request, *args, **kwargs):
+        """Allow all requests."""
+
+
+# Use NoOpLimiter in test mode, real limiter otherwise
+limiter = NoOpLimiter() if is_testing else Limiter(key_func=get_remote_address)
 
 
 def _parse_retry_after(detail: str) -> int:

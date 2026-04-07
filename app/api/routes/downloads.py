@@ -79,8 +79,8 @@ async def _get_user_job(db, user_id, job_id) -> DownloadJob:
             DownloadJob.user_id == user_id,
         )
     )
-    job = result.scalar_one_or_none()
-    if not job:
+    job: DownloadJob | None = result.scalar_one_or_none()
+    if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Download job not found",
@@ -182,11 +182,20 @@ async def get_download_file(
         )
 
     # Check if download has expired
-    if job.expires_at and job.expires_at < datetime.now(UTC):
-        raise HTTPException(
-            status_code=status.HTTP_410_GONE,
-            detail="Download link has expired",
-        )
+    if job.expires_at:
+        # SQLite returns naive datetimes even for timezone-aware columns
+        # Normalize both to naive UTC for comparison to avoid TypeError
+        now_utc = datetime.now(UTC)
+        expires_at = job.expires_at
+        # Strip timezone info if present (SQLite may return naive)
+        if expires_at.tzinfo is not None:
+            expires_at = expires_at.replace(tzinfo=None)
+        now_naive = now_utc.replace(tzinfo=None)
+        if expires_at < now_naive:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail="Download link has expired",
+            )
 
     # Validate path is within storage directory (prevents path traversal)
     safe_path = _validate_file_path(job.file_path)

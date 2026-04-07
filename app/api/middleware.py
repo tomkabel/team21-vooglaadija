@@ -4,6 +4,7 @@ import time
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
+from starlette.routing import BaseRoute
 
 from app.metrics import HTTP_REQUEST_DURATION, HTTP_REQUESTS
 
@@ -57,12 +58,12 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
 
         return response
 
-    def _get_endpoint_from_route(self, route) -> str:
+    def _get_endpoint_from_route(self, route: BaseRoute | None) -> str:
         """Get the endpoint path from the matched route."""
         if route is None:
             return "**unmatched**"
         if hasattr(route, "path_format"):
-            return route.path_format
+            return str(route.path_format)
         if hasattr(route, "path"):
-            return route.path
+            return str(route.path)
         return "**unmatched**"

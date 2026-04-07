@@ -41,7 +41,7 @@ app = FastAPI(title="YouTube Link Processor", lifespan=lifespan)
 
 app.add_middleware(PrometheusMiddleware)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 
 # Security headers middleware (CSP and other best practices)

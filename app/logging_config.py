@@ -77,7 +77,7 @@ class ContextLoggerAdapter(logging.LoggerAdapter):
         # so per-call keys take precedence over adapter defaults
         extra: dict[str, object] = {}
         # Start with adapter defaults (type: ignore because LSP doesn't know self.extra is a dict)
-        for k, v in self.extra.items():  # type: ignore[union-attr]
+        for k, v in self.extra.items():
             extra[k] = v
         # Overlay per-call extra
         per_call_extra = kwargs.get("extra")

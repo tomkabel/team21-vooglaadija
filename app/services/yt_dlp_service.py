@@ -52,7 +52,7 @@ def _extract_sync(url: str, output_template: str) -> dict:
         # Prevent yt-dlp from hanging indefinitely
         "extractor_args": {"youtube": {"player_client": ["web", "ios"]}},
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type]
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(url, download=True)  # type: ignore[no-any-return]
 
 
