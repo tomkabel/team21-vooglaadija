@@ -20,9 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv (pinned version for reproducible builds)
-# In production, verify the digest at https://github.com/astral-sh/uv/releases
-COPY --from=ghcr.io/astral-sh/uv:0.5.18 /uv /uvx /bin/
+# Install uv (pinned version with digest for reproducible builds)
+# Digest sha256:38cb5680fa5b42493367d9b5974afe62107644a0c8d93c176f1d3502fd92f1a9
+COPY --from=ghcr.io/astral-sh/uv:0.5.18@sha256:38cb5680fa5b42493367d9b5974afe62107644a0c8d93c176f1d3502fd92f1a9 /uv /uvx /bin/
 ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
@@ -42,9 +42,12 @@ RUN pip install --upgrade pip setuptools wheel && \
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app
 
-# Install frontend dependencies
-COPY frontend/package*.json ./frontend/
-RUN cd frontend && npm ci
+# Install pnpm for package management (version pinned in package.json packageManager field)
+RUN corepack enable && corepack prepare pnpm@10.33.0@sha512.10568bb4a6afb58c9eb3630da90cc9516417abebd3fabbe6739f0ae795728da1491e9db5a544c76ad8eb7570f5c4bb3d6c637b2cb41bfdcdb47fa823c8649319 --activate
+
+# Install frontend dependencies using pnpm (lockfile provides supply-chain integrity)
+COPY frontend/package*.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 # Copy Tailwind config
 COPY frontend/tailwind.config.js ./frontend/tailwind.config.js
@@ -78,13 +81,8 @@ RUN pip install .
 RUN mkdir -p /app/static/css /app/static/js
 COPY --from=frontend-builder /app/frontend/css/dist ./app/static/css
 
-# Download HTMX for production (cache-friendly)
-# Note: For stronger supply chain guarantees, add htmx to frontend/package.json
-# so it's installed via pnpm with a committed lockfile
-# Verify integrity using sha256 hash
-RUN curl -sSfL https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js -o /app/static/js/htmx.min.js \
-    && echo "b57c08e1d5a6b2c1e2c9a4b5a6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4  /app/static/js/htmx.min.js" | sha256sum -c - \
-    || { echo "HTMX integrity check failed"; exit 1; }
+# Copy HTMX from node_modules (installed via pnpm with lockfile for supply-chain integrity)
+COPY --from=frontend-builder /app/frontend/node_modules/htmx.org/dist/htmx.min.js /app/static/js/htmx.min.js
 
 # Generate SBOM (best-effort; fallback to empty if CLI is incompatible)
 RUN pip install cyclonedx-bom 2>/dev/null; \

@@ -163,15 +163,6 @@ services:
         max-size: "10m"
         max-file: "3"
         compress: "true"
-    # Worker might need slightly more resources for processing
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 1G
-        reservations:
-          cpus: "0.5"
-          memory: 256M
     networks:
       ytprocessor-network:
         aliases:
@@ -274,7 +265,6 @@ services:
     ports:
       - "4317:4317"  # OTLP gRPC
       - "55681:55681"  # Web UI (if enabled)
-    <<: *resource-limits
     security_opt:
       - no-new-privileges=true
     logging:
