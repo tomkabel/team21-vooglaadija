@@ -93,6 +93,7 @@ async def login(
 @limiter.limit("5/minute")
 async def refresh(
     request: Request,
+    response: Response,
     db: DbSession,
     token_refresh: TokenRefresh | None = None,
 ) -> Token:
@@ -154,10 +155,14 @@ async def refresh(
         )
 
     access_token = create_access_token(user.id)
+    new_refresh_token = create_refresh_token(user.id)
+
+    # Set JWT tokens as HttpOnly cookies for HTMX/browser auth
+    set_token_cookies(response, access_token, new_refresh_token, secure=settings.cookie_secure)
 
     return Token(
         access_token=access_token,
-        refresh_token=refresh_token_str,
+        refresh_token=new_refresh_token,
         token_type="bearer",
     )
 

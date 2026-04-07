@@ -267,19 +267,27 @@ HATCH_BUILD_NO_PERMISSION_WARNING = "1"
 # BUILD TARGETS CONFIGURATION
 # ============================================
 [tool.hatch.build.targets.wheel]
-# Only include Python source files for pure Python wheel
+# Include Python source files and non-Python assets
 include = [
     "app/**/*.py",
     "worker/**/*.py",
+    "alembic/**/*.py",
+    "alembic.ini",
+    "app/templates/**",
+    "app/static/**",
 ]
 
 [tool.hatch.build.targets.sdist]
-# Include source files
+# Include source files and non-Python assets
 include = [
     "app/**/*.py",
     "worker/**/*.py",
     "pyproject.toml",
     "README.md",
+    "alembic/**/*.py",
+    "alembic.ini",
+    "app/templates/**",
+    "app/static/**",
 ]
 
 # ============================================
@@ -384,6 +392,8 @@ ignore = [
     "E501",  # line too long (handled by formatter)
     "PLR0913",  # too many arguments
     "PLR2004",  # magic value comparison
+    "PLC0415",  # import order (required for pytest fixtures in conftest.py)
+    "B008",  # function call in default argument (required for FastAPI Depends)
 ]
 
 [tool.ruff.format]

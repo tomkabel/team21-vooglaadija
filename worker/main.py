@@ -106,12 +106,22 @@ async def main() -> None:
 
     while not shutdown_event.is_set():
         try:
-            # Move due retry jobs from retry_queue to download_queue
+            # Move due retry jobs from retry_queue to download_queue atomically
+            # Uses Lua script to prevent race conditions between workers
             now_ts = datetime.now(UTC).timestamp()
-            due_retries = await redis_client.zrangebyscore("retry_queue", 0, now_ts)
-            for job_id_str in due_retries:
-                await redis_client.zrem("retry_queue", job_id_str)
-                await redis_client.lpush("download_queue", job_id_str)
+            lua_script = """
+            local due_jobs = redis.call('ZRANGEBYSCORE', KEYS[1], 0, ARGV[1])
+            if #due_jobs > 0 then
+                redis.call('ZREM', KEYS[1], unpack(due_jobs))
+                for _, job_id in ipairs(due_jobs) do
+                    redis.call('LPUSH', KEYS[2], job_id)
+                end
+            end
+            return due_jobs
+            """
+            due_retries = await redis_client.eval(
+                lua_script, 2, "retry_queue", "download_queue", now_ts
+            )
 
             # Use BRPOP with timeout for efficient blocking — no busy-waiting
             # Pass the job_id directly to process_next_job to avoid race condition

@@ -245,13 +245,9 @@ async def delete_download(
     """Delete a download job and its associated file."""
     job = await _get_user_job(db, current_user.id, job_id)
 
-    # Delete DB record first (source of truth), then clean up file
-    await db.delete(job)
-    await db.commit()
-
+    # Validate and remove file first, before DB commit
     if job.file_path:
         try:
-            # Validate path before deletion
             safe_path = _validate_file_path(job.file_path)
             if os.path.isfile(safe_path):
                 os.remove(safe_path)
@@ -259,5 +255,13 @@ async def delete_download(
         except HTTPException:
             raise
         except OSError as e:
-            # File deletion failure is non-fatal — DB record is already gone
+            # File deletion failed - do not commit DB deletion so cleanup_expired_jobs can retry
             logger.warning("Failed to delete file %s: %s", job.file_path, e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete file from disk",
+            ) from e
+
+    # Only delete DB record after successful file deletion
+    await db.delete(job)
+    await db.commit()

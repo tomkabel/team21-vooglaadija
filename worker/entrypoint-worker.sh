@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Worker entrypoint that runs database migrations then starts the worker
+# Worker entrypoint that runs migrations with lock then starts the worker
 echo "Running database migrations..."
-python -m alembic upgrade head
+/app/migrate.sh
 
 echo "Starting worker..."
 exec python -m worker.main

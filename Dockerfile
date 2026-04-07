@@ -153,10 +153,11 @@ ENV PYTHONPATH=/app \
     PATH=/opt/venv/bin:$PATH \
     STORAGE_PATH=/app/storage
 
-# Copy entrypoint script
+# Copy entrypoint script and migrator
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh && \
-    chown appuser:appuser /app/entrypoint.sh
+COPY migrate.sh /app/migrate.sh
+RUN chmod +x /app/entrypoint.sh /app/migrate.sh && \
+    chown appuser:appuser /app/entrypoint.sh /app/migrate.sh
 
 # Health check - internal TCP check (no external deps)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
@@ -179,7 +180,7 @@ USER appuser
 
 # Run application via entrypoint script
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["/opt/venv/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/opt/venv/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 
 # ============================================
 # Stage 7: Worker Service
@@ -197,8 +198,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Copy worker entrypoint
 COPY --from=app-builder /app/worker/entrypoint-worker.sh ./entrypoint-worker.sh
-RUN chmod +x ./entrypoint-worker.sh && \
-    chown appuser:appuser ./entrypoint-worker.sh
+COPY migrate.sh /app/migrate.sh
+RUN chmod +x ./entrypoint-worker.sh /app/migrate.sh && \
+    chown appuser:appuser ./entrypoint-worker.sh /app/migrate.sh
 
 # Switch to non-root user
 USER appuser

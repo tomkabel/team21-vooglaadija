@@ -12,9 +12,18 @@ from app.metrics import JOB_DURATION_SECONDS, JOBS_COMPLETED
 from app.models.download_job import DownloadJob
 from app.models.outbox import Outbox
 from app.services.yt_dlp_service import extract_media_url
+from worker.health import update_worker_state
 from worker.queue import enqueue_job, redis_client
 
 logger = logging.getLogger(__name__)
+
+
+async def _heartbeat(db, job_id: UUID) -> None:
+    """Write a lightweight heartbeat to keep the job from being reset as stuck."""
+    await db.execute(
+        update(DownloadJob).where(DownloadJob.id == job_id).values(updated_at=datetime.now(UTC))
+    )
+    await db.commit()
 
 
 async def process_next_job(job_id: UUID | str | None = None) -> None:
@@ -22,6 +31,9 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
 
     If job_id is provided, process that specific job (avoids race condition
     when using BRPOP in the main loop). Otherwise, pop from Redis queue.
+
+    Uses atomic guarded claim: UPDATE ... WHERE id=? AND status='pending'
+    and checks rowcount to prevent race conditions.
 
     Sets job status to 'processing' before work begins so that
     reset_stuck_jobs() can detect and recover from crashes.
@@ -40,34 +52,46 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
 
     start_time = time.time()
     async with session_factory() as db:
-        result = await db.execute(select(DownloadJob).where(DownloadJob.id == job_id))
-        job = result.scalar_one_or_none()
-
-        if not job:
-            logger.warning(f"Job {job_id} not found in database, skipping")
-            return
-
-        if job.status == "pending" and job.next_retry_at:
-            if datetime.now(UTC) < job.next_retry_at:
-                # Job is not yet due for retry — re-enqueue and return
-                # Use ZADD with score = retry timestamp for proper delayed execution
-                retry_ts = job.next_retry_at.timestamp()
-                await redis_client.zadd("retry_queue", {str(job_id): retry_ts})
-                return
-
-        # Only process if job is still pending
-        if job.status != "pending":
-            logger.info("Job %s is not pending (status=%s), skipping", job_id, job.status)
-            return
-
-        # Mark as processing so reset_stuck_jobs can detect crashes
-        await db.execute(
-            update(DownloadJob).where(DownloadJob.id == job_id).values(status="processing")
+        # Atomic guarded claim: UPDATE ... WHERE id=? AND status='pending'
+        # Only proceeds if exactly one row was claimed
+        result = await db.execute(
+            update(DownloadJob)
+            .where(DownloadJob.id == job_id, DownloadJob.status == "pending")
+            .values(
+                status="processing",
+                updated_at=datetime.now(UTC),
+            )
         )
         await db.commit()
 
+        # Check if we actually claimed the job (rowcount == 1)
+        claimed = result.rowcount == 1  # type: ignore[attr-defined]
+
+        if not claimed:
+            # Job was already claimed by another worker or is not pending
+            logger.info("Job %s was not claimed (possibly by another worker)", job_id)
+            return
+
+        # Job claimed successfully - mark as running in health state
+        update_worker_state(status="running", current_job_started_at=datetime.now(UTC).isoformat())
+
         try:
+            # Fetch the job for processing
+            result = await db.execute(select(DownloadJob).where(DownloadJob.id == job_id))
+            job = result.scalar_one_or_none()
+
+            if not job:
+                logger.warning("Job %s not found after claim", job_id)
+                update_worker_state(status="running", current_job_started_at=None)
+                return
+
+            # Initial heartbeat after claiming
+            await _heartbeat(db, job_id)
+
             file_path, file_name = await extract_media_url(job.url, settings.storage_path)
+
+            # Heartbeat after extract_media_url completes
+            await _heartbeat(db, job_id)
 
             await db.execute(
                 update(DownloadJob)
@@ -81,10 +105,12 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
                 )
             )
             await db.commit()
+            update_worker_state(status="running", current_job_started_at=None)
             JOBS_COMPLETED.labels(status="success").inc()
             logger.info("Job %s completed successfully", job_id)
         except asyncio.CancelledError:
             # Don't catch cancellation — let it propagate for clean shutdown
+            update_worker_state(status="running", current_job_started_at=None)
             raise
         except Exception as e:
             error_str = str(e)
@@ -98,6 +124,16 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
                 )
             else:
                 logger.error("Job %s failed: %s", job_id, error_str)
+
+            update_worker_state(status="running", current_job_started_at=None)
+
+            # Fetch job for retry/error handling
+            result = await db.execute(select(DownloadJob).where(DownloadJob.id == job_id))
+            job = result.scalar_one_or_none()
+
+            if not job:
+                logger.error("Job %s not found during error handling", job_id)
+                return
 
             # Format errors are non-retryable — YouTube's available formats won't change
             if is_format_error or job.retry_count >= job.max_retries:
@@ -117,17 +153,11 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
                         "Job %s failed permanently after %d retries", job_id, job.max_retries
                     )
                 JOBS_COMPLETED.labels(status="failed").inc()
+                await db.commit()
             else:
                 next_retry = datetime.now(UTC) + timedelta(minutes=2**job.retry_count)
-                # Enqueue first, then update DB only if enqueue succeeds
-                # This ensures job is never in DB as "pending" without being in the queue
-                try:
-                    await enqueue_job(job_id)
-                except Exception as enqueue_error:
-                    logger.error("Job %s failed to enqueue for retry: %s", job_id, enqueue_error)
-                    # Don't update DB - job stays processing for next sync cycle
-                    return
 
+                # Update DB first with pending status and next_retry_at
                 await db.execute(
                     update(DownloadJob)
                     .where(DownloadJob.id == job_id)
@@ -136,17 +166,26 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
                         retry_count=job.retry_count + 1,
                         next_retry_at=next_retry,
                         error=f"Retry {job.retry_count + 1}/{job.max_retries}: {error_str}",
+                        updated_at=datetime.now(UTC),
                     )
                 )
                 await db.commit()
-                logger.info(
-                    "Job %s scheduled for retry %d/%d",
-                    job_id,
-                    job.retry_count + 1,
-                    job.max_retries,
-                )
 
-            await db.commit()
+                # Only after DB commit succeeds, enqueue to retry queue
+                try:
+                    retry_ts = next_retry.timestamp()
+                    await redis_client.zadd("retry_queue", {str(job_id): retry_ts})
+                    logger.info(
+                        "Job %s scheduled for retry %d/%d",
+                        job_id,
+                        job.retry_count + 1,
+                        job.max_retries,
+                    )
+                except Exception as enqueue_error:
+                    # DB is already committed with pending status
+                    # This is recoverable - sync_outbox will eventually enqueue it
+                    logger.error("Job %s failed to enqueue for retry: %s", job_id, enqueue_error)
+
         finally:
             JOB_DURATION_SECONDS.observe(time.time() - start_time)
 

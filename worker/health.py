@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 _worker_state = {
     "status": "starting",
     "last_heartbeat": None,
+    "current_job_started_at": None,
     "last_job_processed": None,
     "last_cleanup": None,
     "pid": os.getpid(),
@@ -95,17 +96,18 @@ async def write_health_async() -> bool:
         "pid": os.getpid(),
     }
 
+    client = aioredis.from_url(redis_url, decode_responses=True)
     try:
-        client = aioredis.from_url(redis_url, decode_responses=True)
         await client.setex(f"worker:health:{worker_id}", 30, json.dumps(health_data))
-        # aclose() was added in redis-py 5.0; fall back to close() for older versions
+        return True
+    except Exception:
+        raise
+    finally:
+        # Always close the Redis client
         if hasattr(client, "aclose"):
             await client.aclose()  # type: ignore[union-attr]
         else:
             await client.close()
-        return True
-    except Exception:
-        return False
 
 
 class _HealthHandler(BaseHTTPRequestHandler):
@@ -123,17 +125,26 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
             # Determine health status based on worker state and heartbeat
             last_hb = _worker_state.get("last_heartbeat")
+            current_job_started_at = _worker_state.get("current_job_started_at")
             if worker_status == "running":
-                # Worker is running, check heartbeat
-                if last_hb:
+                # Worker is running - consider healthy if a job is actively processing
+                if current_job_started_at:
+                    # Job is running, check if job started recently
+                    job_start_dt = datetime.fromisoformat(current_job_started_at)
+                    seconds_since_job_start = (datetime.now(UTC) - job_start_dt).total_seconds()
+                    # Job is healthy as long as it started within a reasonable time
+                    # (longer than the 120s heartbeat timeout since extract_media_url can take minutes)
+                    if seconds_since_job_start > 600:  # 10 minutes max for a single job
+                        health_data["status"] = "unhealthy"
+                        health_data["reason"] = "Job processing exceeded 10 minutes"
+                elif last_hb:
+                    # No job running but have heartbeat - check heartbeat freshness
                     last_hb_dt = datetime.fromisoformat(last_hb)
                     seconds_since_hb = (datetime.now(UTC) - last_hb_dt).total_seconds()
                     if seconds_since_hb > 120:
                         health_data["status"] = "unhealthy"
                         health_data["reason"] = "No heartbeat in over 120 seconds"
-                else:
-                    # No heartbeat yet but running - this is okay initially
-                    pass
+                # else: No job running and no heartbeat yet - this is okay for idle worker
             elif worker_status == "starting":
                 health_data["status"] = "starting"
             else:

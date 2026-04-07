@@ -1,3 +1,4 @@
+{% if jobs %}
 <div id="download-rows">
 {% for job in jobs %}
 <div class="download-row"
@@ -64,7 +65,10 @@
         </button>
     </div>
 </div>
+{% endfor %}
+</div>
 {% else %}
+<div id="download-rows"></div>
 <div class="text-center py-16">
     <div class="mx-auto h-20 w-20 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mb-5">
         <svg class="h-10 w-10 text-gray-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
@@ -76,5 +80,4 @@
         Paste a YouTube URL above to start downloading
     </p>
 </div>
-{% endfor %}
-</div>
+{% endif %}

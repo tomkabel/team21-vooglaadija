@@ -5,20 +5,6 @@
     const PUBLIC_PAGES = ['/web/login', '/web/register', '/web/health'];
     
     /**
-     * Get access token from cookie
-     */
-    function getAccessTokenFromCookie() {
-        const cookies = document.cookie.split(';');
-        for (const cookie of cookies) {
-            const [name, value] = cookie.trim().split('=');
-            if (name === 'access_token') {
-                return value;
-            }
-        }
-        return null;
-    }
-    
-    /**
      * Show toast notification
      */
     function showToast(message, type) {
@@ -75,7 +61,6 @@
     // Expose functions globally for manual use
     window.auth = {
         refreshAccessToken,
-        getAccessTokenFromCookie,
         showToast
     };
 })();

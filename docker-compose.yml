@@ -54,12 +54,12 @@ x-security-context: &security-context
     - CHOWN  # For entrypoint scripts that might need to chown volumes
     - SETGID
     - SETUID
-  # Additional security
-  no_new_privileges: true
+  # Additional security - use security_opt for no-new-privileges
+  security_opt:
+    - no-new-privileges=true
   # AppArmor and Seccomp profiles (if available)
-  # security_opt:
-  #   - apparmor=docker-default
-  #   - seccomp=runtime/default
+  # apparmor: docker-default
+  # seccomp: runtime/default
 
 x-healthcheck: &healthcheck
   # Standardized healthcheck template
@@ -109,10 +109,21 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    <<: [*resource-limits, *security-context, *healthcheck, *logging]
+    <<: *resource-limits
+    security_opt:
+      - no-new-privileges=true
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8000)); s.close()"]
-      <<: *healthcheck
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
     # Networks and aliases for service discovery
     networks:
       ytprocessor-network:
@@ -137,10 +148,21 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    <<: [*resource-limits, *security-context, *healthcheck, *logging]
+    <<: *resource-limits
+    security_opt:
+      - no-new-privileges=true
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8081)); s.close()\""]
-      <<: *healthcheck
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
     # Worker might need slightly more resources for processing
     deploy:
       resources:
@@ -212,7 +234,14 @@ services:
       - "appendonly.aof"
     volumes:
       - ./data/redis:/data:Z
-    <<: [*security-context, *logging]
+    security_opt:
+      - no-new-privileges=true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
     deploy:
       resources:
         limits:
@@ -243,7 +272,15 @@ services:
     ports:
       - "4317:4317"  # OTLP gRPC
       - "55681:55681"  # Web UI (if enabled)
-    <<: [*resource-limits, *security-context, *logging]
+    <<: *resource-limits
+    security_opt:
+      - no-new-privileges=true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
     deploy:
       resources:
         limits:
@@ -266,7 +303,22 @@ services:
       URL: http://api:8000/openapi.json
     ports:
       - "8081:8080"
-    <<: [*resource-limits, *security-context, *logging]
+    # swagger-ui doesn't need resource limits or security context restrictions
+    # Only apply logging and basic deploy limits
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
     depends_on:
       - api
     networks:
@@ -287,7 +339,5 @@ networks:
     name: ytprocessor-network
     # Enable network isolation and policies
     driver: bridge
-    driver_opts:
-      # com.docker.network.bridge.enable_icc: "false"
     # Internal network for service-to-service communication only
     internal: false
