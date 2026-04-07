@@ -279,7 +279,7 @@ async def test_get_download_file_not_found(db_session: AsyncSession):
             json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
             headers={"Authorization": f"Bearer {token}"},
         )
-        job_id = create_response.json()["id"]
+        job_id = uuid.UUID(create_response.json()["id"])
         # Manually mark as completed but no file_path
         await db_session.execute(
             update(DownloadJob).where(DownloadJob.id == job_id).values(status="completed"),
@@ -359,7 +359,7 @@ async def test_get_download_file_expired_returns_410(db_session: AsyncSession):
             json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
             headers={"Authorization": f"Bearer {token}"},
         )
-        job_id = create_response.json()["id"]
+        job_id = uuid.UUID(create_response.json()["id"])
 
         # Store a datetime in the past (SQLite loses tz info on retrieval)
         past_naive = datetime(2000, 1, 1, 0, 0, 0, tzinfo=UTC)
@@ -402,7 +402,7 @@ async def test_get_download_file_path_traversal_returns_403(db_session: AsyncSes
             json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
             headers={"Authorization": f"Bearer {token}"},
         )
-        job_id = create_response.json()["id"]
+        job_id = uuid.UUID(create_response.json()["id"])
 
         # Simulate a malicious file_path stored in DB; expires_at=None means not expired
         await db_session.execute(
@@ -442,7 +442,7 @@ async def test_get_download_file_not_on_disk(db_session: AsyncSession):
             json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
             headers={"Authorization": f"Bearer {token}"},
         )
-        job_id = create_response.json()["id"]
+        job_id = uuid.UUID(create_response.json()["id"])
 
         # Use a path inside storage dir that doesn't actually exist on disk
         storage_downloads = os.path.join(settings.storage_path, "downloads")

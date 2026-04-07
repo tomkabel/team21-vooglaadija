@@ -19,8 +19,11 @@ app.config.settings.database_url = _test_db_url
 from collections.abc import AsyncGenerator, Generator  # noqa: E402
 
 import pytest  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: E402
-from sqlalchemy.orm import sessionmaker  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import NullPool  # noqa: E402
 
 import app.models  # noqa: E402
@@ -38,8 +41,8 @@ test_engine = create_async_engine(
     poolclass=NullPool,
 )
 
-# Use the same engine for TestingSessionLocal
-TestingSessionLocal = sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+# Use async_sessionmaker for proper async session support
+TestingSessionLocal = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 
 
 @pytest.fixture(scope="session")

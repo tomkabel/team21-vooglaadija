@@ -166,7 +166,10 @@ class TestExtractMediaUrl:
                 args, _ = call_args
                 ydl_opts = args[0] if args else {}
 
-                assert ydl_opts.get("format") == "best[ext=mp4]/best"
+                assert (
+                    ydl_opts.get("format")
+                    == "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+                )
                 assert "quiet" in ydl_opts
                 assert "no_warnings" in ydl_opts
                 assert "outtmpl" in ydl_opts

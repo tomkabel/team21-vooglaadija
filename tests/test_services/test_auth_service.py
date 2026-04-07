@@ -1,6 +1,5 @@
 """Tests for auth service (password hashing)."""
 
-
 from app.services.auth_service import hash_password, verify_password
 
 
