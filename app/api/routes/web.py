@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Form, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import CurrentUserFromCookie, DbSession
@@ -20,6 +20,7 @@ from app.auth import (
 )
 from app.config import settings
 from app.models.download_job import DownloadJob
+from app.models.outbox import Outbox
 from app.models.user import User
 from app.services.auth_service import hash_password, verify_password
 from app.services.outbox_service import write_job_to_outbox
@@ -79,12 +80,21 @@ def set_csrf_token_cookie(response: Response, token: str) -> None:
     )
 
 
-def get_template_context(request: Request, **extra_context):
-    """Get common template context including current year and CSRF token."""
+def get_template_context(request: Request, csrf_token: str | None = None, **extra_context):
+    """Get common template context including current year and CSRF token.
+
+    Args:
+        request: The FastAPI request object
+        csrf_token: Optional pre-generated CSRF token. If not provided,
+                    a new one will be generated via get_csrf_token(request).
+                    Use this to ensure the same token is used for both
+                    the cookie and the template context.
+    """
+    token = csrf_token if csrf_token is not None else get_csrf_token(request)
     context = {
         "request": request,
         "current_year": datetime.now(UTC).year,
-        "csrf_token": get_csrf_token(request),
+        "csrf_token": token,
     }
     context.update(extra_context)
     return context
@@ -208,7 +218,7 @@ async def login_page(request: Request, return_url: str = "/web/downloads"):
     response = templates.TemplateResponse(
         request,
         "login.html",
-        get_template_context(request, return_url=return_url),
+        get_template_context(request, csrf_token=token, return_url=return_url),
     )
     set_csrf_token_cookie(response, token)
     return response
@@ -259,7 +269,7 @@ async def register_page(request: Request):
     response = templates.TemplateResponse(
         request,
         "register.html",
-        get_template_context(request),
+        get_template_context(request, csrf_token=token),
     )
     set_csrf_token_cookie(response, token)
     return response
@@ -333,8 +343,13 @@ async def register_form(
 
 
 @router.post("/logout")
-async def logout(request: Request, response: Response):
+async def logout(request: Request):
     """Clear auth cookies and redirect to login."""
+    # CSRF validation - logout should be protected against CSRF
+    if not await validate_csrf_token(request):
+        return _htmx_or_redirect(
+            request, 403, _error_html("Invalid CSRF token"), "/web/downloads?error=csrf"
+        )
     redirect = RedirectResponse(url="/web/login?logged_out=1", status_code=303)
     clear_token_cookies(redirect)
     return redirect
@@ -364,7 +379,7 @@ async def dashboard_page(
     response = templates.TemplateResponse(
         request,
         "dashboard.html",
-        get_template_context(request, current_user=current_user, jobs=jobs),
+        get_template_context(request, csrf_token=token, current_user=current_user, jobs=jobs),
     )
     set_csrf_token_cookie(response, token)
     return response
@@ -398,6 +413,13 @@ async def create_download_form(
     # Enqueue job for processing (best-effort; outbox handles recovery)
     try:
         await enqueue_job(job_id)
+        # Mark outbox as enqueued to prevent sync_outbox_to_queue from re-publishing
+        await db.execute(
+            update(Outbox)
+            .where(Outbox.job_id == job_id, Outbox.status == "pending")
+            .values(status="enqueued")
+        )
+        await db.commit()
     except Exception:
         logger.warning("Failed to enqueue job %s (outbox will handle recovery)", job_id)
 

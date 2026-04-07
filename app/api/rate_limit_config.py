@@ -22,7 +22,7 @@ def _parse_retry_after(detail: str) -> int:
     match = re.match(r"(\d+)\s+per\s+(\d+)\s+(\w+)", detail)
     if not match:
         return 60  # Default to 60 seconds if parsing fails
-    count, window, unit = match.groups()
+    _, window, unit = match.groups()
     window = int(window)
     unit = unit.lower().rstrip("s")  # normalize "minutes" to "minute"
     multipliers = {
@@ -31,7 +31,10 @@ def _parse_retry_after(detail: str) -> int:
         "hour": 3600,
         "day": 86400,
     }
-    return window * multipliers.get(unit, 60)
+    multiplier = multipliers.get(unit)
+    if multiplier is None:
+        raise ValueError(f"Unknown time unit in rate limit detail: {unit}")
+    return window * multiplier
 
 
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):

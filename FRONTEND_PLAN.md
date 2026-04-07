@@ -599,8 +599,6 @@ team21-vooglaadija/
 │   │       ├── api.py               # (EXISTING) JSON API routes
 │   │       ├── web.py               # (NEW) HTML pages + HTMX handlers
 │   │       └── sse.py               # (NEW) SSE streams
-│   └── services/
-│       └── template_service.py       # (NEW) Template rendering helpers
 ├── frontend/                        # Tailwind build setup (not served)
 │   ├── package.json
 │   ├── tailwind.config.js

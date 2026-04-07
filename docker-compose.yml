@@ -4,8 +4,15 @@
 # ============================================
 
 x-common-env: &common-env
-  DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD:?DB_PASSWORD is required}@db:5432/${DB_NAME:-ytprocessor}
-  REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379
+  # Database components (app/config.py constructs URL with proper encoding)
+  DB_USER: ${DB_USER:-postgres}
+  DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+  DB_NAME: ${DB_NAME:-ytprocessor}
+  DB_HOST: ${DB_HOST:-db}
+  DB_PORT: ${DB_PORT:-5432}
+  # Redis components (worker/health.py constructs URL)
+  REDIS_HOST: ${REDIS_HOST:-redis}
+  REDIS_PORT: ${REDIS_PORT:-6379}
   REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
   SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
   FILE_EXPIRE_HOURS: ${FILE_EXPIRE_HOURS:-24}
@@ -280,8 +287,7 @@ networks:
     name: ytprocessor-network
     # Enable network isolation and policies
     driver: bridge
-    options:
-      # Limit inter-container communication if needed
+    driver_opts:
       # com.docker.network.bridge.enable_icc: "false"
     # Internal network for service-to-service communication only
     internal: false

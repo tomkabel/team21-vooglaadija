@@ -35,8 +35,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv (latest static binary)
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Install uv (pinned version for reproducible builds)
+# In production, verify the digest at https://github.com/astral-sh/uv/releases
+COPY --from=ghcr.io/astral-sh/uv:0.5.18 /uv /uvx /bin/
 ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
@@ -85,14 +86,16 @@ COPY pyproject.toml .
 COPY alembic.ini .
 COPY alembic ./alembic
 
-# Install the package with dev dependencies (for building)
-RUN pip install ".[dev]"
+# Install the package (production deps only)
+RUN pip install .
 
 # Copy built frontend assets - ensure destination directory exists
 RUN mkdir -p /app/static/css /app/static/js
 COPY --from=frontend-builder /app/frontend/css/dist ./app/static/css
 
 # Download HTMX for production (cache-friendly)
+# Note: For stronger supply chain guarantees, add htmx to frontend/package.json
+# so it's installed via pnpm with a committed lockfile
 RUN curl -sSfL https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js -o /app/static/js/htmx.min.js
 
 # Generate SBOM (best-effort; fallback to empty if CLI is incompatible)
@@ -157,7 +160,7 @@ RUN chmod +x /app/entrypoint.sh && \
 
 # Health check - internal TCP check (no external deps)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ["python", "-c", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8000)); s.close()"] || exit 1
+    CMD ["python", "-c", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8000)); s.close()"]
 
 # Expose port
 EXPOSE 8000
@@ -188,9 +191,9 @@ ENV PYTHONPATH=/app \
     STORAGE_PATH=/app/storage \
     WORKER_ID=${HOSTNAME:-worker-1}
 
-# Health check - Python-based check since redis-cli won't exist in runtime
+# Health check - Python-based check using worker's health server on port 8081
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ["python", "-c", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8000)); s.close()"] || exit 1
+    CMD ["python", "-c", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8081)); s.close()"]
 
 # Copy worker entrypoint
 COPY --from=app-builder /app/worker/entrypoint-worker.sh ./entrypoint-worker.sh

@@ -19,18 +19,6 @@
     }
     
     /**
-     * Parse JWT expiry without decoding the signature
-     */
-    function parseJwtExpiry(token) {
-        try {
-            const payload = JSON.parse(atob(token.split('.')[1]));
-            return payload.exp;
-        } catch (e) {
-            return null;
-        }
-    }
-    
-    /**
      * Show toast notification
      */
     function showToast(message, type) {

@@ -73,8 +73,16 @@ class ContextLoggerAdapter(logging.LoggerAdapter):
     """Logger adapter that includes context in every log message."""
 
     def process(self, msg, kwargs):
-        extra = kwargs.get("extra", {})
-        extra.update(self.extra)
+        # Merge: adapter defaults as base, then overlay per-call extra
+        # so per-call keys take precedence over adapter defaults
+        extra: dict[str, object] = {}
+        # Start with adapter defaults (type: ignore because LSP doesn't know self.extra is a dict)
+        for k, v in self.extra.items():  # type: ignore[union-attr]
+            extra[k] = v
+        # Overlay per-call extra
+        per_call_extra = kwargs.get("extra")
+        if per_call_extra:
+            extra.update(per_call_extra)
         kwargs["extra"] = extra
         return msg, kwargs
 
@@ -101,6 +109,9 @@ def setup_logging(log_level: str = "INFO") -> None:
         )
         console_handler.setFormatter(formatter)
 
+    # Close and clear existing handlers to prevent resource leaks
+    for handler in list(root_logger.handlers):
+        handler.close()
     root_logger.handlers.clear()
     root_logger.addHandler(console_handler)
 

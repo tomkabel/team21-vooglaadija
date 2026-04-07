@@ -93,10 +93,23 @@ async def login(
 @limiter.limit("5/minute")
 async def refresh(
     request: Request,
-    token_refresh: TokenRefresh,
     db: DbSession,
+    token_refresh: TokenRefresh | None = None,
 ) -> Token:
-    payload = verify_token(token_refresh.refresh_token)
+    # Accept refresh token from body or from HttpOnly cookie
+    # This allows JS-free refresh via credentials: 'include' sending the cookie
+    refresh_token_str = token_refresh.refresh_token if token_refresh else None
+    if not refresh_token_str:
+        refresh_token_str = request.cookies.get("refresh_token")
+
+    if not refresh_token_str:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    payload = verify_token(refresh_token_str)
 
     if payload is None:
         raise HTTPException(
@@ -144,7 +157,7 @@ async def refresh(
 
     return Token(
         access_token=access_token,
-        refresh_token=token_refresh.refresh_token,
+        refresh_token=refresh_token_str,
         token_type="bearer",
     )
 
@@ -155,10 +168,11 @@ async def me(current_user: CurrentUser) -> UserResponse:
 
 
 @router.post("/logout")
-async def logout(request: Request, response: Response):
+async def logout(request: Request):
     """Clear auth cookies and redirect to login.
 
     Logout is a POST action to prevent CSRF from logout links.
     """
-    clear_token_cookies(response)
-    return RedirectResponse(url="/web/login?logged_out=1", status_code=303)
+    redirect = RedirectResponse(url="/web/login?logged_out=1", status_code=303)
+    clear_token_cookies(redirect)
+    return redirect

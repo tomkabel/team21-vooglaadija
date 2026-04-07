@@ -38,8 +38,8 @@
         <form hx-post="/web/downloads"
               action="/web/downloads"
               method="POST"
-              hx-target="#download-list"
-              hx-swap="innerHTML"
+              hx-target="#download-rows"
+              hx-swap="beforeend"
               hx-indicator="#submit-spinner"
               hx-sync="this:drop"
               class="flex flex-col sm:flex-row gap-3">
@@ -245,7 +245,7 @@
                 ` : ''}
 
                 <button hx-delete="/web/downloads/${data.id}"
-                        hx-target="this"
+                        hx-target="closest .download-row"
                         hx-swap="outerHTML"
                         hx-confirm="Delete this download?"
                         class="btn-danger"

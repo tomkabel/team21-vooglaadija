@@ -29,8 +29,31 @@ def update_worker_state(**kwargs):
 
 
 def get_redis_url() -> str:
-    """Get Redis URL from environment."""
-    return os.environ.get("REDIS_URL", "redis://localhost:6379")
+    """Get Redis URL from environment or construct from components.
+
+    Prefers REDIS_URL if set directly. Otherwise constructs from:
+    - REDIS_HOST (default: localhost)
+    - REDIS_PORT (default: 6379)
+    - REDIS_PASSWORD (if provided)
+    """
+    # Check for pre-assembled URL first
+    redis_url = os.environ.get("REDIS_URL")
+    if redis_url:
+        return redis_url
+
+    # Construct from components
+    redis_host = os.environ.get("REDIS_HOST", "localhost")
+    redis_port = os.environ.get("REDIS_PORT", "6379")
+    redis_password = os.environ.get("REDIS_PASSWORD", "")
+
+    if redis_password:
+        # URL-encode the password for safety
+        from urllib.parse import quote_plus
+
+        encoded_password = quote_plus(redis_password)
+        return f"redis://:{encoded_password}@{redis_host}:{redis_port}"
+    else:
+        return f"redis://{redis_host}:{redis_port}"
 
 
 def get_worker_id() -> str:

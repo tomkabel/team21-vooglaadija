@@ -119,6 +119,15 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
                 JOBS_COMPLETED.labels(status="failed").inc()
             else:
                 next_retry = datetime.now(UTC) + timedelta(minutes=2**job.retry_count)
+                # Enqueue first, then update DB only if enqueue succeeds
+                # This ensures job is never in DB as "pending" without being in the queue
+                try:
+                    await enqueue_job(job_id)
+                except Exception as enqueue_error:
+                    logger.error("Job %s failed to enqueue for retry: %s", job_id, enqueue_error)
+                    # Don't update DB - job stays processing for next sync cycle
+                    return
+
                 await db.execute(
                     update(DownloadJob)
                     .where(DownloadJob.id == job_id)
@@ -130,7 +139,6 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
                     )
                 )
                 await db.commit()
-                await enqueue_job(job_id)
                 logger.info(
                     "Job %s scheduled for retry %d/%d",
                     job_id,
@@ -214,23 +222,25 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
         if not entries:
             return 0
 
-        # Update claimed entries to enqueuing status
-        entry_ids = [e.id for e in entries]
-        await db.execute(update(Outbox).where(Outbox.id.in_(entry_ids)).values(status="enqueuing"))
-        await db.commit()
+        # Phase 2: Push to Redis and finalize (without committing intermediate "enqueuing" state)
+        # Keep track of entries that successfully reached Redis
+        successfully_enqueued = []
 
-        # Phase 2: Push to Redis and finalize
         for entry in entries:
             try:
                 await redis_client.lpush("download_queue", str(entry.job_id))
-                entry.status = "enqueued"
-                entry.processed_at = datetime.now(UTC)
+                successfully_enqueued.append(entry)
                 synced += 1
             except Exception as e:
                 logger.error(f"Failed to enqueue job {entry.job_id} from outbox: {e}")
-                entry.status = "pending"
+                # Don't change status - entry stays "pending" for next sync cycle
 
-        await db.commit()
+        # Batch update all successfully enqueued entries
+        if successfully_enqueued:
+            for entry in successfully_enqueued:
+                entry.status = "enqueued"
+                entry.processed_at = datetime.now(UTC)
+            await db.commit()
 
     if synced > 0:
         logger.info(f"Synced {synced} outbox entries to Redis queue")

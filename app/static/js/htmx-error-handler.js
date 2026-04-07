@@ -78,14 +78,14 @@
                     document.body.dispatchEvent(
                         new CustomEvent('auth:expired', {bubbles: true})
                     );
-                    window.location.href = '/login?expired=1';
+                    window.location.href = '/web/login?expired=1';
                     break;
                     
                 case 403:
                     showToast('You do not have permission to perform this action', 'error');
                     break;
                     
-                case 429:
+                case 429: {
                     const retryAfter = xhr.getResponseHeader('Retry-After');
                     showToast(
                         retryAfter 
@@ -94,6 +94,7 @@
                         'warning'
                     );
                     break;
+                }
                     
                 default:
                     if (xhr.status >= 500) {
