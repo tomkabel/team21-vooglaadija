@@ -108,11 +108,6 @@ services:
       context: .
       dockerfile: Dockerfile
       target: api
-      # BuildKit features for enhanced security
-      # context: .
-      # dockerfile: Dockerfile
-      # target: api
-      # ssh: ["default"]  # If needed for private dependencies
     container_name: ytprocessor-api
     restart: unless-stopped
     environment:
