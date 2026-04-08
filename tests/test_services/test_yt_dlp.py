@@ -481,7 +481,9 @@ class TestExtractViaSubprocessTimeoutHandling:
             from app.services.yt_dlp_service import _extract_via_subprocess
 
             mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(return_value=(b'{"title": "T", "ext": "mp4"}', b""))
+            mock_process.communicate = AsyncMock(
+                return_value=(b'{"title": "T", "ext": "mp4"}', b"")
+            )
             mock_process.returncode = None
             mock_process.pid = 12345
             mock_process.wait = AsyncMock(return_value=0)
@@ -503,29 +505,35 @@ class TestExtractViaSubprocessTimeoutHandling:
                 patch("app.services.yt_dlp_service.asyncio.wait_for", mock_wait_for),
                 patch("app.services.yt_dlp_service.os.killpg", mock_killpg_raises),
             ):
-                result = await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
+                result = await _extract_via_subprocess(
+                    "https://www.youtube.com/watch?v=test", "/tmp/out"
+                )
                 assert result == {"title": "T", "ext": "mp4"}
 
         @pytest.mark.asyncio
         async def test_error_payload_in_stdout_raises_runtime_error(self) -> None:
-        """When yt-dlp returns JSON with 'error' key in stdout, raise RuntimeError."""
-        from app.services.yt_dlp_service import _extract_via_subprocess
+            """When yt-dlp returns JSON with 'error' key in stdout, raise RuntimeError."""
+            from app.services.yt_dlp_service import _extract_via_subprocess
 
-        mock_process = AsyncMock()
-        mock_process.communicate = AsyncMock(return_value=(b'{"error": "Video unavailable"}', b""))
-        mock_process.returncode = 1
-        mock_process.pid = 12345
-        mock_process.wait = AsyncMock(return_value=0)
+            mock_process = AsyncMock()
+            mock_process.communicate = AsyncMock(
+                return_value=(b'{"error": "Video unavailable"}', b"")
+            )
+            mock_process.returncode = 1
+            mock_process.pid = 12345
+            mock_process.wait = AsyncMock(return_value=0)
 
-        async def mock_subprocess_exec(*args, **kwargs):
-            return mock_process
+            async def mock_subprocess_exec_2(*args, **kwargs):
+                return mock_process
 
-        with (
-            patch(
-                "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
-                mock_subprocess_exec,
-            ),
-            patch("app.services.yt_dlp_service.os.killpg"),
-        ):
-            with pytest.raises(RuntimeError, match="yt-dlp extraction failed"):
-                await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
+            with (
+                patch(
+                    "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
+                    mock_subprocess_exec_2,
+                ),
+                patch("app.services.yt_dlp_service.os.killpg"),
+            ):
+                with pytest.raises(RuntimeError, match="yt-dlp extraction failed"):
+                    await _extract_via_subprocess(
+                        "https://www.youtube.com/watch?v=test", "/tmp/out"
+                    )
