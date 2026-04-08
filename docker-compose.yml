@@ -111,20 +111,7 @@ services:
       redis:
         condition: service_healthy
     <<: *resource-limits
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /var/run
-      - /var/cache
-    user: "1000:1000"
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - SETGID
-      - SETUID
-    security_opt:
-      - no-new-privileges=true
+    <<: *security-context
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8000)); s.close()"]
       interval: 30s
@@ -162,20 +149,7 @@ services:
       redis:
         condition: service_healthy
     <<: *resource-limits
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /var/run
-      - /var/cache
-    user: "1000:1000"
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - SETGID
-      - SETUID
-    security_opt:
-      - no-new-privileges=true
+    <<: *security-context
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8081/health || exit 1"]
       interval: 30s
