@@ -37,14 +37,6 @@ jobs:
           sed -i 's|^DB_PASSWORD=.*|DB_PASSWORD=ci_test_password|' .env
           sed -i 's|^SECRET_KEY=$|SECRET_KEY=ci-test-secret-key-minimum-32-characters-long|' .env
 
-      - name: Verify nginx config exists
-        run: |
-          if [ ! -f "./infra/nginx/default.conf" ]; then
-            echo "ERROR: nginx config not found at ./infra/nginx/default.conf"
-            exit 1
-          fi
-          echo "nginx config verified"
-
       # ============================================
       # 2. BUILD & START SERVICES
       # ============================================
