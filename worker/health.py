@@ -166,11 +166,18 @@ class _HealthHandler(BaseHTTPRequestHandler):
                     # Job is running, check if job started recently
                     job_start_dt = datetime.fromisoformat(current_job_started_at)
                     seconds_since_job_start = (datetime.now(UTC) - job_start_dt).total_seconds()
-                    # Job is healthy as long as it started within a reasonable time
-                    # (longer than the 120s heartbeat timeout since extract_media_url can take minutes)
-                    if seconds_since_job_start > 600:  # 10 minutes max for a single job
-                        health_data["status"] = "unhealthy"
-                        health_data["reason"] = "Job processing exceeded 10 minutes"
+                    # Only mark unhealthy if job exceeded 10 minutes AND no fresh heartbeat
+                    if seconds_since_job_start > 600:
+                        # Check if there's a recent heartbeat
+                        has_fresh_heartbeat = False
+                        if last_hb:
+                            last_hb_dt = datetime.fromisoformat(last_hb)
+                            seconds_since_hb = (datetime.now(UTC) - last_hb_dt).total_seconds()
+                            if seconds_since_hb < 120:
+                                has_fresh_heartbeat = True
+                        if not has_fresh_heartbeat:
+                            health_data["status"] = "unhealthy"
+                            health_data["reason"] = "Job processing exceeded 10 minutes"
                 elif last_hb:
                     # No job running but have heartbeat - check heartbeat freshness
                     last_hb_dt = datetime.fromisoformat(last_hb)
@@ -195,7 +202,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    def log_message(self, format, *args):
+    def log_message(self, fmt, *args):
         """Suppress default logging."""
 
 

@@ -103,11 +103,12 @@ RUN echo '{"buildType": "https://slsa-framework.fr.dev/build-types/1.0", "invoca
 # Use python:slim as base for runtime (distroless lacks ffmpeg dependencies)
 FROM python:3.12-slim AS runtime-base
 
-# Install ffmpeg for yt-dlp media merging and other dependencies
+# Install ffmpeg for yt-dlp media merging, redis-tools for migrate.sh, and gosu for privilege dropping
 # Also install redis-tools for migrate.sh's redis-cli commands
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     redis-tools \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python runtime from builder (with dependencies installed)

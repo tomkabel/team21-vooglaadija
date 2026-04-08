@@ -105,13 +105,13 @@ except Exception as e:
         return success_result
 
     finally:
-        # Ensure process is fully cleaned up
+        # Ensure process is fully cleaned up using process group kill
         if process and process.returncode is None:
             try:
-                process.kill()
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
                 await process.wait()
-            except Exception:
-                pass
+            except (ProcessLookupError, OSError):
+                pass  # Process already terminated
 
 
 def _validate_path_within(base_path: str, target_path: str) -> str:

@@ -61,7 +61,9 @@ async def event_generator(
 
                 if jobs:
                     # Track the most recent update for conditional polling
-                    last_updated_at = max(job.updated_at for job in jobs if job.updated_at)
+                    timestamps = [job.updated_at for job in jobs if job.updated_at is not None]
+                    if timestamps:
+                        last_updated_at = max(timestamps)
 
                 for job in jobs:
                     status_key = f"{job.id}:{job.status}"

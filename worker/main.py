@@ -58,19 +58,23 @@ async def cleanup_expired_jobs() -> int:
                     try:
                         os.remove(resolved_path)
                         logger.info("Cleaned up expired file: %s", resolved_path)
+                        # Only delete DB row after successful file removal
+                        await db.delete(job)
+                        cleanup_count += 1
                     except OSError as e:
                         logger.warning("Failed to delete expired file %s: %s", job.file_path, e)
+                        # Don't delete DB row - cleanup will retry next interval
                 elif resolved_path.startswith(safe_dir):
+                    # File already deleted, just remove DB row
                     logger.info("File already deleted for job %s: %s", job.id, job.file_path)
+                    await db.delete(job)
+                    cleanup_count += 1
                 else:
                     logger.warning(
                         "Skipping path traversal attempt for job %s: %s", job.id, job.file_path
                     )
 
-            await db.delete(job)
-            cleanup_count += 1
-
-        await db.commit()
+            await db.commit()
 
         if cleanup_count > 0:
             logger.info("Cleaned up %d expired jobs", cleanup_count)
@@ -121,9 +125,7 @@ async def main() -> None:
             end
             return due_jobs
             """
-            due_retries = await redis_client.eval(
-                lua_script, 2, "retry_queue", "download_queue", now_ts
-            )
+            await redis_client.eval(lua_script, 2, "retry_queue", "download_queue", now_ts)
 
             # Use BRPOP with timeout for efficient blocking — no busy-waiting
             # Pass the job_id directly to process_next_job to avoid race condition

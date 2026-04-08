@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import time
 from datetime import UTC, datetime, timedelta
@@ -157,7 +158,21 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
             else:
                 next_retry = datetime.now(UTC) + timedelta(minutes=2**job.retry_count)
 
-                # Update DB first with pending status and next_retry_at
+                # Create outbox entry for retry in same transaction as DB update
+                outbox_entry = Outbox(
+                    job_id=job_id,
+                    event_type="retry_scheduled",
+                    payload=json.dumps(
+                        {
+                            "retry_count": job.retry_count + 1,
+                            "next_retry_at": next_retry.isoformat(),
+                        }
+                    ),
+                    status="pending",
+                )
+                db.add(outbox_entry)
+
+                # Update DB with pending status and next_retry_at
                 await db.execute(
                     update(DownloadJob)
                     .where(DownloadJob.id == job_id)
@@ -182,7 +197,7 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
                         job.max_retries,
                     )
                 except Exception as enqueue_error:
-                    # DB is already committed with pending status
+                    # DB is already committed with pending status and outbox entry
                     # This is recoverable - sync_outbox will eventually enqueue it
                     logger.error("Job %s failed to enqueue for retry: %s", job_id, enqueue_error)
 

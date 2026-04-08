@@ -82,10 +82,9 @@
                         // Fall back to extracting plain text from HTML response
                         const tempDiv = document.createElement('div');
                         tempDiv.innerHTML = xhr.responseText;
-                        const plainText = tempDiv.textContent || tempDiv.innerText || '';
-                        const trimmedText = plainText.replace(/<[^>]*>/g, '').trim();
-                        if (trimmedText) {
-                            window.showToast(trimmedText, 'error');
+                        const plainText = (tempDiv.textContent || tempDiv.innerText || '').trim();
+                        if (plainText) {
+                            window.showToast(plainText, 'error');
                         } else {
                             window.showToast('Request failed. Please try again.', 'error');
                         }

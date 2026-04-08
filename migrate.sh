@@ -111,15 +111,12 @@ if [ "$lock_result" = "OK" ]; then
     if [ $migrations_result -eq 0 ]; then
         echo "Migrations completed successfully"
         
-        # Verify migrations are at head - treat as hard failure if not
-        current=$(python -m alembic current 2>/dev/null | tr -d '[:space:]')
-        head=$(python -m alembic heads 2>/dev/null | head -1 | awk '{print $1}' | tr -d '[:space:]')
-        
-        if [ "$current" = "$head" ]; then
-            echo "Verified: migrations at head ($head)"
-        else
-            echo "ERROR: current ($current) does not match head ($head). Schema is out of date!"
+        # Verify migrations are at head using alembic's built-in check
+        if ! python -m alembic current --check-heads 2>/dev/null; then
+            echo "ERROR: current migration does not match head. Schema is out of date!"
             migrations_result=1
+        else
+            echo "Verified: migrations at head"
         fi
     else
         echo "Migration failed with exit code $migrations_result"
@@ -164,15 +161,12 @@ else
     if [ $migrations_result -eq 0 ]; then
         echo "Migrations completed successfully"
         
-        # Verify migrations are at head - treat as hard failure if not
-        current=$(python -m alembic current 2>/dev/null | tr -d '[:space:]')
-        head=$(python -m alembic heads 2>/dev/null | head -1 | awk '{print $1}' | tr -d '[:space:]')
-        
-        if [ "$current" = "$head" ]; then
-            echo "Verified: migrations at head ($head)"
-        else
-            echo "ERROR: current ($current) does not match head ($head). Schema is out of date!"
+        # Verify migrations are at head using alembic's built-in check
+        if ! python -m alembic current --check-heads 2>/dev/null; then
+            echo "ERROR: current migration does not match head. Schema is out of date!"
             migrations_result=1
+        else
+            echo "Verified: migrations at head"
         fi
     else
         echo "Migration failed with exit code $migrations_result"

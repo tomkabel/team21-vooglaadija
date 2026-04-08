@@ -43,7 +43,7 @@
               hx-swap="beforeend"
               hx-indicator="#submit-spinner"
               hx-sync="this:drop"
-              hx-on="htmx:afterRequest: if(event.detail.successful) { document.querySelector('#download-error').innerHTML = ''; }"
+              hx-on="htmx:afterRequest: if(event.detail.successful) { document.querySelector('#download-error').innerHTML = ''; } htmx:responseError: document.querySelector('#download-error').insertAdjacentHTML('beforeend', event.detail.xhr.response)"
               class="flex flex-col sm:flex-row gap-3">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <div class="input-icon-wrapper flex-1">
@@ -180,7 +180,13 @@
     }
 
     document.body.addEventListener('sse:job_update', function(evt) {
-        const data = JSON.parse(evt.detail.data);
+        let data;
+        try {
+            data = JSON.parse(evt.detail.data);
+        } catch (e) {
+            console.error('Failed to parse SSE event data:', e, 'Data:', evt.detail.data);
+            return;
+        }
 
         let row = document.querySelector(`[data-job-id="${data.id}"]`);
 

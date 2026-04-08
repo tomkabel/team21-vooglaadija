@@ -202,10 +202,10 @@ def _register_success_response(
     """Handle successful registration response for both HTMX and regular requests."""
     if is_htmx_request(request):
         resp = HTMLResponse(status_code=200, content="")
-        resp.headers["HX-Redirect"] = "/web/login?registered=1"
+        resp.headers["HX-Redirect"] = "/web/downloads"
         set_token_cookies(resp, access_token, refresh_token, secure=settings.cookie_secure)
         return resp
-    redirect = RedirectResponse(url="/web/login?registered=1", status_code=303)
+    redirect = RedirectResponse(url="/web/downloads", status_code=303)
     set_token_cookies(redirect, access_token, refresh_token, secure=settings.cookie_secure)
     return redirect
 
@@ -615,15 +615,15 @@ async def download_file(
 
     # Check if download has expired
     if job.expires_at:
-        # SQLite returns naive datetimes even for timezone-aware columns
-        # Normalize both to naive UTC for comparison to avoid TypeError
+        # Normalize both timestamps to UTC for comparison
         now_utc = datetime.now(UTC)
         expires_at = job.expires_at
-        # Strip timezone info if present (SQLite may return naive)
-        if expires_at.tzinfo is not None:
-            expires_at = expires_at.replace(tzinfo=None)
-        now_naive = now_utc.replace(tzinfo=None)
-        if expires_at < now_naive:
+        # Ensure expires_at is timezone-aware (convert naive to UTC)
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        else:
+            expires_at = expires_at.astimezone(UTC)
+        if expires_at < now_utc:
             raise HTTPException(
                 status_code=status.HTTP_410_GONE,
                 detail="Download link has expired",
