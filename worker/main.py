@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import signal
-from datetime import timedelta, UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 

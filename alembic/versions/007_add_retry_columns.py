@@ -6,10 +6,9 @@ Create Date: 2026-04-07 05:08:34.000000
 
 """
 
-from alembic import op
 import sqlalchemy as sa
-from alembic import context
 
+from alembic import op
 
 revision = "007_add_retry_columns"
 down_revision = "006"

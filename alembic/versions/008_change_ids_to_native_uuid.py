@@ -6,9 +6,8 @@ Create Date: 2026-04-07 05:15:00.000000
 
 """
 
-from alembic import op
-import sqlalchemy as sa
 
+from alembic import op
 
 revision: str = "008_change_ids_to_native_uuid"
 down_revision: str | None = "007_add_retry_columns"

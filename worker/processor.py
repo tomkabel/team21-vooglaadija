@@ -13,7 +13,7 @@ from app.models.download_job import DownloadJob
 from app.models.outbox import Outbox
 from app.services.yt_dlp_service import extract_media_url
 from worker.health import update_worker_state
-from worker.queue import enqueue_job, redis_client
+from worker.queue import redis_client
 
 logger = logging.getLogger(__name__)
 

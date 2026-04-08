@@ -103,8 +103,10 @@ async def write_health_async() -> bool:
     """Write worker health (async version for use in worker loop)."""
     import redis.asyncio as aioredis
     from redis.exceptions import (
-        TimeoutError as SyncTimeoutError,
         ConnectionError as SyncConnectionError,
+    )
+    from redis.exceptions import (
+        TimeoutError as SyncTimeoutError,
     )
 
     redis_url = get_redis_url()
@@ -195,7 +197,6 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         """Suppress default logging."""
-        pass
 
 
 def start_health_server(port: int | None = None) -> HTTPServer | None:

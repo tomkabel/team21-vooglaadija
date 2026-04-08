@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from redis.asyncio import Redis
+    pass
 
 _redis_client = None
 

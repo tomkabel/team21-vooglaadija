@@ -5,9 +5,10 @@ Run against the live API server at http://localhost:8080.
 Usage: python scripts/test_download.py
 """
 
-import httpx
-import time
 import sys
+import time
+
+import httpx
 
 BASE_URL = "http://localhost:8080/api/v1"
 TEST_EMAIL = "autotest@example.com"
@@ -27,7 +28,7 @@ def main():
         if resp.status_code == 201:
             print(f"   ✓ Registered {TEST_EMAIL}")
         elif resp.status_code == 409:
-            print(f"   ↳ User already exists, continuing...")
+            print("   ↳ User already exists, continuing...")
         else:
             print(f"   ✗ Registration failed ({resp.status_code}): {resp.text}")
             sys.exit(1)
@@ -43,10 +44,10 @@ def main():
             sys.exit(1)
         token = resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
-        print(f"   ✓ Logged in")
+        print("   ✓ Logged in")
 
         # ── Step 3: Create download job ───────────────────────────
-        print(f"3. Creating download job...")
+        print("3. Creating download job...")
         print(f"   URL: {VIDEO_URL}")
         resp = client.post(
             f"{BASE_URL}/downloads",
@@ -88,7 +89,7 @@ def main():
             sys.exit(1)
 
         # ── Step 5: Download the file ─────────────────────────────
-        print(f"5. Downloading file...")
+        print("5. Downloading file...")
         resp = client.get(
             f"{BASE_URL}/downloads/{job_id}/file",
             headers=headers,
@@ -100,7 +101,7 @@ def main():
         size = len(resp.content)
         cd = resp.headers.get("content-disposition", "N/A")
         ct = resp.headers.get("content-type", "N/A")
-        print(f"   ✓ Downloaded!")
+        print("   ✓ Downloaded!")
         print(f"   Size: {size:,} bytes ({size / 1024 / 1024:.1f} MB)")
         print(f"   Content-Type: {ct}")
         print(f"   Content-Disposition: {cd}")
