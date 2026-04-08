@@ -5,7 +5,7 @@ from collections import OrderedDict
 
 from fastapi import APIRouter, Request
 from sqlalchemy import select
-from sse_starlette import EventSourceResponse
+from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from app.api.dependencies import CurrentUserFromCookie
 from app.database import get_async_session_factory
@@ -92,10 +92,7 @@ async def event_generator(
                     seen_jobs.popitem(last=False)
 
             # Send heartbeat comment to keep connection alive through proxies
-            yield {
-                "event": "comment",
-                "data": ": heartbeat",
-            }
+            yield ServerSentEvent(comment=" heartbeat")
 
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
     except asyncio.CancelledError:
