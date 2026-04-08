@@ -1,6 +1,5 @@
 """Tests for worker main module."""
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -355,7 +354,6 @@ class TestWorkerMainStartup:
 
         async def recording_execute(stmt):
             db_calls.append(str(stmt))
-            return None
 
         mock_db.execute = recording_execute
         mock_cm = AsyncMock()

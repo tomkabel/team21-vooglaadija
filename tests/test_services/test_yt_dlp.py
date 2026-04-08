@@ -424,7 +424,9 @@ class TestExtractViaSubprocessTimeoutHandling:
 
         # SIGTERM must precede SIGKILL
         assert _signal.SIGTERM in killed_with, "Expected SIGTERM to be sent on timeout"
-        assert _signal.SIGKILL in killed_with, "Expected SIGKILL escalation when SIGTERM insufficient"
+        assert _signal.SIGKILL in killed_with, (
+            "Expected SIGKILL escalation when SIGTERM insufficient"
+        )
         sigterm_idx = killed_with.index(_signal.SIGTERM)
         sigkill_idx = killed_with.index(_signal.SIGKILL)
         assert sigterm_idx < sigkill_idx, "SIGTERM must be sent before SIGKILL"
