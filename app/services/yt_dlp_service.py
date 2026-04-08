@@ -86,7 +86,7 @@ except Exception as e:
                 os.killpg(process.pid, signal.SIGTERM)
                 try:
                     await asyncio.wait_for(process.wait(), timeout=5)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Escalate to SIGKILL if SIGTERM didn't work within 5 seconds
                     os.killpg(process.pid, signal.SIGKILL)
                     await asyncio.wait_for(process.wait(), timeout=5)
@@ -117,7 +117,7 @@ except Exception as e:
                 os.killpg(process.pid, signal.SIGKILL)
                 try:
                     await asyncio.wait_for(process.wait(), timeout=5)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Process is stuck, but we've already sent SIGKILL, so just continue
                     pass
             except (ProcessLookupError, OSError):

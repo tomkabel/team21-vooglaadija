@@ -83,8 +83,8 @@
         if (errorMessage) {
           // Sanitize HTML by extracting text content using DOM
           const tempDiv = document.createElement("div");
-          tempDiv.textContent = errorMessage; // This safely escapes HTML
-          const sanitized = tempDiv.textContent.trim();
+          tempDiv.innerHTML = errorMessage; // Parse as HTML to strip tags
+          const sanitized = tempDiv.textContent.trim(); // Extract plain text
           window.showToast(
             sanitized || "Request failed. Please try again.",
             "error",
@@ -117,7 +117,4 @@
   } else {
     initHtmxErrorHandlers();
   }
-
-  // Expose globally
-  window.htmxErrorHandler = {};
 })();
