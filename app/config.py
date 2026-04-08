@@ -69,6 +69,9 @@ class Settings(BaseSettings):
         if is_testing:
             if not self.database_url:
                 self.database_url = "sqlite+aiosqlite:///:memory:"
+            # Set default Redis URL in test mode if not configured
+            if not self.redis_url:
+                self.redis_url = "redis://localhost:6379"
             return self
 
         # Construct DATABASE_URL from components if not set directly

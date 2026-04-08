@@ -51,7 +51,7 @@ class TestSettingsTestingMode:
 
         assert settings.database_url
         assert settings.secret_key
-        assert settings.redis_url
+        assert settings.redis_url == "redis://localhost:6379"
         assert settings.storage_path
 
 
