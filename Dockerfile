@@ -21,8 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (pinned version with digest for reproducible builds)
-# Digest sha256:38cb5680fa5b42493367d9b5974afe62107644a0c8d93c176f1d3502fd92f1a9
-COPY --from=ghcr.io/astral-sh/uv:0.5.18@sha256:38cb5680fa5b42493367d9b5974afe62107644a0c8d93c176f1d3502fd92f1a9 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.5.189 /uv /uvx /bin/
 ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
