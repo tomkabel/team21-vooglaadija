@@ -261,7 +261,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile.worker
+          file: ./Dockerfile
+          target: worker
           tags: test-worker:latest
           load: true
           cache-from: type=gha
