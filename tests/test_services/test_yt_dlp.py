@@ -279,3 +279,270 @@ class TestExtractMediaUrl:
             with pytest.raises(StorageError) as exc_info:
                 await extract_media_url(sample_url, str(temp_storage_path))
             assert "Expected output file not found" in str(exc_info.value)
+
+
+# Helper functions for TestExtractViaSubprocessTimeoutHandling
+def create_mock_wait_for_timeout_first_call():
+    call_count = 0
+
+    async def mock_wait_for(coro, timeout=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise TimeoutError("extraction timed out")
+        return await asyncio.wait_for(coro, timeout=timeout)
+
+    return mock_wait_for
+
+
+def mock_killpg_raises_lookup_error(pgid, sig):
+    raise ProcessLookupError(f"Process group {pgid} not found")
+
+
+async def mock_subprocess_exec_returns_process(*args, **kwargs):
+    mock_process = AsyncMock()
+    mock_process.communicate = AsyncMock(return_value=(b'{"title": "T", "ext": "mp4"}', b""))
+    mock_process.returncode = 0
+    mock_process.pid = 12345
+    return mock_process
+
+
+class TestExtractViaSubprocessTimeoutHandling:
+    """Tests for TimeoutError handling in _extract_via_subprocess.
+
+    The PR changed asyncio.TimeoutError → TimeoutError (bare built-in) in both
+    the main except clause and the finally cleanup block. These tests verify the
+    correct behaviour of both paths.
+    """
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_in_finally_cleanup_is_silenced(self) -> None:
+        """When SIGKILL cleanup times out in the finally block, it must not propagate.
+
+        The finally block catches TimeoutError from the second wait_for call and
+        passes silently. A RuntimeError from the subprocess is expected to surface
+        instead, not a TimeoutError from the cleanup.
+        """
+        from app.services.yt_dlp_service import _extract_via_subprocess
+
+        call_count = 0
+        real_wait_for = asyncio.wait_for
+
+        async def mock_wait_for(coro, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call: process.communicate — completes normally but with error exit
+                return await real_wait_for(coro, timeout=timeout)
+            else:
+                # Subsequent cleanup calls (process.wait()) — simulate hung process
+                raise TimeoutError("cleanup timed out")
+
+        mock_process = AsyncMock()
+        # Non-zero returncode triggers RuntimeError, not TimeoutError
+        mock_process.communicate = AsyncMock(return_value=(b"", b"process failed"))
+        mock_process.returncode = 1
+        mock_process.pid = 99999
+
+        async def mock_subprocess_exec(*args, **kwargs):
+            return mock_process
+
+        with (
+            patch(
+                "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
+                mock_subprocess_exec,
+            ),
+            patch("app.services.yt_dlp_service.asyncio.wait_for", mock_wait_for),
+            patch("app.services.yt_dlp_service.os.killpg"),
+        ):
+            # Should raise RuntimeError from yt-dlp failure, NOT TimeoutError from cleanup
+            with pytest.raises(RuntimeError):
+                await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
+
+    @pytest.mark.asyncio
+    async def test_timeout_raises_timeout_error_not_asyncio_timeout_error(self) -> None:
+        """TimeoutError (bare) is raised on extraction timeout — not a different type.
+
+        In Python 3.11+ asyncio.TimeoutError is an alias for the built-in
+        TimeoutError, but we explicitly verify the raised exception is a TimeoutError
+        instance after the PR change.
+        """
+        from app.services.yt_dlp_service import _extract_via_subprocess
+
+        call_count = 0
+        real_wait_for = asyncio.wait_for
+
+        async def mock_wait_for(coro, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise TimeoutError("extraction timed out")
+            return await real_wait_for(coro, timeout=timeout)
+
+        mock_process = AsyncMock()
+        mock_process.communicate = AsyncMock(return_value=(b'{"title": "T", "ext": "mp4"}', b""))
+        mock_process.returncode = 0
+        mock_process.pid = 12345
+
+        async def mock_subprocess_exec(*args, **kwargs):
+            return mock_process
+
+        with (
+            patch(
+                "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
+                mock_subprocess_exec,
+            ),
+            patch("app.services.yt_dlp_service.asyncio.wait_for", mock_wait_for),
+            patch("app.services.yt_dlp_service.os.killpg"),
+        ):
+            with pytest.raises(TimeoutError):
+                await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
+
+    @pytest.mark.asyncio
+    async def test_sigterm_sent_before_sigkill_on_timeout(self) -> None:
+        """On extraction timeout, SIGTERM is sent first, then SIGKILL if needed.
+
+        The except-TimeoutError block sends SIGTERM, waits, and escalates to
+        SIGKILL only when SIGTERM does not terminate the process within 5 s.
+        """
+        import signal as _signal
+
+        from app.services.yt_dlp_service import _extract_via_subprocess
+
+        call_count = 0
+        real_wait_for = asyncio.wait_for
+        killed_with: list[int] = []
+
+        async def mock_wait_for(coro, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # communicate() times out
+                raise TimeoutError("timed out")
+            elif call_count == 2:
+                # First cleanup wait (after SIGTERM) also times out — forces SIGKILL
+                raise TimeoutError("still running")
+            else:
+                # Final cleanup after SIGKILL succeeds
+                return await real_wait_for(coro, timeout=timeout)
+
+        def mock_killpg(pgid, sig):
+            killed_with.append(sig)
+
+        mock_process = AsyncMock()
+        mock_process.communicate = AsyncMock(return_value=(b'{"title": "T", "ext": "mp4"}', b""))
+        mock_process.returncode = 0
+        mock_process.pid = 55555
+
+        async def mock_subprocess_exec(*args, **kwargs):
+            return mock_process
+
+        with (
+            patch(
+                "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
+                mock_subprocess_exec,
+            ),
+            patch("app.services.yt_dlp_service.asyncio.wait_for", mock_wait_for),
+            patch("app.services.yt_dlp_service.os.killpg", mock_killpg),
+        ):
+            with pytest.raises(TimeoutError):
+                await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
+
+        # SIGTERM must precede SIGKILL
+        assert _signal.SIGTERM in killed_with, "Expected SIGTERM to be sent on timeout"
+        assert _signal.SIGKILL in killed_with, (
+            "Expected SIGKILL escalation when SIGTERM insufficient"
+        )
+        sigterm_idx = killed_with.index(_signal.SIGTERM)
+        sigkill_idx = killed_with.index(_signal.SIGKILL)
+        assert sigterm_idx < sigkill_idx, "SIGTERM must be sent before SIGKILL"
+
+    @pytest.mark.asyncio
+    async def test_process_lookup_error_on_killpg_is_handled(self) -> None:
+        """When os.killpg raises ProcessLookupError, it must be silently handled.
+
+        This can happen if the process group already terminated between the
+        timeout detection and the kill attempt.
+        """
+        from app.services.yt_dlp_service import _extract_via_subprocess
+
+        with (
+            patch(
+                "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
+                mock_subprocess_exec_returns_process,
+            ),
+            patch(
+                "app.services.yt_dlp_service.asyncio.wait_for",
+                create_mock_wait_for_timeout_first_call(),
+            ),
+            patch("app.services.yt_dlp_service.os.killpg", mock_killpg_raises_lookup_error),
+        ):
+            with pytest.raises(TimeoutError):
+                await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
+
+        @pytest.mark.asyncio
+        async def test_process_lookup_error_on_killpg_in_finally_block(self) -> None:
+            """When os.killpg raises ProcessLookupError in finally, it must be silently handled.
+
+            This covers the finally block cleanup when process is still running but
+            killpg fails because the process group already terminated.
+            """
+            from app.services.yt_dlp_service import _extract_via_subprocess
+
+            mock_process = AsyncMock()
+            mock_process.communicate = AsyncMock(
+                return_value=(b'{"title": "T", "ext": "mp4"}', b"")
+            )
+            mock_process.returncode = None
+            mock_process.pid = 12345
+            mock_process.wait = AsyncMock(return_value=0)
+
+            async def mock_subprocess_exec(*args, **kwargs):
+                return mock_process
+
+            async def mock_wait_for(coro, timeout=None):
+                return await coro
+
+            def mock_killpg_raises(pgid, sig):
+                raise ProcessLookupError(f"Process group {pgid} not found")
+
+            with (
+                patch(
+                    "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
+                    mock_subprocess_exec,
+                ),
+                patch("app.services.yt_dlp_service.asyncio.wait_for", mock_wait_for),
+                patch("app.services.yt_dlp_service.os.killpg", mock_killpg_raises),
+            ):
+                result = await _extract_via_subprocess(
+                    "https://www.youtube.com/watch?v=test", "/tmp/out"
+                )
+                assert result == {"title": "T", "ext": "mp4"}
+
+        @pytest.mark.asyncio
+        async def test_error_payload_in_stdout_raises_runtime_error(self) -> None:
+            """When yt-dlp returns JSON with 'error' key in stdout, raise RuntimeError."""
+            from app.services.yt_dlp_service import _extract_via_subprocess
+
+            mock_process = AsyncMock()
+            mock_process.communicate = AsyncMock(
+                return_value=(b'{"error": "Video unavailable"}', b"")
+            )
+            mock_process.returncode = 1
+            mock_process.pid = 12345
+            mock_process.wait = AsyncMock(return_value=0)
+
+            async def mock_subprocess_exec_2(*args, **kwargs):
+                return mock_process
+
+            with (
+                patch(
+                    "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
+                    mock_subprocess_exec_2,
+                ),
+                patch("app.services.yt_dlp_service.os.killpg"),
+            ):
+                with pytest.raises(RuntimeError, match="yt-dlp extraction failed"):
+                    await _extract_via_subprocess(
+                        "https://www.youtube.com/watch?v=test", "/tmp/out"
+                    )

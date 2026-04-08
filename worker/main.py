@@ -95,6 +95,28 @@ async def main() -> None:
 
     logger.info("Worker started, waiting for jobs...")
 
+    # Test Redis connection before starting
+    logger.info("Testing Redis connection...")
+    try:
+        await redis_client.ping()
+        logger.info("Redis connection successful")
+    except Exception as e:
+        logger.error("Failed to connect to Redis: %s", e)
+        raise
+
+    # Test database connection before starting
+    logger.info("Testing database connection...")
+    try:
+        session_factory = get_async_session_factory()
+        async with session_factory() as db:
+            from sqlalchemy import text
+
+            await db.execute(text("SELECT 1"))
+        logger.info("Database connection successful")
+    except Exception as e:
+        logger.error("Failed to connect to database: %s", e)
+        raise
+
     # Start HTTP health server for orchestration tools
     health_server = start_health_server()
 

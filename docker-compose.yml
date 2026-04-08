@@ -150,12 +150,12 @@ services:
       test:
         [
           "CMD-SHELL",
-          'python -c "import urllib.request, sys; urllib.request.urlopen(''http://localhost:8081/health''); sys.exit(0)" || exit 1',
+          'python -c "import urllib.request, sys; urllib.request.urlopen(''http://localhost:8081/health'', timeout=5); sys.exit(0)" || exit 1',
         ]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 30s
     logging:
       driver: "json-file"
       options:
@@ -213,7 +213,7 @@ services:
           - db
 
   redis:
-    image: redis:7-alpine@sha256:4bfd9eca23339865dc14fe75f6d9ae643f714924623978dd2798f1a673b08f43
+    image: redis:7-alpine
     container_name: ytprocessor-redis
     restart: unless-stopped
     # Use exec form for proper signal handling

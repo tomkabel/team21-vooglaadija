@@ -51,8 +51,20 @@ class TestSettingsTestingMode:
 
         assert settings.database_url
         assert settings.secret_key
-        assert settings.redis_url == "redis://localhost:6379"
+        assert settings.redis_url
         assert settings.storage_path
+
+    def test_redis_url_is_a_non_empty_string(self):
+        """redis_url must be a non-empty string regardless of specific value.
+
+        The assertion was loosened from an exact match to a truthy check so that
+        CI environments can override REDIS_URL. This regression test ensures the
+        value remains a non-empty string (not None, not empty str).
+        """
+        from app.config import settings
+
+        assert isinstance(settings.redis_url, str)
+        assert len(settings.redis_url) > 0
 
 
 class TestPaginationInfoSchema:

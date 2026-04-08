@@ -22,12 +22,14 @@ jobs:
     name: Lint with ruff
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@a0b52019f16c97e3556f720a3c894238c92f87d7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -52,12 +54,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [lint]
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@a0b52019f16c97e3556f720a3c894238c92f87d7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -79,12 +83,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [lint]
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@a0b52019f16c97e3556f720a3c894238c92f87d7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -99,7 +105,7 @@ jobs:
         run: hatch run test:unit
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
         with:
           files: ./coverage.xml
           flags: unittests
@@ -114,6 +120,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [lint]
+    permissions:
+      contents: read
 
     services:
       postgres:
@@ -145,7 +153,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@a0b52019f16c97e3556f720a3c894238c92f87d7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -187,7 +195,7 @@ jobs:
         run: hatch run test:integration
 
       - name: Upload integration coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
         with:
           files: ./coverage.xml
           flags: integrationtests
@@ -202,12 +210,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [lint]
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@a0b52019f16c97e3556f720a3c894238c92f87d7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -225,7 +235,7 @@ jobs:
         run: hatch run security:scan-safety
 
       - name: Upload security report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         if: always()
         with:
           name: security-report
@@ -240,18 +250,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [type-check, unit-tests, integration-tests, security]
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@21162887f0d6e25b4e8eafb0cf44cf9bf7f6acd3
 
       - name: Build API Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
+          target: api
           tags: test-api:latest
           load: true
           cache-from: type=gha
@@ -261,7 +274,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile.worker
+          file: ./Dockerfile
+          target: worker
           tags: test-worker:latest
           load: true
           cache-from: type=gha
