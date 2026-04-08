@@ -213,7 +213,7 @@ services:
           - db
 
   redis:
-    image: redis:7-alpine@sha256:4bfd9eca23339865dc14fe75f6d9ae643f714924623978dd2798f1a673b08f43
+    image: redis:7-alpine
     container_name: ytprocessor-redis
     restart: unless-stopped
     # Use exec form for proper signal handling

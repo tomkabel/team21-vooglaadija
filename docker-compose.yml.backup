@@ -148,7 +148,7 @@ services:
           - worker
 
   db:
-    image: postgres:15-alpine@sha256:6a04f4cc2fbcbc5fef1b46cb730820f0ee7af6fabf552b156ebe78f5acc27f38  # Pinned with digest
+    image: postgres:15-alpine
     container_name: ytprocessor-db
     restart: unless-stopped
     environment:
@@ -183,7 +183,7 @@ services:
           - db
 
   redis:
-    image: redis:7-alpine@sha256:4bfd9eca23339865dc14fe75f6d9ae643f714924623978dd2798f1a673b08f43
+    image: redis:7-alpine
     container_name: ytprocessor-redis
     restart: unless-stopped
     # Use exec form for proper signal handling
