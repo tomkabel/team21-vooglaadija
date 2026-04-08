@@ -281,6 +281,32 @@ class TestExtractMediaUrl:
             assert "Expected output file not found" in str(exc_info.value)
 
 
+# Helper functions for TestExtractViaSubprocessTimeoutHandling
+def create_mock_wait_for_timeout_first_call():
+    call_count = 0
+
+    async def mock_wait_for(coro, timeout=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise TimeoutError("extraction timed out")
+        return await asyncio.wait_for(coro, timeout=timeout)
+
+    return mock_wait_for
+
+
+def mock_killpg_raises_lookup_error(pgid, sig):
+    raise ProcessLookupError(f"Process group {pgid} not found")
+
+
+async def mock_subprocess_exec_returns_process(*args, **kwargs):
+    mock_process = AsyncMock()
+    mock_process.communicate = AsyncMock(return_value=(b'{"title": "T", "ext": "mp4"}', b""))
+    mock_process.returncode = 0
+    mock_process.pid = 12345
+    return mock_process
+
+
 class TestExtractViaSubprocessTimeoutHandling:
     """Tests for TimeoutError handling in _extract_via_subprocess.
 
@@ -440,33 +466,16 @@ class TestExtractViaSubprocessTimeoutHandling:
         """
         from app.services.yt_dlp_service import _extract_via_subprocess
 
-        call_count = 0
-
-        async def mock_wait_for(coro, timeout=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise TimeoutError("extraction timed out")
-            return await asyncio.wait_for(coro, timeout=timeout)
-
-        mock_process = AsyncMock()
-        mock_process.communicate = AsyncMock(return_value=(b'{"title": "T", "ext": "mp4"}', b""))
-        mock_process.returncode = 0
-        mock_process.pid = 12345
-
-        async def mock_subprocess_exec(*args, **kwargs):
-            return mock_process
-
-        def mock_killpg_raises(pgid, sig):
-            raise ProcessLookupError(f"Process group {pgid} not found")
-
         with (
             patch(
                 "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
-                mock_subprocess_exec,
+                mock_subprocess_exec_returns_process,
             ),
-            patch("app.services.yt_dlp_service.asyncio.wait_for", mock_wait_for),
-            patch("app.services.yt_dlp_service.os.killpg", mock_killpg_raises),
+            patch(
+                "app.services.yt_dlp_service.asyncio.wait_for",
+                create_mock_wait_for_timeout_first_call(),
+            ),
+            patch("app.services.yt_dlp_service.os.killpg", mock_killpg_raises_lookup_error),
         ):
             with pytest.raises(TimeoutError):
                 await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
