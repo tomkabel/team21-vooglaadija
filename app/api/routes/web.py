@@ -423,9 +423,14 @@ async def create_download_form(
     job_id = uuid.uuid4()
     job = DownloadJob(id=job_id, user_id=current_user.id, url=url, status="pending")
     db.add(job)
-    await write_job_to_outbox(db, job_id)
-    await db.commit()
-    await db.refresh(job)
+    try:
+        await write_job_to_outbox(db, job_id)
+        await db.commit()
+        await db.refresh(job)
+    except Exception:
+        await db.rollback()
+        logger.exception("Failed to create download job")
+        return HTMLResponse(status_code=500, content=_error_html("Failed to create download"))
 
     # Enqueue job for processing (best-effort; outbox handles recovery)
     try:
@@ -471,9 +476,19 @@ async def create_download_full_page(
     job_id = uuid.uuid4()
     job = DownloadJob(id=job_id, user_id=current_user.id, url=url, status="pending")
     db.add(job)
-    await write_job_to_outbox(db, job_id)
-    await db.commit()
-    await db.refresh(job)
+    try:
+        await write_job_to_outbox(db, job_id)
+        await db.commit()
+        await db.refresh(job)
+    except Exception:
+        await db.rollback()
+        logger.exception("Failed to create download job")
+        return _htmx_or_redirect(
+            request,
+            500,
+            _error_html("Failed to create download"),
+            "/web/downloads?error=creation_failed",
+        )
 
     # Enqueue job for processing (best-effort; outbox handles recovery)
     try:
@@ -520,6 +535,16 @@ async def delete_download_form(
 
     if job is None:
         return HTMLResponse(status_code=404, content="")
+
+    # Only allow deletion of terminal jobs (completed, failed, cancelled)
+    # Reject deletes for jobs that are still processing to avoid races with worker
+    if job.status not in ("completed", "failed", "cancelled"):
+        return HTMLResponse(
+            status_code=409,
+            content=_error_html(
+                f"Cannot delete job with status '{job.status}'. Only completed, failed, or cancelled jobs can be deleted."
+            ),
+        )
 
     # Delete file from disk before removing DB record
     if job.file_path:

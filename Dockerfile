@@ -90,8 +90,8 @@ COPY --from=frontend-builder /app/frontend/node_modules/htmx.org/dist/htmx.min.j
 
 # Generate SBOM (best-effort; fallback to empty if CLI is incompatible)
 RUN pip install cyclonedx-bom 2>/dev/null; \
-    python -m cyclonedx_py requirements . -o /tmp/sbom.xml --output-format XML 2>/dev/null || echo "<bom/>" > /tmp/sbom.xml; \
-    python -m cyclonedx_py requirements . -o /tmp/sbom.json --output-format JSON 2>/dev/null || echo "{}" > /tmp/sbom.json
+    python -m cyclonedx_py environment -o /tmp/sbom.xml --output-format XML 2>/dev/null || echo "<bom/>" > /tmp/sbom.xml; \
+    python -m cyclonedx_py environment -o /tmp/sbom.json --output-format JSON 2>/dev/null || echo "{}" > /tmp/sbom.json
 
 # Generate SLSA provenance metadata (simplified for this example)
 # In production, use slsa-framework/github-actions-slsa-generator or similar
@@ -192,6 +192,8 @@ COPY migrate.sh /app/migrate.sh
 RUN chmod +x ./entrypoint-worker.sh /app/migrate.sh && \
     chown appuser:appuser ./entrypoint-worker.sh /app/migrate.sh
 
-# Run worker as root initially so entrypoint can set up storage directories;
-# the script will exec Python directly (storage is already owned by appuser in image)
+# Run as non-root user (storage ownership is already set in the image)
+USER appuser
+
+# Run worker via entrypoint script
 ENTRYPOINT ["./entrypoint-worker.sh"]

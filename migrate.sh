@@ -94,13 +94,8 @@ lock_result=$(acquire_lock)
 if [ "$lock_result" = "OK" ]; then
     echo "Acquired migration lock, running migrations..."
     
-    # Start lock renewal in background (continuous loop renewing every MIGRATION_LOCK_TIMEOUT/2 seconds)
-    (
-        while true; do
-            sleep $((MIGRATION_LOCK_TIMEOUT / 2))
-            renew_lock
-        done
-    ) &
+    # Start lock renewal in background
+    renew_lock &
     RENEW_PID=$!
     
     # Register trap to release lock on EXIT only (not ERR - don't mark done on failure)
@@ -153,9 +148,7 @@ else
     echo "Running migrations with acquired lock..."
     
     # Start lock renewal in background
-    (
-        renew_lock
-    ) &
+    renew_lock &
     RENEW_PID=$!
     
     # Register trap to release lock on EXIT
@@ -194,5 +187,3 @@ else
     # Exit with migration result
     exit $migrations_result
 fi
-
-echo "Migration check complete"

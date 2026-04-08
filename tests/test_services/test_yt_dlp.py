@@ -221,14 +221,22 @@ class TestExtractMediaUrl:
     ) -> None:
         """Verify asyncio.TimeoutError is raised when extraction times out."""
 
+        async def mock_wait_for(coro, timeout=None):
+            raise asyncio.TimeoutError("timed out")
+
+        mock_process = AsyncMock()
+        mock_process.communicate = AsyncMock(return_value=(b'{"title": "Test", "ext": "mp4"}', b""))
+        mock_process.returncode = 0
+        mock_process.pid = 1234
+
         async def mock_subprocess_exec(*args, **kwargs):
-            # Simulate a timeout by raising asyncio.TimeoutError
-            raise TimeoutError("timed out")
+            return mock_process
 
         with (
             patch(
                 "app.services.yt_dlp_service.asyncio.create_subprocess_exec", mock_subprocess_exec
             ),
+            patch("app.services.yt_dlp_service.asyncio.wait_for", mock_wait_for),
         ):
             with pytest.raises(asyncio.TimeoutError):
                 await extract_media_url(sample_url, str(temp_storage_path))
@@ -260,10 +268,3 @@ class TestExtractMediaUrl:
             with pytest.raises(StorageError) as exc_info:
                 await extract_media_url(sample_url, str(temp_storage_path))
             assert "Expected output file not found" in str(exc_info.value)
-
-
-def _capture_and_return(captured: dict[str, str], url: str, output_template: str) -> dict[str, str]:
-    """Side effect function to capture arguments and return mock data."""
-    captured["url"] = url
-    captured["output_template"] = output_template
-    return {"title": "Test", "ext": "mp4"}

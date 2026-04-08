@@ -43,7 +43,9 @@
               hx-swap="beforeend"
               hx-indicator="#submit-spinner"
               hx-sync="this:drop"
+              hx-on="htmx:afterRequest: if(event.detail.successful) { document.querySelector('#download-error').innerHTML = ''; }"
               class="flex flex-col sm:flex-row gap-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <div class="input-icon-wrapper flex-1">
                 <svg class="h-[18px] w-[18px]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
@@ -198,6 +200,11 @@
         row.classList.add('fade-in');
 
         // Update stats after any job change
+        updateStats();
+    });
+
+    // Also update stats after HTMX swaps (form submissions, deletes)
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
         updateStats();
     });
 

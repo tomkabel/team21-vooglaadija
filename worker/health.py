@@ -149,17 +149,17 @@ class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             uptime = (datetime.now(UTC) - _start_time).total_seconds()
-            # Clone worker state under lock to avoid race conditions
+            # Clone all worker state under lock to avoid race conditions
             with _state_lock:
                 worker_status = _worker_state.get("status", "unknown")
+                last_hb = _worker_state.get("last_heartbeat")
+                current_job_started_at = _worker_state.get("current_job_started_at")
                 health_data = {
                     **_worker_state,
                     "uptime_seconds": round(uptime),
                 }
 
             # Determine health status based on worker state and heartbeat
-            last_hb = _worker_state.get("last_heartbeat")
-            current_job_started_at = _worker_state.get("current_job_started_at")
             if worker_status == "running":
                 # Worker is running - consider healthy if a job is actively processing
                 if current_job_started_at:
