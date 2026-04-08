@@ -85,7 +85,7 @@ except Exception as e:
             try:
                 os.killpg(process.pid, signal.SIGTERM)
                 await process.wait()
-            except ProcessLookupError:
+            except (ProcessLookupError, OSError):
                 pass  # Process already terminated
             raise TimeoutError(f"yt-dlp extraction timed out after {YT_DLP_TIMEOUT}s") from e
 

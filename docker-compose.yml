@@ -78,6 +78,30 @@ x-logging: &logging
     compress: "true"
     # Note: podman doesn't support the 'tag' option, removed for compatibility
 
+x-resources-security: &resources-security
+  deploy:
+    resources:
+      limits:
+        cpus: "1.0"
+        memory: 512M
+      reservations:
+        cpus: "0.25"
+        memory: 128M
+  read_only: true
+  tmpfs:
+    - /tmp
+    - /var/run
+    - /var/cache
+  user: "1000:1000"
+  cap_drop:
+    - ALL
+  cap_add:
+    - CHOWN
+    - SETGID
+    - SETUID
+  security_opt:
+    - no-new-privileges=true
+
 services:
   api:
     build:
@@ -110,8 +134,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    <<: *resource-limits
-    <<: *security-context
+    <<: *resources-security
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8000)); s.close()"]
       interval: 30s
@@ -148,8 +171,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    <<: *resource-limits
-    <<: *security-context
+    <<: *resources-security
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8081/health || exit 1"]
       interval: 30s

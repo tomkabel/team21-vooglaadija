@@ -37,6 +37,8 @@ async def event_generator(
             if await request.is_disconnected():
                 break
 
+            # db_session_factory is a sessionmaker; the first call () creates an instance,
+            # the second call () on that instance starts an actual async session
             async with db_session_factory()() as db:
                 # Order by created_at for initial load, updated_at for subsequent polls
                 order_by = (
@@ -72,9 +74,9 @@ async def event_generator(
                         seen_jobs[job.id] = status_key
                         seen_jobs.move_to_end(job.id)
 
-                        yield {
-                            "event": "job_update",
-                            "data": json.dumps(
+                        yield ServerSentEvent(
+                            event="job_update",
+                            data=json.dumps(
                                 {
                                     "id": str(job.id),
                                     "url": job.url,
@@ -86,13 +88,10 @@ async def event_generator(
                                     else None,
                                 }
                             ),
-                        }
+                        )
 
                 while len(seen_jobs) > MAX_SEEN_JOBS:
                     seen_jobs.popitem(last=False)
-
-            # Send heartbeat comment to keep connection alive through proxies
-            yield ServerSentEvent(comment=" heartbeat")
 
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
     except asyncio.CancelledError:
@@ -112,4 +111,5 @@ async def download_status_stream(
     return EventSourceResponse(
         event_generator(request, get_async_session_factory, current_user.id),
         media_type="text/event-stream",
+        ping=POLL_INTERVAL_SECONDS,
     )

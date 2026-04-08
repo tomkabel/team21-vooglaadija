@@ -11,10 +11,7 @@
             
             switch (xhr.status) {
                 case 401:
-                    // Token expired or invalid
-                    document.body.dispatchEvent(
-                        new CustomEvent('auth:expired', {bubbles: true})
-                    );
+                    // Token expired or invalid - redirect to login
                     window.location.href = '/web/login?expired=1';
                     break;
                     

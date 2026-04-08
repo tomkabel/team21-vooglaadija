@@ -9,7 +9,6 @@ REDIS_PORT="${REDIS_PORT:-6379}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 export REDISCLI_AUTH="${REDIS_PASSWORD}"  # Export for redis-cli to use
 MIGRATION_LOCK_KEY="vooglaadija:migration:lock"
-MIGRATION_LOCK_TIMEOUT=60
 MIGRATION_LOCK_PX=60000  # 60 seconds in milliseconds for PX option
 
 # Helper to build redis-cli command with optional auth
@@ -42,15 +41,15 @@ renew_lock() {
             # Lock lost or different owner
             exit 0
         fi
-        
+
         # Refresh the lock expiration
         result=$(redis_cmd EVAL "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end" 1 "$MIGRATION_LOCK_KEY" "$$" "$MIGRATION_LOCK_PX")
-        
+
         if [ "$result" != "1" ]; then
             # Failed to renew - lock lost
             exit 0
         fi
-        
+
         sleep "$sleep_interval"
     done
 }
@@ -60,7 +59,7 @@ wait_for_lock_release() {
     waited=0
     while [ $waited -lt $max_wait ]; do
         holder=$(redis_cmd GET "$MIGRATION_LOCK_KEY" 2>/dev/null)
-        
+
         if [ -z "$holder" ]; then
             # Lock expired or released - try to acquire it ourselves
             echo "Lock released, attempting to acquire..."
@@ -77,14 +76,53 @@ wait_for_lock_release() {
             waited=$((waited + 1))
             continue
         fi
-        
+
         echo "Waiting for migration lock to be released by PID $holder..."
         sleep 2
         waited=$((waited + 2))
     done
-    
+
     echo "Timeout waiting for migration lock"
     return 1
+}
+
+run_migrations_and_verify() {
+    # Start lock renewal in background
+    renew_lock &
+    RENEW_PID=$!
+
+    # Register trap to release lock on EXIT only (not ERR - don't mark done on failure)
+    trap 'kill $RENEW_PID 2>/dev/null; release_lock' EXIT
+
+    python -m alembic upgrade head
+    migrations_result=$?
+
+    # Stop renewal background job
+    kill $RENEW_PID 2>/dev/null
+    wait $RENEW_PID 2>/dev/null || true
+
+    if [ $migrations_result -eq 0 ]; then
+        echo "Migrations completed successfully"
+
+        # Verify migrations are at head using alembic's built-in check
+        if ! python -m alembic current --check-heads 2>/dev/null; then
+            echo "ERROR: current migration does not match head. Schema is out of date!"
+            migrations_result=1
+        else
+            echo "Verified: migrations at head"
+        fi
+    else
+        echo "Migration failed with exit code $migrations_result"
+    fi
+
+    # Release lock before exiting
+    release_lock
+
+    # Remove trap since we already released
+    trap - EXIT
+
+    # Exit with migration result
+    exit $migrations_result
 }
 
 echo "Running database migrations..."
@@ -93,91 +131,18 @@ echo "Running database migrations..."
 lock_result=$(acquire_lock)
 if [ "$lock_result" = "OK" ]; then
     echo "Acquired migration lock, running migrations..."
-    
-    # Start lock renewal in background
-    renew_lock &
-    RENEW_PID=$!
-    
-    # Register trap to release lock on EXIT only (not ERR - don't mark done on failure)
-    trap 'kill $RENEW_PID 2>/dev/null; release_lock' EXIT
-    
-    python -m alembic upgrade head
-    migrations_result=$?
-    
-    # Stop renewal background job
-    kill $RENEW_PID 2>/dev/null
-    wait $RENEW_PID 2>/dev/null || true
-    
-    if [ $migrations_result -eq 0 ]; then
-        echo "Migrations completed successfully"
-        
-        # Verify migrations are at head using alembic's built-in check
-        if ! python -m alembic current --check-heads 2>/dev/null; then
-            echo "ERROR: current migration does not match head. Schema is out of date!"
-            migrations_result=1
-        else
-            echo "Verified: migrations at head"
-        fi
-    else
-        echo "Migration failed with exit code $migrations_result"
-    fi
-    
-    # Release lock before exiting
-    release_lock
-    
-    # Remove trap since we already released
-    trap - EXIT
-    
-    # Exit with migration result
-    exit $migrations_result
+    run_migrations_and_verify
 else
     echo "Migration lock held by another process, waiting..."
     wait_for_lock_release
     wait_result=$?
-    
+
     if [ $wait_result -ne 0 ]; then
         echo "Failed to wait for lock release"
         exit 1
     fi
-    
+
     # We now own the lock (wait_for_lock_release acquired it for us)
-    # Run migrations with lock renewal and cleanup
     echo "Running migrations with acquired lock..."
-    
-    # Start lock renewal in background
-    renew_lock &
-    RENEW_PID=$!
-    
-    # Register trap to release lock on EXIT
-    trap 'kill $RENEW_PID 2>/dev/null; release_lock' EXIT
-    
-    python -m alembic upgrade head
-    migrations_result=$?
-    
-    # Stop renewal background job
-    kill $RENEW_PID 2>/dev/null
-    wait $RENEW_PID 2>/dev/null || true
-    
-    if [ $migrations_result -eq 0 ]; then
-        echo "Migrations completed successfully"
-        
-        # Verify migrations are at head using alembic's built-in check
-        if ! python -m alembic current --check-heads 2>/dev/null; then
-            echo "ERROR: current migration does not match head. Schema is out of date!"
-            migrations_result=1
-        else
-            echo "Verified: migrations at head"
-        fi
-    else
-        echo "Migration failed with exit code $migrations_result"
-    fi
-    
-    # Release lock before exiting
-    release_lock
-    
-    # Remove trap since we already released
-    trap - EXIT
-    
-    # Exit with migration result
-    exit $migrations_result
+    run_migrations_and_verify
 fi

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -160,6 +161,7 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
 
                 # Create outbox entry for retry in same transaction as DB update
                 outbox_entry = Outbox(
+                    id=uuid.uuid4(),
                     job_id=job_id,
                     event_type="retry_scheduled",
                     payload=json.dumps(
@@ -250,20 +252,8 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
     synced = 0
 
     async with session_factory() as db:
-        # Phase 1: Atomically claim pending entries to prevent duplicate processing
-        # First, select the entries we want to claim (ordered by age)
-        select_result = await db.execute(
-            select(Outbox)
-            .where(Outbox.status == "pending")
-            .order_by(Outbox.created_at)
-            .limit(batch_size)
-        )
-        pending_entries = select_result.scalars().all()
-
-        if not pending_entries:
-            return 0
-
-        # Claim them atomically with FOR UPDATE to prevent race conditions
+        # Phase 1: Atomically claim pending entries with FOR UPDATE SKIP LOCKED
+        # to prevent duplicate processing and race conditions
         claim_result = await db.execute(
             select(Outbox)
             .where(Outbox.status == "pending")
