@@ -39,6 +39,9 @@ jobs:
           sed -i 's|^DB_PASSWORD=.*|DB_PASSWORD=ci_test_password|' .env
           sed -i 's|^REDIS_PASSWORD=.*|REDIS_PASSWORD=ci_test_redis_password|' .env
           sed -i 's|^SECRET_KEY=$|SECRET_KEY=ci-test-secret-key-minimum-32-characters-long|' .env
+          # Remove or fix REDIS_URL - it defaults to localhost in .env.example which doesn't work in Docker
+          # Leave it empty so docker-compose uses the service name from the compose file
+          sed -i 's|^REDIS_URL=.*|REDIS_URL=|' .env
 
       # ============================================
       # 2. BUILD & START SERVICES
@@ -50,8 +53,8 @@ jobs:
 
       - name: Wait for services to initialize
         run: |
-          echo "Waiting for services to initialize (30s)..."
-          sleep 30
+          echo "Waiting for services to initialize (45s)..."
+          sleep 45
 
       # ============================================
       # 3. WAIT FOR DOCKER HEALTH CHECKS
@@ -110,6 +113,16 @@ jobs:
         run: |
           echo "Checking worker container status..."
 
+          # Debug: Show worker logs before checking status
+          echo "=== Worker logs (last 100 lines) ==="
+          docker compose logs worker 2>&1 | tail -100 || true
+
+          echo ""
+          echo "=== Worker container inspect ==="
+          docker inspect ytprocessor-worker 2>&1 | head -50 || true
+
+          echo ""
+          echo "=== Checking container status ==="
           # Check container is running
           container_status=$(docker inspect --format='{{.State.Status}}' ytprocessor-worker 2>/dev/null || echo "not_found")
           if [ "$container_status" != "running" ]; then

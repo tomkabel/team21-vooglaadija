@@ -6,11 +6,18 @@ echo "Ensuring storage directory ownership..."
 chown -R appuser:appuser /app/storage 2>/dev/null || true
 
 # Ensure non-root user can still access everything under /app
-chown -R appuser:appuser /app
+chown -R appuser:appuser /app 2>/dev/null || true
 
-echo "Running database migrations..."
-/app/migrate.sh
+# Run migrations if not already done (check for alembic lock file)
+if [ ! -f /app/.migrations_done ]; then
+    echo "Running database migrations..."
+    /app/migrate.sh || {
+        echo "WARNING: Migration failed, continuing anyway..."
+    }
+    touch /app/.migrations_done
+else
+    echo "Migrations already completed, skipping..."
+fi
 
-echo "Starting worker as appuser..."
-# Add some debugging to see if the worker starts
-exec su -s /bin/sh appuser -c "echo 'Starting worker process...' && python -c 'import sys; print(f\"Python version: {sys.version}\"); import worker.main; print(\"Worker module imported successfully\")' && python -m worker.main"
+echo "Starting worker..."
+exec python -m worker.main

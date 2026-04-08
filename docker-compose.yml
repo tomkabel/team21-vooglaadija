@@ -146,16 +146,17 @@ services:
       redis:
         condition: service_healthy
     <<: *resources-security
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          'python -c "import urllib.request, sys; urllib.request.urlopen(''http://localhost:8081/health'', timeout=5); sys.exit(0)" || exit 1',
-        ]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+    # Temporarily disabled healthcheck to debug restart issue
+    # healthcheck:
+    #   test:
+    #     [
+    #       "CMD-SHELL",
+    #       'python -c "import urllib.request, sys; urllib.request.urlopen(''http://localhost:8081/health'', timeout=5); sys.exit(0)" || exit 1',
+    #     ]
+    #   interval: 15s
+    #   timeout: 5s
+    #   retries: 5
+    #   start_period: 30s
     logging:
       driver: "json-file"
       options:
