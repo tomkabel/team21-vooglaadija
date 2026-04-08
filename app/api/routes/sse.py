@@ -68,11 +68,12 @@ async def event_generator(
                         last_updated_at = max(timestamps)
 
                 for job in jobs:
-                    status_key = f"{job.id}:{job.status}"
+                    job_id_str = str(job.id)
+                    status_key = f"{job_id_str}:{job.status}"
 
-                    if job.id not in seen_jobs or seen_jobs[job.id] != status_key:
-                        seen_jobs[job.id] = status_key
-                        seen_jobs.move_to_end(job.id)
+                    if job_id_str not in seen_jobs or seen_jobs[job_id_str] != status_key:
+                        seen_jobs[job_id_str] = status_key
+                        seen_jobs.move_to_end(job_id_str)
 
                         yield ServerSentEvent(
                             event="job_update",

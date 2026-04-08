@@ -106,9 +106,10 @@ except Exception as e:
 
     finally:
         # Ensure process is fully cleaned up using process group kill
+        # process.pid is the group ID since start_new_session=True
         if process and process.returncode is None:
             try:
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                os.killpg(process.pid, signal.SIGKILL)
                 await process.wait()
             except (ProcessLookupError, OSError):
                 pass  # Process already terminated

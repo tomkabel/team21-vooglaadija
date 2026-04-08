@@ -11,13 +11,10 @@ export REDISCLI_AUTH="${REDIS_PASSWORD}"  # Export for redis-cli to use
 MIGRATION_LOCK_KEY="vooglaadija:migration:lock"
 MIGRATION_LOCK_PX=60000  # 60 seconds in milliseconds for PX option
 
-# Helper to build redis-cli command with optional auth
+# Helper to build redis-cli command
+# REDISCLI_AUTH is exported and redis-cli automatically uses it when set
 redis_cmd() {
-    if [ -n "$REDISCLI_AUTH" ]; then
-        redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" -a "$REDISCLI_AUTH" "$@"
-    else
-        redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" "$@"
-    fi
+    redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" "$@"
 }
 
 acquire_lock() {
@@ -70,11 +67,6 @@ wait_for_lock_release() {
             fi
             # Someone else got it first - continue waiting
             echo "Lock acquired by another process, continuing to wait..."
-        elif [ "$holder" = "done" ]; then
-            # Previous owner marked done - wait a bit more for actual deletion
-            sleep 1
-            waited=$((waited + 1))
-            continue
         fi
 
         echo "Waiting for migration lock to be released by PID $holder..."
@@ -94,8 +86,11 @@ run_migrations_and_verify() {
     # Register trap to release lock on EXIT only (not ERR - don't mark done on failure)
     trap 'kill $RENEW_PID 2>/dev/null; release_lock' EXIT
 
+    # Temporarily disable errexit to capture alembic exit code
+    set +e
     python -m alembic upgrade head
     migrations_result=$?
+    set -e
 
     # Stop renewal background job
     kill $RENEW_PID 2>/dev/null

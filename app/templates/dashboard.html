@@ -265,11 +265,9 @@
         // Use server-provided timestamp from data.created_at, or fallback to current time
         let date = 'Just now';
         if (data.created_at) {
-            try {
-                const serverDate = new Date(data.created_at);
+            const serverDate = new Date(data.created_at);
+            if (!isNaN(serverDate.getTime())) {
                 date = serverDate.toISOString().slice(0, 16).replace('T', ' ');
-            } catch (e) {
-                date = new Date().toISOString().slice(0, 16).replace('T', ' ');
             }
         }
 

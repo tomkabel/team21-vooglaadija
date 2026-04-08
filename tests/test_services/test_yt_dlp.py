@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -71,7 +71,7 @@ class TestExtractMediaUrl:
     """Tests for extract_media_url function."""
 
     @pytest.fixture
-    def temp_storage_path(self) -> AsyncGenerator[Path, None]:
+    def temp_storage_path(self) -> Generator[Path, None, None]:
         with tempfile.TemporaryDirectory() as tmpdir:
             yield Path(tmpdir)
 

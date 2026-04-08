@@ -192,6 +192,10 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
                 try:
                     retry_ts = next_retry.timestamp()
                     await redis_client.zadd("retry_queue", {str(job_id): retry_ts})
+                    # Mark outbox entry as enqueued after successful zadd
+                    outbox_entry.status = "enqueued"
+                    outbox_entry.processed_at = datetime.now(UTC)
+                    await db.commit()
                     logger.info(
                         "Job %s scheduled for retry %d/%d",
                         job_id,
@@ -229,7 +233,9 @@ async def reset_stuck_jobs(timeout_minutes: int = 10) -> int:
         count = result.rowcount  # type: ignore[attr-defined]
         if count > 0:
             logger.warning(
-                f"Reset {count} stuck jobs that exceeded {timeout_minutes} minute timeout"
+                "Reset %d stuck jobs that exceeded %d minute timeout",
+                count,
+                timeout_minutes,
             )
 
         return count
@@ -242,18 +248,18 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
     was never enqueued to Redis. Polls for pending entries and pushes them
     to the Redis queue, then marks them as 'enqueued'.
 
-    Uses a two-phase approach to prevent duplicate enqueues:
-    1. Atomically claim entries by setting status to 'enqueuing'
-    2. Push to Redis and mark as 'enqueued'
+    Uses a two-phase approach to minimize lock hold time:
+    1. Claim entries with FOR UPDATE SKIP LOCKED and collect IDs (DB lock held briefly)
+    2. Release DB lock, push to Redis (no lock during network I/O)
+    3. Reopen session to mark entries as enqueued
 
     Returns the number of entries synced.
     """
     session_factory = get_async_session_factory()
     synced = 0
 
+    # Phase 1: Claim entries and collect their IDs (brief DB lock)
     async with session_factory() as db:
-        # Phase 1: Atomically claim pending entries with FOR UPDATE SKIP LOCKED
-        # to prevent duplicate processing and race conditions
         claim_result = await db.execute(
             select(Outbox)
             .where(Outbox.status == "pending")
@@ -266,27 +272,36 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
         if not entries:
             return 0
 
-        # Phase 2: Push to Redis and finalize (without committing intermediate "enqueuing" state)
-        # Keep track of entries that successfully reached Redis
-        successfully_enqueued = []
+        # Collect entry data before releasing lock
+        entry_ids = [(entry.id, entry.job_id) for entry in entries]
 
-        for entry in entries:
-            try:
-                await redis_client.lpush("download_queue", str(entry.job_id))
-                successfully_enqueued.append(entry)
-                synced += 1
-            except Exception as e:
-                logger.error(f"Failed to enqueue job {entry.job_id} from outbox: {e}")
-                # Don't change status - entry stays "pending" for next sync cycle
+        # Release DB lock immediately - don't hold during Redis I/O
+        await db.rollback()
 
-        # Batch update all successfully enqueued entries
-        if successfully_enqueued:
-            for entry in successfully_enqueued:
-                entry.status = "enqueued"
-                entry.processed_at = datetime.now(UTC)
+    # Phase 2: Push to Redis (no DB lock held)
+    successfully_enqueued_ids = []
+    for entry_id, job_id in entry_ids:
+        try:
+            await redis_client.lpush("download_queue", str(job_id))
+            successfully_enqueued_ids.append(entry_id)
+            synced += 1
+        except Exception as e:
+            logger.error("Failed to enqueue job %s from outbox: %s", job_id, e)
+            # Don't change status - entry stays "pending" for next sync cycle
+
+    # Phase 3: Mark successfully enqueued entries (new DB session)
+    if successfully_enqueued_ids:
+        async with session_factory() as db:
+            now = datetime.now(UTC)
+            for entry_id in successfully_enqueued_ids:
+                await db.execute(
+                    update(Outbox)
+                    .where(Outbox.id == entry_id)
+                    .values(status="enqueued", processed_at=now)
+                )
             await db.commit()
 
     if synced > 0:
-        logger.info(f"Synced {synced} outbox entries to Redis queue")
+        logger.info("Synced %d outbox entries to Redis queue", synced)
 
     return synced
