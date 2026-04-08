@@ -111,7 +111,17 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
             JOBS_COMPLETED.labels(status="success").inc()
             logger.info("Job %s completed successfully", job_id)
         except asyncio.CancelledError:
-            # Don't catch cancellation — let it propagate for clean shutdown
+            # Requeue the job to prevent it being stuck in 'processing'
+            # reset_stuck_jobs would otherwise hard-fail it later
+            await db.execute(
+                update(DownloadJob)
+                .where(DownloadJob.id == job_id)
+                .values(
+                    status="queued",
+                    updated_at=datetime.now(UTC),
+                )
+            )
+            await db.commit()
             update_worker_state(status="running", current_job_started_at=None)
             raise
         except Exception as e:
@@ -281,10 +291,8 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
                     payload_data = json.loads(entry.payload) if entry.payload else {}
                     next_retry_at = payload_data.get("next_retry_at")
                     if next_retry_at:
-                        # Convert to UNIX timestamp
-                        retry_timestamp = time.mktime(
-                            datetime.fromisoformat(next_retry_at).timetuple()
-                        )
+                        # Convert to UNIX timestamp using datetime.timestamp()
+                        retry_timestamp = datetime.fromisoformat(next_retry_at).timestamp()
                         await redis_client.zadd("retry_queue", {str(entry.job_id): retry_timestamp})
                     else:
                         logger.error(

@@ -322,7 +322,7 @@ services:
     container_name: swagger-ui
     restart: unless-stopped
     environment:
-      URL: http://localhost/openapi.json
+      URL: http://localhost:8080/openapi.json
     ports:
       - "8081:8080"
     # swagger-ui doesn't need resource limits or security context restrictions

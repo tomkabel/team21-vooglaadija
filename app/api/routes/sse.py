@@ -31,6 +31,7 @@ async def event_generator(
     """
     seen_jobs: OrderedDict[str, str] = OrderedDict()
     last_updated_at = None
+    last_id = None
 
     try:
         while True:
@@ -38,32 +39,52 @@ async def event_generator(
                 break
 
             async with session_factory() as db:
-                # Order by created_at for initial load, updated_at for subsequent polls
-                order_by = (
-                    DownloadJob.updated_at.desc()
-                    if last_updated_at is not None
-                    else DownloadJob.created_at.desc()
-                )
-
-                query = (
-                    select(DownloadJob)
-                    .where(DownloadJob.user_id == user_id)
-                    .order_by(order_by)
-                    .limit(50)
-                )
-
-                # Only query if there might be new data
+                # Order by created_at for initial load, (updated_at, id) for incremental polls
                 if last_updated_at is not None:
-                    query = query.where(DownloadJob.updated_at > last_updated_at)
+                    # Incremental: stable forward cursor using (updated_at, id)
+                    query = (
+                        select(DownloadJob)
+                        .where(DownloadJob.user_id == user_id)
+                        .order_by(DownloadJob.updated_at.asc(), DownloadJob.id.asc())
+                        .limit(50)
+                    )
+                    # Filter: (updated_at > last_updated_at) OR (updated_at = last_updated_at AND id > last_id)
+                    from sqlalchemy import and_, or_
+                    query = query.where(
+                        or_(
+                            DownloadJob.updated_at > last_updated_at,
+                            and_(
+                                DownloadJob.updated_at == last_updated_at,
+                                DownloadJob.id > last_id
+                            )
+                        )
+                    )
+                else:
+                    # Initial load: use created_at descending
+                    query = (
+                        select(DownloadJob)
+                        .where(DownloadJob.user_id == user_id)
+                        .order_by(DownloadJob.created_at.desc())
+                        .limit(50)
+                    )
 
                 result = await db.execute(query)
                 jobs = result.scalars().all()
 
                 if jobs:
-                    # Track the most recent update for conditional polling
-                    timestamps = [job.updated_at for job in jobs if job.updated_at is not None]
-                    if timestamps:
-                        last_updated_at = max(timestamps)
+                    # Update cursor from the last row in the ordered batch
+                    if last_updated_at is not None:
+                        # Incremental: cursor is from last row
+                        last_job = jobs[-1]
+                        last_updated_at = last_job.updated_at
+                        last_id = last_job.id
+                    else:
+                        # Initial load: set cursor for next incremental poll
+                        # Find the job with max updated_at, then max id if tied
+                        sorted_by_cursor = sorted(jobs, key=lambda j: (j.updated_at, j.id))
+                        last_job = sorted_by_cursor[-1]
+                        last_updated_at = last_job.updated_at
+                        last_id = last_job.id
 
                 for job in jobs:
                     job_id_str = str(job.id)
@@ -108,7 +129,7 @@ async def download_status_stream(
     Requires authentication — unauthenticated requests are rejected with 401.
     """
     return EventSourceResponse(
-        event_generator(request, get_async_session_factory, current_user.id),
+        event_generator(request, get_async_session_factory(), current_user.id),
         media_type="text/event-stream",
         ping=POLL_INTERVAL_SECONDS,
     )
