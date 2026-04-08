@@ -10,19 +10,13 @@ FROM python:3.12-slim AS python-builder
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Install system build dependencies and curl for HTMX download
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*
-
-# Install uv (pinned version with digest for reproducible builds)
-COPY --from=ghcr.io/astral-sh/uv:0.5.189 /uv /uvx /bin/
-ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
@@ -82,7 +76,7 @@ RUN pip install .
 
 # Copy built frontend assets - ensure destination directory exists
 RUN mkdir -p /app/static/css /app/static/js
-COPY --from=frontend-builder /app/frontend/css/dist ./app/static/css
+COPY --from=frontend-builder /app/frontend/css/dist /app/static/css
 
 # Copy HTMX from node_modules (installed via pnpm with lockfile for supply-chain integrity)
 COPY --from=frontend-builder /app/frontend/node_modules/htmx.org/dist/htmx.min.js /app/static/js/htmx.min.js
