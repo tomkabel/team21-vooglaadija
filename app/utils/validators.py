@@ -32,12 +32,16 @@ def is_youtube_url(url: str) -> bool:
         if scheme not in ("http", "https"):
             return False
 
-        hostname = parsed.hostname
-        if hostname is None:
-            return False
-        hostname = hostname.lower()
+        hostname = (parsed.hostname or "").lower()
 
         # Exact domain matching — no substring checks
-        return hostname in (_YOUTUBE_DOMAINS | _YOUTUBE_SHORT_DOMAINS | _YOUTUBE_NOCOOKIE_DOMAINS)
+        if hostname in _YOUTUBE_DOMAINS:
+            return True
+        if hostname in _YOUTUBE_SHORT_DOMAINS:
+            return True
+        if hostname in _YOUTUBE_NOCOOKIE_DOMAINS:
+            return True
+
+        return False
     except (ValueError, AttributeError):
         return False

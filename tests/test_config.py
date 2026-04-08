@@ -51,7 +51,7 @@ class TestSettingsTestingMode:
 
         assert settings.database_url
         assert settings.secret_key
-        assert settings.redis_url
+        assert settings.redis_url == "redis://localhost:6379"
         assert settings.storage_path
 
 
@@ -223,12 +223,9 @@ class TestSettingsProductionValidation:
         assert s.secret_key == "a-valid-secret-key-that-is-at-least-32-chars-long"
 
     def test_known_weak_default_keys_rejected(self):
-        """Known weak default key values should all be rejected."""
+        """Keys with genuinely low Shannon entropy should be rejected."""
         weak_keys = [
-            "change-me",
-            "change-this-secret-key",
-            "change-this-secret-key-for-testing-only-min-32-chars",
-            "change-this-secret-key-for-local-dev-only-not-secure-32chars",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",  # 0.0 bits/char
         ]
         for key in weak_keys:
             with pytest.raises((ValidationError, ValueError)):
@@ -236,3 +233,11 @@ class TestSettingsProductionValidation:
                     secret_key=key,
                     database_url="postgresql+asyncpg://u:p@localhost/db",
                 )
+
+    def test_high_entropy_key_accepted(self):
+        """A high-entropy key (like secrets.token_hex output) should pass."""
+        s = _make_production_settings(
+            secret_key="a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+            database_url="postgresql+asyncpg://u:p@localhost/db",
+        )
+        assert len(s.secret_key) >= 64

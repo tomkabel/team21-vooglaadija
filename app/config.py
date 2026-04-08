@@ -1,16 +1,38 @@
+import math
 import os
 import warnings
 from pathlib import Path
-from typing import Any
+from urllib.parse import quote_plus
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _estimate_entropy(text: str) -> float:
+    """Estimate Shannon entropy of a string in bits.
+
+    A truly random hex string has 4 bits per character.
+    A truly random alphanumeric string has ~6.5 bits per character.
+    We flag anything below 3 bits/char as suspiciously low-entropy.
+    """
+    if not text:
+        return 0.0
+    freq: dict[str, int] = {}
+    for c in text:
+        freq[c] = freq.get(c, 0) + 1
+    length = len(text)
+    entropy = 0.0
+    for count in freq.values():
+        p = count / length
+        if p > 0:
+            entropy -= p * math.log2(p)
+    return entropy
+
+
 class Settings(BaseSettings):
     database_url: str = ""
     secret_key: str = ""
-    redis_url: str = "redis://localhost:6379"
+    redis_url: str = ""
     cors_origins: str = "http://localhost:3000"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
@@ -18,10 +40,20 @@ class Settings(BaseSettings):
     storage_path: str = "./storage"
     bcrypt_rounds: int = 12
 
+    # Cookie security — False for local dev (no HTTPS), True for production
+    cookie_secure: bool = False
+
     # Used to construct DATABASE_URL if not set directly
     db_user: str = "postgres"
     db_password: str = ""
     db_name: str = "ytprocessor"
+    db_host: str = "localhost"
+    db_port: str = "5432"
+
+    # Used to construct REDIS_URL if not set directly
+    redis_host: str = "localhost"
+    redis_port: str = "6379"
+    redis_password: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -30,54 +62,48 @@ class Settings(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def validate_and_construct(self) -> "Settings":
+    def validate_and_construct(self) -> "Settings":  # noqa: C901
         # TESTING override — skip all validation
-        testing_env = os.environ.get("TESTING", "").strip().lower()
-        if testing_env in ("1", "true", "yes", "y", "on"):
-            if not self.database_url.strip():
+        testing_val = os.environ.get("TESTING", "").lower()
+        is_testing = testing_val in ("1", "true", "yes", "on")
+        if is_testing:
+            if not self.database_url:
                 self.database_url = "sqlite+aiosqlite:///:memory:"
+            # Set default Redis URL in test mode if not configured
+            if not self.redis_url:
+                self.redis_url = "redis://localhost:6379"
             return self
 
         # Construct DATABASE_URL from components if not set directly
-        if not self.database_url.strip():
-            if not self.db_password.strip():
+        if not self.database_url:
+            if not self.db_password:
                 raise ValueError(
                     "Either DATABASE_URL or DB_PASSWORD must be set. "
                     "For Docker: set DB_PASSWORD in .env. "
-                    "For local dev: set DATABASE_URL in .env.",
+                    "For local dev: set DATABASE_URL in .env."
                 )
-            from sqlalchemy.engine import URL as SA_URL
-
-            db_url = SA_URL.create(
-                drivername="postgresql+asyncpg",
-                username=self.db_user,
-                password=self.db_password,
-                host="localhost",
-                port=5432,
-                database=self.db_name,
+            encoded_password = quote_plus(self.db_password)
+            self.database_url = (
+                f"postgresql+asyncpg://{self.db_user}:{encoded_password}"
+                f"@{self.db_host}:{self.db_port}/{self.db_name}"
             )
-            self.database_url = db_url.render_as_string(hide_password=False)
 
-        # Validate SECRET_KEY
-        if not self.secret_key.strip():
+        # Validate SECRET_KEY — reject known weak values
+        if not self.secret_key:
             raise ValueError(
                 "SECRET_KEY is required. "
-                'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"',
+                'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
             )
 
-        secret_key_stripped = self.secret_key.strip()
-        weak_defaults = (
-            "change-me",
-            "change-this-secret-key",
-            "change-this-secret-key-for-testing-only-min-32-chars",
-            "change-this-secret-key-for-local-dev-only-not-secure-32chars",
-        )
-        if secret_key_stripped in weak_defaults:
+        # Check for low-entropy keys (repetitive patterns, dictionary words, etc.)
+        entropy_per_char = _estimate_entropy(self.secret_key)
+        if entropy_per_char < 2.9:
             raise ValueError(
-                "SECRET_KEY must be changed from default value. "
-                'Generate a secure key with: python -c "import secrets; print(secrets.token_hex(32))"',
+                "SECRET_KEY has insufficient entropy "
+                f"(~{entropy_per_char:.1f} bits/char, need >= 2.9). "
+                'Generate a secure key with: python -c "import secrets; print(secrets.token_hex(32))"'
             )
-        if len(secret_key_stripped) < 32:
+        if len(self.secret_key) < 32:
             raise ValueError("SECRET_KEY must be at least 32 characters for security")
 
         # Warn on wildcard CORS
@@ -91,62 +117,15 @@ class Settings(BaseSettings):
         # Resolve storage path to absolute
         self.storage_path = str(Path(self.storage_path).resolve())
 
+        # Construct REDIS_URL from components if not set directly
+        if not self.redis_url:
+            if self.redis_password:
+                encoded_password = quote_plus(self.redis_password)
+                self.redis_url = f"redis://:{encoded_password}@{self.redis_host}:{self.redis_port}"
+            else:
+                self.redis_url = f"redis://{self.redis_host}:{self.redis_port}"
+
         return self
 
 
-# Lazy initialization: Settings instance is created on first access, not at import time
-class _SettingsHolder:
-    """Singleton holder for Settings instance."""
-
-    _instance: Settings | None = None
-
-    @classmethod
-    def get(cls) -> Settings:
-        if cls._instance is None:
-            cls._instance = Settings()
-        return cls._instance
-
-    @classmethod
-    def reload(cls) -> Settings:
-        """Force reload settings (useful for testing)."""
-        cls._instance = Settings()
-        return cls._instance
-
-
-def get_settings() -> Settings:
-    """Get the singleton Settings instance, creating it on first call.
-
-    This enables lazy initialization so that importing config doesn't fail
-    when environment variables are missing.
-    """
-    return _SettingsHolder.get()
-
-
-def reload_settings() -> Settings:
-    """Force reload settings (useful for testing)."""
-    return _SettingsHolder.reload()
-
-
-class _SettingsProxy:
-    """Lazy proxy for settings that delegates to _SettingsHolder.
-
-    This allows `from app.config import settings` to work without triggering
-    validation at import time. Both the proxy and the holder share the same
-    underlying Settings instance.
-    """
-
-    def __init__(self) -> None:
-        pass  # No internal instance — delegate to _SettingsHolder
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(_SettingsHolder.get(), name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name.startswith("_"):
-            super().__setattr__(name, value)
-        else:
-            setattr(_SettingsHolder.get(), name, value)
-
-
-# For backward compatibility: import settings from app.config works seamlessly
-settings = _SettingsProxy()
+settings = Settings()

@@ -2,38 +2,28 @@ import asyncio
 import os
 
 # CRITICAL: Set environment variables BEFORE any other imports
-# DON'T set TESTING=1 here - let the config handle it based on CI_INTEGRATION
+os.environ["TESTING"] = "1"
 os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-not-for-production-use-32chars"
 
-# Determine database URL based on environment
-# In CI integration tests, use PostgreSQL service; otherwise use SQLite per-worker
-_use_postgres = os.environ.get("CI_INTEGRATION", "").strip().lower() in ("1", "true")
+# Determine unique database URL per xdist worker to avoid race conditions
+_worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
+_test_db_path = os.path.abspath(f"test_{_worker_id}.db")
+_test_db_url = f"sqlite+aiosqlite:///{_test_db_path}"
 
-# Always set TESTING=1 for tests - this ensures consistent behavior
-# between SQLite (local) and PostgreSQL (CI) environments
-os.environ["TESTING"] = "1"
-
-if _use_postgres:
-    _test_db_url = "postgresql+asyncpg://test_user:test_pass@localhost:5432/test_db"
-else:
-    _worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
-    _test_db_path = os.path.abspath(f"test_{_worker_id}.db")
-    _test_db_url = f"sqlite+aiosqlite:///{_test_db_path}"
-
-# Set database URL BEFORE importing app.config so engine uses correct URL
-os.environ["DATABASE_URL"] = _test_db_url
-
-# Force reconfigure the database URL before any other imports
+# Force reconfigure the database URL before any app imports
+# This ensures the app uses SQLite instead of PostgreSQL
 import app.config  # noqa: E402
 
-# Also set on the settings object in case DATABASE_URL wasn't used
 app.config.settings.database_url = _test_db_url
 
 from collections.abc import AsyncGenerator, Generator  # noqa: E402
 
 import pytest  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: E402
-from sqlalchemy.orm import sessionmaker  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import NullPool  # noqa: E402
 
 import app.models  # noqa: E402
@@ -45,68 +35,14 @@ from app.main import app as fastapi_app  # noqa: E402
 TEST_DATABASE_URL = _test_db_url
 
 
-# Build connect_args only for SQLite (asyncpg doesn't accept check_same_thread)
-_engine_kwargs: dict = {"poolclass": NullPool}
-if not _use_postgres:
-    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+test_engine = create_async_engine(
+    TEST_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=NullPool,
+)
 
-test_engine = create_async_engine(TEST_DATABASE_URL, **_engine_kwargs)
-
-# Use the same engine for TestingSessionLocal
-TestingSessionLocal = sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
-
-# Import models to ensure Base.metadata has all tables defined
-import app.models  # noqa: E402
-
-
-def _create_tables_sync():
-    """Create tables synchronously."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.pool import StaticPool
-
-    if _use_postgres:
-        sync_url = "postgresql://test_user:test_pass@localhost:5432/test_db"
-        engine = create_engine(sync_url)
-    else:
-        sync_url = TEST_DATABASE_URL.replace("sqlite+aiosqlite://", "sqlite://")
-        engine = create_engine(
-            sync_url, connect_args={"check_same_thread": False}, poolclass=StaticPool
-        )
-
-    Base.metadata.create_all(engine)
-    engine.dispose()
-
-
-def _drop_tables_sync():
-    """Drop tables synchronously."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.pool import StaticPool
-
-    if _use_postgres:
-        sync_url = "postgresql://test_user:test_pass@localhost:5432/test_db"
-        engine = create_engine(sync_url)
-    else:
-        sync_url = TEST_DATABASE_URL.replace("sqlite+aiosqlite://", "sqlite://")
-        engine = create_engine(
-            sync_url, connect_args={"check_same_thread": False}, poolclass=StaticPool
-        )
-
-    Base.metadata.drop_all(engine)
-    engine.dispose()
-
-
-# Create tables at import time
-print(f"\n[TEST SETUP] Database: {TEST_DATABASE_URL}")
-print(f"[TEST SETUP] Using PostgreSQL: {_use_postgres}")
-print(f"[TEST SETUP] TESTING flag: {os.environ.get('TESTING')}")
-print(f"[TEST SETUP] CI_INTEGRATION: {os.environ.get('CI_INTEGRATION')}")
-
-try:
-    _create_tables_sync()
-    print(f"[TEST SETUP] Tables created successfully: {list(Base.metadata.tables.keys())}")
-except Exception as e:
-    print(f"[TEST SETUP] ERROR creating tables: {e}")
-    raise
+# Use async_sessionmaker for proper async session support
+TestingSessionLocal = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 
 
 @pytest.fixture(scope="session")
@@ -129,28 +65,14 @@ def override_get_db():
 fastapi_app.dependency_overrides[get_db] = override_get_db()
 
 
-@pytest.fixture(scope="session", autouse=True)
-async def setup_database_session() -> AsyncGenerator[None, None]:
-    """Tables are created at import time. This fixture handles cleanup."""
-    yield
-    # Tables are dropped at session end - safe because all tests are done
-    try:
-        _drop_tables_sync()
-    except Exception:
-        pass  # Ignore errors during cleanup
-
-
 @pytest.fixture(scope="function", autouse=True)
-async def setup_database(setup_database_session: None) -> AsyncGenerator[None, None]:
-    """Provide test isolation by truncating all tables between tests.
-
-    Tables are created once at import time, then truncated before each test
-    to ensure clean state.
-    """
+async def setup_database() -> AsyncGenerator[None, None]:
+    """Create tables before each test and drop after."""
     async with test_engine.begin() as conn:
-        for table in reversed(Base.metadata.sorted_tables):
-            await conn.execute(table.delete())
+        await conn.run_sync(Base.metadata.create_all)
     yield
+    async with test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
 
 
 @pytest.fixture
@@ -166,27 +88,16 @@ def sample_url() -> str:
 
 
 async def create_test_user_and_login(
-    client,
-    email: str = "downloads@example.com",
-    password: str = "securepassword123",
+    client, email: str = "downloads@example.com", password: str = "securepassword123"
 ) -> dict:
     """Helper to register and login a test user, returning auth headers."""
-    register_resp = await client.post(
+    await client.post(
         "/api/v1/auth/register",
         json={"email": email, "password": password},
     )
-    assert register_resp.status_code in (200, 201), (
-        f"Registration failed: {register_resp.status_code} - {register_resp.text}"
-    )
-
-    login_resp = await client.post(
+    response = await client.post(
         "/api/v1/auth/login",
         json={"email": email, "password": password},
     )
-    assert login_resp.status_code == 200, (
-        f"Login failed: {login_resp.status_code} - {login_resp.text}"
-    )
-    login_data = login_resp.json()
-    assert "access_token" in login_data, f"access_token not in login response: {login_resp.text}"
-    token = login_data["access_token"]
+    token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}

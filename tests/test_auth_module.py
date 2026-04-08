@@ -54,9 +54,7 @@ class TestVerifyToken:
     def test_expired_token_returns_none(self):
         past = datetime.now(UTC) - timedelta(hours=1)
         token = jwt.encode(
-            {"sub": "user-123", "exp": past},
-            settings.secret_key,
-            algorithm=ALGORITHM,
+            {"sub": "user-123", "exp": past}, settings.secret_key, algorithm=ALGORITHM
         )
         assert verify_token(token) is None
 

@@ -8,20 +8,25 @@ version = "1.0.0"
 description = "YouTube Link Processor - REST API Service"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic",
     "fastapi",
     "uvicorn[standard]",
     "sqlalchemy[asyncio]",
     "asyncpg",
+    "psycopg2-binary",
     "redis",
     "python-jose[cryptography]",
     "passlib[bcrypt]",
-    "bcrypt>=4.0.1,<5",
+    "bcrypt<4.1",
     "pydantic",
     "pydantic-settings",
-    "yt-dlp",
-    "alembic",
     "email-validator>=2.3.0",
-    "httpx",
+    "sse-starlette>=1.6.0",
+    "jinja2",
+    "python-multipart",
+    "prometheus-client>=0.19.0",
+    "slowapi>=0.1.9",
+    "yt-dlp>=2025.3.0",
 ]
 
 [project.optional-dependencies]
@@ -31,7 +36,7 @@ server = [
 ]
 worker = [
     "redis",
-    "yt-dlp",
+    "yt-dlp>=2025.3.0",
 ]
 test = [
     "pytest",
@@ -40,7 +45,6 @@ test = [
     "pytest-xdist",
     "httpx",
     "aiosqlite",
-    "psycopg2-binary",
 ]
 lint = [
     "ruff",
@@ -67,8 +71,7 @@ test = [
     "pytest-xdist>=3.0.0",
     "httpx>=0.24.0",
     "aiosqlite>=0.19.0",
-    "bcrypt>=4.0.1,<5",
-    "psycopg2-binary>=2.9.0",
+    "bcrypt==4.0.1",
 ]
 lint = [
     "ruff>=0.1.0",
@@ -116,13 +119,11 @@ cov = "pytest tests/ -v --cov=app --cov-report=term-missing --cov-report=xml"
 "cov-html" = "coverage html"
 # Clean script
 clean = "find . -type d -name __pycache__ -exec rm -rf {} +"
-# Alembic database migration scripts
-"db-migrate" = "alembic upgrade head"
-"db-rollback" = "alembic downgrade -1"
-"db-status" = "alembic current"
-"db-history" = "alembic history"
-"db-check" = "alembic check"
-"db-revision" = "alembic revision --autogenerate -m"
+# Database scripts
+db-migrate = "alembic upgrade head"
+db-rollback = "alembic downgrade -1"
+db-history = "alembic history"
+db-current = "alembic current"
 
 # ============================================
 # LINT ENVIRONMENT (detached - no project install)
@@ -160,11 +161,6 @@ description = "Testing environment with matrix support"
 installer = "uv"
 dependency-groups = ["test"]
 
-# Override bcrypt to use a version compatible with passlib
-[tool.hatch.envs.test.overrides]
-dependency = "bcrypt"
-version = ">=4.0.1"
-
 # Matrix configuration for testing different Python versions and configurations
 [[tool.hatch.envs.test.matrix]]
 python = ["3.12"]
@@ -172,7 +168,7 @@ db = ["sqlite"]
 
 [tool.hatch.envs.test.scripts]
 unit = "pytest tests/ --ignore=tests/test_api -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
-integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n 1"
+integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 # Run all tests (both unit and integration)
 all = "pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 # Coverage scripts
@@ -198,7 +194,7 @@ lint = "ruff check app/ tests/ --output-format=github"
 type-check = "mypy app/ --ignore-missing-imports --install-types --non-interactive"
 # Tests
 unit = "pytest tests/ --ignore=tests/test_api -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
-integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n 1"
+integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 # Security
 "security-bandit" = "bandit -r app/ -f screen --confidence-level high --severity-level medium"
 "security-safety" = "safety check --json --output=security-report.json || true"
@@ -271,19 +267,27 @@ HATCH_BUILD_NO_PERMISSION_WARNING = "1"
 # BUILD TARGETS CONFIGURATION
 # ============================================
 [tool.hatch.build.targets.wheel]
-# Only include Python source files for pure Python wheel
+# Include Python source files and non-Python assets
 include = [
     "app/**/*.py",
     "worker/**/*.py",
+    "alembic/**/*.py",
+    "alembic.ini",
+    "app/templates/**",
+    "app/static/**",
 ]
 
 [tool.hatch.build.targets.sdist]
-# Include source files
+# Include source files and non-Python assets
 include = [
     "app/**/*.py",
     "worker/**/*.py",
     "pyproject.toml",
     "README.md",
+    "alembic/**/*.py",
+    "alembic.ini",
+    "app/templates/**",
+    "app/static/**",
 ]
 
 # ============================================
@@ -388,7 +392,8 @@ ignore = [
     "E501",  # line too long (handled by formatter)
     "PLR0913",  # too many arguments
     "PLR2004",  # magic value comparison
-    "PLC0415",  # imports should be placed at the top (allow in test functions for circular import avoidance)
+    "PLC0415",  # import order (required for pytest fixtures in conftest.py)
+    "B008",  # function call in default argument (required for FastAPI Depends)
 ]
 
 [tool.ruff.format]
@@ -457,10 +462,3 @@ db = false
 ignore = [
     # Add CVEs to ignore here
 ]
-
-# ============================================
-# LOGGING CONFIGURATION
-# ============================================
-[tool.hatch.envs.default.env-vars]
-# Set default log level for development
-LOG_LEVEL = "INFO"

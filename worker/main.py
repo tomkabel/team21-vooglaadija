@@ -2,15 +2,24 @@ import asyncio
 import logging
 import os
 import signal
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
 from app.config import settings
-from app.database import AsyncSessionLocal
+from app.database import get_async_session_factory
+from app.logging_config import setup_logging
 from app.models.download_job import DownloadJob
-from worker.processor import process_next_job, reset_stuck_jobs
+from worker.health import (
+    start_health_server,
+    stop_health_server,
+    update_worker_state,
+    write_health_async,
+)
+from worker.processor import process_next_job, reset_stuck_jobs, sync_outbox_to_queue
+from worker.queue import redis_client
 
+setup_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 # Graceful shutdown event
@@ -24,50 +33,61 @@ def _signal_handler() -> None:
 
 async def cleanup_expired_jobs() -> int:
     """Delete expired jobs and their files. Returns number of jobs cleaned up."""
-    async with AsyncSessionLocal() as db:
+    session_factory = get_async_session_factory()
+    downloads_dir = os.path.realpath(os.path.join(settings.storage_path, "downloads"))
+
+    async with session_factory() as db:
         now = datetime.now(UTC)
 
         result = await db.execute(
             select(DownloadJob).where(
-                DownloadJob.expires_at < now, DownloadJob.status == "completed",
-            ),
+                DownloadJob.expires_at < now, DownloadJob.status == "completed"
+            )
         )
         expired_jobs = result.scalars().all()
 
         cleanup_count = 0
         for job in expired_jobs:
-            skip_file_deletion = False
             if job.file_path:
-                # Validate path is within downloads directory before deletion
                 resolved_path = os.path.realpath(job.file_path)
-                downloads_base = os.path.realpath(os.path.join(settings.storage_path, "downloads"))
-                safe_downloads_dir = downloads_base + os.sep
-                if (
-                    not resolved_path.startswith(safe_downloads_dir)
-                    and resolved_path != downloads_base
-                ):
-                    logger.warning(f"Skipping deletion of path outside downloads: {job.file_path}")
-                    skip_file_deletion = True
-                if not skip_file_deletion and os.path.exists(resolved_path):
+                # Validate path is within downloads directory
+                safe_dir = (
+                    downloads_dir if downloads_dir.endswith(os.sep) else downloads_dir + os.sep
+                )
+                if resolved_path.startswith(safe_dir) and os.path.exists(resolved_path):
                     try:
                         os.remove(resolved_path)
-                        logger.info(f"Cleaned up expired file: {resolved_path}")
+                        logger.info("Cleaned up expired file: %s", resolved_path)
+                        # Only delete DB row after successful file removal
+                        await db.delete(job)
+                        cleanup_count += 1
                     except OSError as e:
-                        logger.warning(f"Failed to delete expired file {resolved_path}: {e}")
+                        logger.warning("Failed to delete expired file %s: %s", job.file_path, e)
+                        # Don't delete DB row - cleanup will retry next interval
+                elif resolved_path.startswith(safe_dir):
+                    # File already deleted, just remove DB row
+                    logger.info("File already deleted for job %s: %s", job.id, job.file_path)
+                    await db.delete(job)
+                    cleanup_count += 1
+                else:
+                    logger.warning(
+                        "Skipping path traversal attempt for job %s: %s", job.id, job.file_path
+                    )
 
-            await db.delete(job)
-            cleanup_count += 1
-
-        await db.commit()
+            await db.commit()
 
         if cleanup_count > 0:
-            logger.info(f"Cleaned up {cleanup_count} expired jobs")
+            logger.info("Cleaned up %d expired jobs", cleanup_count)
 
         return cleanup_count
 
 
 async def main() -> None:
-    """Main worker loop with graceful shutdown."""
+    """Main worker loop with graceful shutdown.
+
+    Uses BRPOP with timeout for efficient blocking queue consumption
+    instead of polling with rpop + sleep.
+    """
     # Register signal handlers
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -75,33 +95,78 @@ async def main() -> None:
 
     logger.info("Worker started, waiting for jobs...")
 
-    cleanup_counter = 0
-    cleanup_interval = 100  # Run cleanup every 100 iterations
+    # Start HTTP health server for orchestration tools
+    health_server = start_health_server()
+
+    cleanup_interval_minutes: int = int(os.environ.get("CLEANUP_INTERVAL_MINUTES", "5"))
+    cleanup_interval = timedelta(minutes=cleanup_interval_minutes)
+    last_cleanup = datetime.now(UTC) - cleanup_interval
+    heartbeat_counter = 0
+    heartbeat_interval = (
+        10  # Write heartbeat every 10 iterations (~20 seconds, since brpop_timeout=2)
+    )
+    brpop_timeout = 2  # Seconds to block on BRPOP
+
+    # Mark worker as running
+    update_worker_state(status="running")
 
     while not shutdown_event.is_set():
         try:
-            await process_next_job()
+            # Move due retry jobs from retry_queue to download_queue atomically
+            # Uses Lua script to prevent race conditions between workers
+            now_ts = datetime.now(UTC).timestamp()
+            lua_script = """
+            local due_jobs = redis.call('ZRANGEBYSCORE', KEYS[1], 0, ARGV[1])
+            if #due_jobs > 0 then
+                redis.call('ZREM', KEYS[1], unpack(due_jobs))
+                for _, job_id in ipairs(due_jobs) do
+                    redis.call('LPUSH', KEYS[2], job_id)
+                end
+            end
+            return due_jobs
+            """
+            await redis_client.eval(lua_script, 2, "retry_queue", "download_queue", now_ts)
+
+            # Use BRPOP with timeout for efficient blocking — no busy-waiting
+            # Pass the job_id directly to process_next_job to avoid race condition
+            result = await redis_client.brpop("download_queue", timeout=brpop_timeout)
+            if result:
+                _, job_id_str = result
+                await process_next_job(job_id_str)
+            # If BRPOP timed out, no jobs available — continue to cleanup/heartbeat
         except Exception as e:
-            logger.error(f"Error processing job: {e}")
-            # Brief backoff on error to avoid tight error loop
+            logger.error("Error processing job: %s", e)
             await asyncio.sleep(1)
 
-        # Run cleanup and stuck-job recovery every N iterations
-        cleanup_counter += 1
-        if cleanup_counter >= cleanup_interval:
+        now = datetime.now(UTC)
+        if now - last_cleanup >= cleanup_interval:
             try:
-                await cleanup_expired_jobs()
-                await reset_stuck_jobs(timeout_minutes=10)
+                # Sync outbox to queue during cleanup (handles crash recovery)
+                await sync_outbox_to_queue()
+                cleanup_count = await cleanup_expired_jobs()
+                stuck_count = await reset_stuck_jobs(timeout_minutes=10)
+                logger.info(
+                    "Cleanup completed: cleaned up %d expired jobs, reset %d stuck jobs",
+                    cleanup_count,
+                    stuck_count,
+                )
+                last_cleanup = now
+                update_worker_state(last_cleanup=last_cleanup.isoformat())
             except Exception as e:
-                logger.error(f"Error during cleanup: {e}")
-            cleanup_counter = 0
+                logger.error("Error during cleanup: %s", e)
 
-        # Use wait with timeout instead of unconditional sleep for faster shutdown
-        try:
-            await asyncio.wait_for(shutdown_event.wait(), timeout=1.0)
-        except TimeoutError:
-            pass
+        heartbeat_counter += 1
+        if heartbeat_counter >= heartbeat_interval:
+            try:
+                await write_health_async()
+                update_worker_state()
+            except Exception as e:
+                logger.warning("Failed to write health: %s", e)
+            heartbeat_counter = 0
 
+    # Shutdown
+    if health_server:
+        stop_health_server()
     logger.info("Worker stopped gracefully")
 
 

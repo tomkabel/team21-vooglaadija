@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Vooglaadija{% endblock %}</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS -->
+    <link href="/static/css/styles.css" rel="stylesheet">
+
+    <!-- HTMX 2.0 -->
+    <script src="/static/js/htmx.min.js"></script>
+
+    <!-- HTMX SSE Extension (required for real-time updates in HTMX 2.x) -->
+    <script src="/static/js/sse.js"></script>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+
+    <!-- CSRF Token (available to HTMX and JS) -->
+    <meta name="csrf-token" content="{{ csrf_token }}">
+
+    <!-- Configure HTMX -->
+    <meta name="htmx-config" content='{"historyRestoreAsHxRequest":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true},{"code":"...","swap":false}]}'>
+    <script nonce="{{ nonce }}">
+        htmx.config.defaultFocusScroll = false;
+        htmx.config.defaultSwapStyle = 'outerHTML';
+        htmx.config.indicatorClass = 'htmx-indicator';
+        htmx.config.historyRestoreAsHxRequest = false;
+        htmx.config.allowEval = false;
+        htmx.config.allowScriptTags = false;
+        // CSRF: token injected by Jinja2 into meta tag, read by JS
+        const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+        if (csrfMeta) {
+            htmx.config.headers = {
+                "X-CSRF-Token": csrfMeta.getAttribute('content')
+            };
+        }
+    </script>
+
+    <!-- Auth & Error Handling -->
+    <script src="/static/js/toast.js" defer></script>
+    <script src="/static/js/auth.js" defer></script>
+    <script src="/static/js/htmx-error-handler.js" defer></script>
+
+    <style>
+        /* Animation utility classes - defined in Tailwind config */
+    </style>
+
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="h-full bg-surface-900">
+    <!-- Film grain overlay -->
+    <div class="grain-overlay" aria-hidden="true"></div>
+
+    <!-- Ambient glow orbs -->
+    <div class="ambient-glow bg-amber-500 -top-40 -right-40" aria-hidden="true"></div>
+    <div class="ambient-glow bg-warm-500 -bottom-40 -left-40" style="opacity: 0.04" aria-hidden="true"></div>
+
+    {% block body %}
+    <div class="min-h-full flex flex-col relative z-10">
+        <!-- Navigation -->
+        <nav class="nav-glass sticky top-0 z-50">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between h-16">
+                    <div class="flex items-center">
+                        <a href="/" class="flex-shrink-0 flex items-center gap-3 group">
+                            <div class="h-9 w-9 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center
+                                        shadow-lg shadow-amber-500/20 group-hover:shadow-amber-400/30 transition-shadow duration-300">
+                                <svg class="h-5 w-5 text-surface-900" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                            </div>
+                            <span class="text-lg font-display font-bold text-gradient tracking-tight">
+                                Vooglaadija
+                            </span>
+                        </a>
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        {% block nav_actions %}{% endblock %}
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="flex-1">
+            {% block content %}{% endblock %}
+        </main>
+
+        <!-- Footer -->
+        <footer class="border-t border-white/[0.04] mt-auto">
+            <div class="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+                <div class="flex flex-col md:flex-row justify-between items-center gap-4">
+                    <div class="text-sm text-gray-600 font-body">
+                        &copy; {{ current_year }} <span class="text-gray-500">Vooglaadija</span>
+                    </div>
+                    <div class="flex gap-8">
+                        <a href="/privacy" class="text-sm text-gray-600 hover:text-amber-400 transition-colors duration-300 font-body">Privacy</a>
+                        <span class="text-gray-800" aria-hidden="true">|</span>
+                        <a href="/terms" class="text-sm text-gray-600 hover:text-amber-400 transition-colors duration-300 font-body">Terms</a>
+                        <span class="text-gray-800" aria-hidden="true">|</span>
+                        <a href="/contact" class="text-sm text-gray-600 hover:text-amber-400 transition-colors duration-300 font-body">Contact</a>
+                    </div>
+                </div>
+            </div>
+        </footer>
+    </div>
+    {% endblock %}
+
+    <!-- HTMX Indicator -->
+    <div id="global-indicator" class="htmx-indicator fixed bottom-6 right-6 hidden z-50">
+        <div class="card px-5 py-3 flex items-center gap-3 text-sm font-display font-medium text-amber-400">
+            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Processing...
+        </div>
+    </div>
+
+    <script nonce="{{ nonce }}">
+        document.body.addEventListener('htmx:beforeRequest', function(evt) {
+            // Only show global indicator if no element-specific indicator is specified
+            if (!evt.detail.elt.getAttribute('hx-indicator')) {
+                document.getElementById('global-indicator').classList.remove('hidden');
+            }
+        });
+
+        document.body.addEventListener('htmx:afterRequest', function(evt) {
+            if (!evt.detail.elt.getAttribute('hx-indicator')) {
+                document.getElementById('global-indicator').classList.add('hidden');
+            }
+        });
+
+        document.body.addEventListener('htmx:afterSwap', function(evt) {
+            if (evt.detail.target) {
+                evt.detail.target.classList.add('fade-in');
+            }
+        });
+    </script>
+
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

@@ -1,82 +1,63 @@
-import uuid
-from typing import Annotated
+"""Authentication endpoints (REST API)."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from uuid import UUID, uuid4
+
+from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import CurrentUser, DbSession
-from app.auth import create_access_token, create_refresh_token, verify_token
-from app.middleware.rate_limit import RateLimiter
+from app.api.rate_limit_config import limiter
+from app.auth import (
+    clear_token_cookies,
+    create_access_token,
+    create_refresh_token,
+    set_token_cookies,
+    verify_token,
+)
+from app.config import settings
 from app.models.user import User
 from app.schemas.token import Token, TokenRefresh
 from app.schemas.user import UserCreate, UserResponse
 from app.services.auth_service import hash_password, verify_password
-from worker.queue import redis_client
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# Initialize rate limiter for auth endpoints (5 requests per minute)
-auth_rate_limiter = RateLimiter(
-    redis_client=redis_client,
-    max_requests=5,
-    window_seconds=60,
-)
-
-
-async def check_auth_rate_limit(request: Request) -> None:
-    """Dependency to check rate limit for auth endpoints."""
-    client_ip = request.client.host if request.client else "unknown"
-    endpoint = request.url.path
-    key = f"auth:{endpoint}:{client_ip}"
-
-    if not await auth_rate_limiter.is_allowed(key):
-        retry_after = await auth_rate_limiter.get_retry_after(key)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Rate limit exceeded. Try again in {retry_after} seconds.",
-            headers={"Retry-After": str(retry_after)},
-        )
-
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("5/minute")
 async def register(
     request: Request,
     user_data: UserCreate,
     db: DbSession,
-    _: Annotated[None, Depends(check_auth_rate_limit)],
 ) -> UserResponse:
     user = User(
-        id=str(uuid.uuid4()),
+        id=uuid4(),
         email=user_data.email,
         password_hash=hash_password(user_data.password),
     )
     db.add(user)
     try:
         await db.commit()
-    except IntegrityError as e:
+    except IntegrityError:
         await db.rollback()
-        pgcode = getattr(e.orig, "pgcode", None)
-        if pgcode == "23505":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Email already registered",
-            ) from None
-        raise
-
-    # Re-fetch to get server-generated fields (created_at, updated_at)
-    result = await db.execute(select(User).where(User.id == user.id))
-    user = result.scalar_one()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        ) from None
+    await db.refresh(user)
 
     return UserResponse(id=user.id, email=user.email)
 
 
 @router.post("/login", response_model=Token)
+@limiter.limit("5/minute")
 async def login(
     request: Request,
+    response: Response,
     user_data: UserCreate,
     db: DbSession,
-    _: Annotated[None, Depends(check_auth_rate_limit)],
 ) -> Token:
     result = await db.execute(select(User).where(User.email == user_data.email))
     user = result.scalar_one_or_none()
@@ -98,6 +79,9 @@ async def login(
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
 
+    # Set JWT tokens as HttpOnly cookies for HTMX/browser auth
+    set_token_cookies(response, access_token, refresh_token, secure=settings.cookie_secure)
+
     return Token(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -106,13 +90,27 @@ async def login(
 
 
 @router.post("/refresh", response_model=Token)
+@limiter.limit("5/minute")
 async def refresh(
     request: Request,
-    token_refresh: TokenRefresh,
+    response: Response,
     db: DbSession,
-    _: Annotated[None, Depends(check_auth_rate_limit)],
+    token_refresh: TokenRefresh | None = None,
 ) -> Token:
-    payload = verify_token(token_refresh.refresh_token)
+    # Accept refresh token from body or from HttpOnly cookie
+    # This allows JS-free refresh via credentials: 'include' sending the cookie
+    refresh_token_str = token_refresh.refresh_token if token_refresh else None
+    if not refresh_token_str:
+        refresh_token_str = request.cookies.get("refresh_token")
+
+    if not refresh_token_str:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    payload = verify_token(refresh_token_str)
 
     if payload is None:
         raise HTTPException(
@@ -137,7 +135,16 @@ async def refresh(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    result = await db.execute(select(User).where(User.id == user_id))
+    try:
+        user_uuid = UUID(user_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    result = await db.execute(select(User).where(User.id == user_uuid))
     user = result.scalar_one_or_none()
 
     if user is None or not user.is_active:
@@ -148,11 +155,14 @@ async def refresh(
         )
 
     access_token = create_access_token(user.id)
-    refresh_token = create_refresh_token(user.id)
+    new_refresh_token = create_refresh_token(user.id)
+
+    # Set JWT tokens as HttpOnly cookies for HTMX/browser auth
+    set_token_cookies(response, access_token, new_refresh_token, secure=settings.cookie_secure)
 
     return Token(
         access_token=access_token,
-        refresh_token=refresh_token,
+        refresh_token=new_refresh_token,
         token_type="bearer",
     )
 
@@ -160,3 +170,14 @@ async def refresh(
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: CurrentUser) -> UserResponse:
     return UserResponse(id=current_user.id, email=current_user.email)
+
+
+@router.post("/logout")
+async def logout(request: Request):
+    """Clear auth cookies and redirect to login.
+
+    Logout is a POST action to prevent CSRF from logout links.
+    """
+    redirect = RedirectResponse(url="/web/login?logged_out=1", status_code=303)
+    clear_token_cookies(redirect)
+    return redirect

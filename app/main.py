@@ -1,15 +1,27 @@
 import logging
+import os
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api.middleware import PrometheusMiddleware
+from app.api.rate_limit_config import limiter, rate_limit_exceeded_handler
 from app.api.routes import auth, downloads, health
+from app.api.routes.metrics import router as metrics_router
+from app.api.routes.sse import router as sse_router
+from app.api.routes.web import router as web_router
+from app.auth import verify_token
 from app.config import settings
+from app.logging_config import setup_logging
+from app.metrics import init_metrics
 from app.schemas.error import ErrorCode, error_response_dict
 
 logger = logging.getLogger(__name__)
@@ -18,12 +30,49 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI, *args, **kwargs):
     """Lifespan context manager for startup/shutdown events."""
+    setup_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
+    init_metrics()
     logger.info("Starting YouTube Link Processor API")
     yield
     logger.info("Shutting down YouTube Link Processor API")
 
 
 app = FastAPI(title="YouTube Link Processor", lifespan=lifespan)
+
+app.add_middleware(PrometheusMiddleware)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+
+# Security headers middleware (CSP and other best practices)
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add Content-Security-Policy and other security headers to all responses."""
+    # Generate a secure nonce for inline script tags
+    nonce = uuid.uuid4().hex
+    request.state.nonce = nonce
+
+    response = await call_next(request)
+
+    # CSP: Allow same-origin scripts with nonce for inline scripts, allow Google Fonts CDN
+    response.headers["Content-Security-Policy"] = (
+        f"default-src 'self'; "
+        f"script-src 'self' 'nonce-{nonce}'; "
+        f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
+        f"font-src 'self' https://fonts.gstatic.com; "
+        f"img-src 'self' data: blob:; "
+        f"connect-src 'self'; "
+        f"frame-ancestors 'none'; "
+        f"base-uri 'self'; "
+        f"form-action 'self'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+
+    return response
 
 
 # Request ID middleware for debugging
@@ -46,6 +95,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
+)
+
+app.mount(
+    "/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static"
 )
 
 
@@ -122,8 +175,24 @@ async def general_exception_handler(request: Request, exc: Exception):
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(downloads.router, prefix="/api/v1")
 app.include_router(health.router, prefix="/api/v1")
+app.include_router(metrics_router)
+
+# Web/HTMX routes - SSE mounted FIRST so /web/downloads/stream is matched before /web/downloads
+# Both routers have their own prefix="/web" defined, so include without additional prefix
+app.include_router(sse_router)  # prefix="/web", routes: /web/downloads/stream
+app.include_router(web_router)  # prefix="/web", routes: /web/login, /web/downloads, etc.
 
 
 @app.get("/")
-def root() -> dict[str, str]:
-    return {"message": "YouTube Link Processor API"}
+async def root(request: Request):
+    """Redirect root to login or dashboard based on auth status."""
+    # Check if user has a valid token in cookies
+    token = request.cookies.get("access_token")
+    if token:
+        payload = verify_token(token)
+        if payload is not None:
+            # User is authenticated, redirect to dashboard
+            return RedirectResponse(url="/web/downloads", status_code=303)
+
+    # Not authenticated, redirect to login
+    return RedirectResponse(url="/web/login", status_code=303)

@@ -1,16 +1,17 @@
 import asyncio
+import json
 import logging
 import os
 import re
+import signal
+import sys
 import uuid
-from concurrent.futures import ThreadPoolExecutor
-
-import yt_dlp
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Shared thread pool for yt-dlp operations (avoids per-request leak)
-_executor = ThreadPoolExecutor(max_workers=4)
+# Timeout for yt-dlp operations in seconds (5 minutes)
+YT_DLP_TIMEOUT = 300
 
 
 class StorageError(Exception):
@@ -28,18 +29,99 @@ def _sanitize_title(title: str) -> str:
     return sanitized or "download"
 
 
-def _extract_sync(url: str, output_template: str) -> dict:
-    """Synchronous wrapper for yt_dlp.extract_info."""
-    ydl_opts = {
-        "format": "best[ext=mp4]/best",
-        "outtmpl": output_template,
-        "quiet": True,
-        "no_warnings": True,
-        "socket_timeout": 60,
-        "retries": 3,
-    }
+async def _extract_via_subprocess(url: str, output_template: str) -> dict:
+    """
+    Extract media info via subprocess that can be forcibly killed on timeout.
+
+    This runs yt-dlp as a separate OS process so that on TimeoutError,
+    process.kill() can terminate it immediately rather than leaving a thread running.
+    """
+    # Create a temporary Python script that runs yt-dlp extraction
+    # We write it to a temp file to avoid command-line quoting issues with the URL
+    extract_script = f"""
+import sys
+import json
+import yt_dlp
+
+url = {json.dumps(url)}
+output_template = {json.dumps(output_template)}
+
+ydl_opts = {{
+    "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+    "outtmpl": output_template,
+    "quiet": True,
+    "no_warnings": True,
+    "socket_timeout": 60,
+    "retries": 3,
+    "extractor_args": {{"youtube": {{"player_client": ["web", "ios"]}}}},
+}}
+
+try:
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        return ydl.extract_info(url, download=True)  # type: ignore[no-any-return]
+        info = ydl.extract_info(url, download=True)
+        sanitized_info = ydl.sanitize_info(info)
+        print(json.dumps(sanitized_info))
+except Exception as e:
+    print(json.dumps({{"error": str(e)}}))
+    sys.exit(1)
+"""
+    process = None
+    try:
+        # Use asyncio.create_subprocess_exec to run the extraction
+        # start_new_session=True so killpg kills all descendants (e.g., ffmpeg)
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            extract_script,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=YT_DLP_TIMEOUT)
+        except TimeoutError as e:
+            # Kill the entire process group to ensure all descendants (e.g., ffmpeg) are terminated
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    # Escalate to SIGKILL if SIGTERM didn't work within 5 seconds
+                    os.killpg(process.pid, signal.SIGKILL)
+                    await asyncio.wait_for(process.wait(), timeout=5)
+            except (ProcessLookupError, OSError):
+                pass  # Process already terminated
+            raise TimeoutError(f"yt-dlp extraction timed out after {YT_DLP_TIMEOUT}s") from e
+
+        if process.returncode != 0:
+            # Try to parse stdout first for extractor error payloads
+            try:
+                error_result: dict[str, Any] = json.loads(stdout.decode())
+                if "error" in error_result:
+                    raise RuntimeError(f"yt-dlp extraction failed: {error_result['error']}")
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+            # Fall back to stderr if stdout is empty or unparseable
+            error_msg = stderr.decode() if stderr else "Unknown error"
+            raise RuntimeError(f"yt-dlp failed: {error_msg}")
+
+        success_result: dict[str, Any] = json.loads(stdout.decode())
+        return success_result
+
+    finally:
+        # Ensure process is fully cleaned up using process group kill
+        # process.pid is the group ID since start_new_session=True
+        if process and process.returncode is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    # Process is stuck, but we've already sent SIGKILL, so just continue
+                    pass
+            except (ProcessLookupError, OSError):
+                pass  # Process already terminated
 
 
 def _validate_path_within(base_path: str, target_path: str) -> str:
@@ -56,34 +138,35 @@ def _validate_path_within(base_path: str, target_path: str) -> str:
     if not resolved_target.startswith(resolved_base):
         raise StorageError(
             f"Path traversal detected: resolved path {resolved_target} "
-            f"is outside allowed directory {resolved_base}",
+            f"is outside allowed directory {resolved_base}"
         )
     return resolved_target
 
 
 async def extract_media_url(url: str, storage_path: str) -> tuple[str, str]:
-    """Extract media URL from a YouTube URL using yt-dlp.
+    """
+    Extract media URL from a YouTube URL using yt-dlp.
 
     Returns:
         tuple of (file_path, file_name) where file_path is always within storage_path
 
     Raises:
         StorageError: If the download directory cannot be created or path is invalid.
-
+        asyncio.TimeoutError: If the extraction takes longer than YT_DLP_TIMEOUT.
     """
     download_dir = os.path.join(storage_path, "downloads")
     try:
         os.makedirs(download_dir, exist_ok=True)
     except OSError as e:
-        logger.error(f"Failed to create download directory {download_dir}: {e}")
+        logger.error("Failed to create download directory %s: %s", download_dir, e)
         raise StorageError(f"Failed to create download directory: {e}") from e
 
     file_id = str(uuid.uuid4())
     # Use ONLY the UUID for the filesystem path — never the title
     output_template = os.path.join(download_dir, f"{file_id}.%(ext)s")
 
-    loop = asyncio.get_running_loop()
-    info = await loop.run_in_executor(_executor, _extract_sync, url, output_template)
+    # Run via subprocess so it can be killed on timeout
+    info = await _extract_via_subprocess(url, output_template)
 
     title = info.get("title") or file_id
     ext = info.get("ext") or "mp4"

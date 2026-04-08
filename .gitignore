@@ -77,7 +77,8 @@ npm-debug.log*
 # Node.js (if used)
 # =============================================
 node_modules/
-package-lock.json
+# Only ignore root package-lock.json, not frontend/package-lock.json
+/package-lock.json
 
 # =============================================
 # Test/Coverage artifacts

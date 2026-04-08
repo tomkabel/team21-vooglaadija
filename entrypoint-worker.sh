@@ -1,11 +1,9 @@
 #!/bin/bash
 set -e
 
-# Ensure storage directories exist and are owned by appuser
-# This is necessary because Docker volumes are mounted with root ownership
+# Ensure storage directories exist (already owned by appuser in image)
 echo "Setting up storage directories..."
 mkdir -p /app/storage/downloads /app/storage/temp
-chown -R appuser:appuser /app/storage
 
 echo "Starting worker..."
-exec gosu appuser python -m worker.main
+exec python -m worker.main

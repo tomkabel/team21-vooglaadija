@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -17,15 +18,36 @@ async def create_test_user_and_login(
     email: str = "downloads@example.com",
 ) -> str:
     """Helper: register a user and return access token."""
-    await client.post(
+    # Use unique email per call to avoid test isolation issues
+    import uuid
+
+    unique_email = (
+        f"{uuid.uuid4().hex[:8]}@{email.split('@')[1]}"
+        if "@" in email
+        else f"{uuid.uuid4().hex[:8]}@example.com"
+    )
+
+    register_response = await client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "testpassword123"},
+        json={"email": unique_email, "password": "testpassword123"},
     )
-    response = await client.post(
+    # If registration fails (409), login might still work if user existed from previous test
+    if register_response.status_code not in (200, 201, 409):
+        raise ValueError(
+            f"Registration failed: {register_response.status_code} - {register_response.text}"
+        )
+
+    login_response = await client.post(
         "/api/v1/auth/login",
-        json={"email": email, "password": "testpassword123"},
+        json={"email": unique_email, "password": "testpassword123"},
     )
-    return response.json()["access_token"]
+    if login_response.status_code != 200:
+        raise ValueError(f"Login failed: {login_response.status_code} - {login_response.text}")
+
+    token = login_response.json().get("access_token")
+    if not token:
+        raise ValueError(f"No access_token in response: {login_response.json()}")
+    return token
 
 
 @pytest.mark.asyncio
@@ -279,7 +301,7 @@ async def test_get_download_file_not_found(db_session: AsyncSession):
             json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
             headers={"Authorization": f"Bearer {token}"},
         )
-        job_id = create_response.json()["id"]
+        job_id = uuid.UUID(create_response.json()["id"])
         # Manually mark as completed but no file_path
         await db_session.execute(
             update(DownloadJob).where(DownloadJob.id == job_id).values(status="completed"),
@@ -350,8 +372,6 @@ async def test_get_download_file_expired_returns_410(db_session: AsyncSession):
     Mocks datetime.now in the route to return a naive datetime well in the future
     so that the stored (naive) past datetime is considered expired.
     """
-    from unittest.mock import MagicMock, patch
-
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         token = await create_test_user_and_login(client)
         create_response = await client.post(
@@ -359,7 +379,7 @@ async def test_get_download_file_expired_returns_410(db_session: AsyncSession):
             json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
             headers={"Authorization": f"Bearer {token}"},
         )
-        job_id = create_response.json()["id"]
+        job_id = uuid.UUID(create_response.json()["id"])
 
         # Store a datetime in the past (SQLite loses tz info on retrieval)
         past_naive = datetime(2000, 1, 1, 0, 0, 0, tzinfo=UTC)
@@ -375,9 +395,10 @@ async def test_get_download_file_expired_returns_410(db_session: AsyncSession):
         await db_session.commit()
 
         # Mock datetime.now to return a datetime in the future
+        # Use side_effect to handle datetime.now(UTC) calls properly
         future_naive = datetime(2099, 1, 1, 0, 0, 0, tzinfo=UTC)
         mock_dt = MagicMock()
-        mock_dt.now.return_value = future_naive
+        mock_dt.now.side_effect = lambda tz=None: future_naive
 
         with patch("app.api.routes.downloads.datetime", mock_dt):
             response = await client.get(
@@ -402,7 +423,7 @@ async def test_get_download_file_path_traversal_returns_403(db_session: AsyncSes
             json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
             headers={"Authorization": f"Bearer {token}"},
         )
-        job_id = create_response.json()["id"]
+        job_id = uuid.UUID(create_response.json()["id"])
 
         # Simulate a malicious file_path stored in DB; expires_at=None means not expired
         await db_session.execute(
@@ -442,7 +463,7 @@ async def test_get_download_file_not_on_disk(db_session: AsyncSession):
             json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
             headers={"Authorization": f"Bearer {token}"},
         )
-        job_id = create_response.json()["id"]
+        job_id = uuid.UUID(create_response.json()["id"])
 
         # Use a path inside storage dir that doesn't actually exist on disk
         storage_downloads = os.path.join(settings.storage_path, "downloads")
