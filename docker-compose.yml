@@ -296,7 +296,7 @@ services:
 
   # Optional: API documentation (for development)
   swagger-ui:
-    image: swaggerapi/swagger-ui:5.1.0  # Pinned version for stability
+    image: swaggerapi/swagger-ui:v5.1.0  # Pinned version for stability
     container_name: swagger-ui
     restart: unless-stopped
     environment:
