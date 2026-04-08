@@ -9,12 +9,12 @@ chown -R appuser:appuser /app/storage 2>/dev/null || true
 chown -R appuser:appuser /app 2>/dev/null || true
 
 # Run migrations if not already done (check for alembic lock file)
-if [ ! -f /app/.migrations_done ]; then
+if [ ! -f /app/storage/.migrations_done ]; then
     echo "Running database migrations..."
     /app/migrate.sh || {
         echo "WARNING: Migration failed, continuing anyway..."
     }
-    touch /app/.migrations_done
+    touch /app/storage/.migrations_done
 else
     echo "Migrations already completed, skipping..."
 fi
