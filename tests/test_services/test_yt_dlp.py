@@ -222,7 +222,7 @@ class TestExtractMediaUrl:
         """Verify asyncio.TimeoutError is raised when extraction times out."""
 
         async def mock_wait_for(coro, timeout=None):
-            raise asyncio.TimeoutError("timed out")
+            raise TimeoutError("timed out")
 
         mock_process = AsyncMock()
         mock_process.communicate = AsyncMock(return_value=(b'{"title": "Test", "ext": "mp4"}', b""))

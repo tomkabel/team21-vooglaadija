@@ -85,7 +85,7 @@ class TestCleanupExpiredJobs:
         def realpath_side_effect(path):
             if path == "/etc/passwd":
                 return "/etc/passwd"
-            if path == settings.storage_path or path == f"{settings.storage_path}/downloads":
+            if path in {settings.storage_path, f"{settings.storage_path}/downloads"}:
                 return f"{settings.storage_path}/downloads"
             return path
 
@@ -114,7 +114,7 @@ class TestCleanupExpiredJobs:
         await db_session.commit()
 
         def mock_realpath(path):
-            if path == settings.storage_path or path == f"{settings.storage_path}/downloads":
+            if path in {settings.storage_path, f"{settings.storage_path}/downloads"}:
                 return f"{settings.storage_path}/downloads"
             return f"{_DOWNLOADS_DIR}/nonexistent.mp4"
 
@@ -183,7 +183,7 @@ class TestCleanupExpiredJobs:
         await db_session.commit()
 
         def mock_realpath(path):
-            if path == settings.storage_path or path == f"{settings.storage_path}/downloads":
+            if path in {settings.storage_path, f"{settings.storage_path}/downloads"}:
                 return f"{settings.storage_path}/downloads"
             return f"{_DOWNLOADS_DIR}/test0.mp4"
 
