@@ -27,8 +27,7 @@ See dokument kirjeldab YouTube link processor projekti struktuuri teksti tasemel
 ```
 yt-downloader/
 ├── docker-compose.yml          # Docker Compose konfiguratsioon
-├── Dockerfile                  # Peakäivitus container
-├── Dockerfile.worker           # Worker container (yt-dlp)
+├── Dockerfile                  # API ja Worker containerid (multi-stage build)
 ├── requirements.txt             # Python sõltuvused
 ├── .env.example                # Keskkonnamuutujad (template)
 ├── .gitignore                   # Git ignore reeglid
@@ -107,28 +106,28 @@ yt-downloader/
 
 ### 3.1 User Tabel
 
-| Väli | Tüüp | Kirjeldus |
-|------|------|-----------|
-| id | UUID | Primaarvõti |
-| email | VARCHAR(255) | Unikaalne email |
-| password_hash | VARCHAR(255) | Bcrypt hashitud parool |
-| is_active | BOOLEAN | Kas kasutaja on aktiivne |
-| created_at | TIMESTAMP | Loomise aeg |
+| Väli          | Tüüp         | Kirjeldus                |
+| ------------- | ------------ | ------------------------ |
+| id            | UUID         | Primaarvõti              |
+| email         | VARCHAR(255) | Unikaalne email          |
+| password_hash | VARCHAR(255) | Bcrypt hashitud parool   |
+| is_active     | BOOLEAN      | Kas kasutaja on aktiivne |
+| created_at    | TIMESTAMP    | Loomise aeg              |
 
 ### 3.2 DownloadJob Tabel
 
-| Väli | Tüüp | Kirjeldus |
-|------|------|-----------|
-| id | UUID | Primaarvõti |
-| user_id | UUID | Viide User tabelile |
-| url | TEXT | YouTube URL |
-| status | VARCHAR(20) | pending/processing/completed/failed |
-| file_path | VARCHAR(500) | Faili tee (kui valmis) |
-| file_name | VARCHAR(255) | Faili nimi |
-| error | TEXT | Viga (kui ebaõnnestus) |
-| created_at | TIMESTAMP | Loomise aeg |
-| completed_at | TIMESTAMP | Valmimise aeg |
-| expires_at | TIMESTAMP | Aegumise aeg |
+| Väli         | Tüüp         | Kirjeldus                           |
+| ------------ | ------------ | ----------------------------------- |
+| id           | UUID         | Primaarvõti                         |
+| user_id      | UUID         | Viide User tabelile                 |
+| url          | TEXT         | YouTube URL                         |
+| status       | VARCHAR(20)  | pending/processing/completed/failed |
+| file_path    | VARCHAR(500) | Faili tee (kui valmis)              |
+| file_name    | VARCHAR(255) | Faili nimi                          |
+| error        | TEXT         | Viga (kui ebaõnnestus)              |
+| created_at   | TIMESTAMP    | Loomise aeg                         |
+| completed_at | TIMESTAMP    | Valmimise aeg                       |
+| expires_at   | TIMESTAMP    | Aegumise aeg                        |
 
 ---
 
@@ -136,28 +135,28 @@ yt-downloader/
 
 ### 4.1 Autentimine (Auth)
 
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| POST | `/api/v1/auth/register` | Kasutaja registreerimine | No |
-| POST | `/api/v1/auth/login` | Sisselogimine, tokenite saamine | No |
-| POST | `/api/v1/auth/refresh` | Access tokeni uuendamine | Yes |
-| GET | `/api/v1/me` | Kasutaja andmete küsimine | Yes |
+| Method | Endpoint                | Description                     | Auth |
+| ------ | ----------------------- | ------------------------------- | ---- |
+| POST   | `/api/v1/auth/register` | Kasutaja registreerimine        | No   |
+| POST   | `/api/v1/auth/login`    | Sisselogimine, tokenite saamine | No   |
+| POST   | `/api/v1/auth/refresh`  | Access tokeni uuendamine        | Yes  |
+| GET    | `/api/v1/me`            | Kasutaja andmete küsimine       | Yes  |
 
 ### 4.2 Allalaadimised (Downloads)
 
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| POST | `/api/v1/downloads` | Uue download jobi loomine | Yes |
-| GET | `/api/v1/downloads` | Kasutaja downloadide nimekiri | Yes |
-| GET | `/api/v1/downloads/{job_id}` | konkreetse jobi staatus | Yes |
-| GET | `/api/v1/downloads/{job_id}/file` | Faili allalaadimise URL | Yes |
-| DELETE | `/api/v1/downloads/{job_id}` | Jobi kustutamine | Yes |
+| Method | Endpoint                          | Description                   | Auth |
+| ------ | --------------------------------- | ----------------------------- | ---- |
+| POST   | `/api/v1/downloads`               | Uue download jobi loomine     | Yes  |
+| GET    | `/api/v1/downloads`               | Kasutaja downloadide nimekiri | Yes  |
+| GET    | `/api/v1/downloads/{job_id}`      | konkreetse jobi staatus       | Yes  |
+| GET    | `/api/v1/downloads/{job_id}/file` | Faili allalaadimise URL       | Yes  |
+| DELETE | `/api/v1/downloads/{job_id}`      | Jobi kustutamine              | Yes  |
 
 ### 4.3 Tervis
 
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/api/v1/health` | Teenuse tervise check | No |
+| Method | Endpoint         | Description           | Auth |
+| ------ | ---------------- | --------------------- | ---- |
+| GET    | `/api/v1/health` | Teenuse tervise check | No   |
 
 ---
 
@@ -282,9 +281,11 @@ services:
     volumes:
       - ./storage:/app/storage
 
-  worker:
-    build: .
-    dockerfile: Dockerfile.worker
+   worker:
+     build:
+       context: .
+       dockerfile: Dockerfile
+       target: worker
     environment:
       - DATABASE_URL=postgresql://user:pass@db:5432/ytprocessor
       - REDIS_URL=redis://redis:6379
@@ -374,16 +375,16 @@ storage/
 
 ## 10. Keskkonnamuutujad
 
-| Muutuja | Kirjeldus | Default |
-|---------|-----------|---------|
-| DATABASE_URL | PostgreSQL ühendusstring | postgresql://user:pass@localhost:5432/ytprocessor |
-| SECRET_KEY | JWT secret | random_string |
-| REDIS_URL | Redis ühendusstring | redis://localhost:6379 |
-| CORS_ORIGINS | CORS lubatud originid | * |
-| ACCESS_TOKEN_EXPIRE_MINUTES | Tokeni aegumisaeg | 15 |
-| REFRESH_TOKEN_EXPIRE_DAYS | Refresh token aegumisaeg | 7 |
-| FILE_EXPIRE_HOURS | Faili säilimisaeg | 24 |
-| STORAGE_PATH | Faili hoidla path | ./storage |
+| Muutuja                     | Kirjeldus                | Default                                           |
+| --------------------------- | ------------------------ | ------------------------------------------------- |
+| DATABASE_URL                | PostgreSQL ühendusstring | postgresql://user:pass@localhost:5432/ytprocessor |
+| SECRET_KEY                  | JWT secret               | random_string                                     |
+| REDIS_URL                   | Redis ühendusstring      | redis://localhost:6379                            |
+| CORS_ORIGINS                | CORS lubatud originid    | \*                                                |
+| ACCESS_TOKEN_EXPIRE_MINUTES | Tokeni aegumisaeg        | 15                                                |
+| REFRESH_TOKEN_EXPIRE_DAYS   | Refresh token aegumisaeg | 7                                                 |
+| FILE_EXPIRE_HOURS           | Faili säilimisaeg        | 24                                                |
+| STORAGE_PATH                | Faili hoidla path        | ./storage                                         |
 
 ---
 
@@ -411,17 +412,17 @@ storage/
 
 See dokument kirjeldab YouTube Link Processor projekti arhitektuuri teksti tasemel. Peamised komponendid on:
 
-| Komponent | Kirjeldus |
-|-----------|-----------|
-| **FastAPI** | REST API framework |
+| Komponent      | Kirjeldus                     |
+| -------------- | ----------------------------- |
+| **FastAPI**    | REST API framework            |
 | **PostgreSQL** | Andmebaas (User, DownloadJob) |
-| **Redis** | Queue + rate limiting |
-| **yt-dlp** | YouTube URL extraction |
-| **Worker** | Taustatöötleja |
-| **Docker** | Containeriseerimine |
+| **Redis**      | Queue + rate limiting         |
+| **yt-dlp**     | YouTube URL extraction        |
+| **Worker**     | Taustatöötleja                |
+| **Docker**     | Containeriseerimine           |
 
 Kõik komponendid on üksteisest sõltumatud ja saavad suhelda läbi defineeritud liideste (API, database, queue).
 
 ---
 
-*See dokument on aluseks implementationile. Kõik otsused tuleb läbi mängida ja vajadusel kohandada.*
+_See dokument on aluseks implementationile. Kõik otsused tuleb läbi mängida ja vajadusel kohandada._
