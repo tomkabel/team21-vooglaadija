@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import signal
 import sys
 import uuid
 
@@ -57,38 +58,51 @@ ydl_opts = {{
 try:
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
-        print(json.dumps(info))
+        sanitized_info = ydl.sanitize_info(info)
+        print(json.dumps(sanitized_info))
 except Exception as e:
-    print(json.dumps({{"error": str(e)}}))
+    print(json.dumps({"error": str(e)}))
     sys.exit(1)
 """
     process = None
     try:
         # Use asyncio.create_subprocess_exec to run the extraction
+        # start_new_session=True so killpg kills all descendants (e.g., ffmpeg)
         process = await asyncio.create_subprocess_exec(
             sys.executable,
             "-c",
             extract_script,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
         )
 
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=YT_DLP_TIMEOUT)
-        except asyncio.TimeoutError:
-            # Kill the process and wait for it to terminate
-            process.kill()
-            await process.wait()
-            raise asyncio.TimeoutError(f"yt-dlp extraction timed out after {YT_DLP_TIMEOUT}s")
+        except asyncio.TimeoutError as e:
+            # Kill the entire process group to ensure all descendants (e.g., ffmpeg) are terminated
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                await process.wait()
+            except ProcessLookupError:
+                pass  # Process already terminated
+            raise asyncio.TimeoutError(
+                f"yt-dlp extraction timed out after {YT_DLP_TIMEOUT}s"
+            ) from e
 
         if process.returncode != 0:
+            # Try to parse stdout first for extractor error payloads
+            try:
+                result = json.loads(stdout.decode())
+                if "error" in result:
+                    raise RuntimeError(f"yt-dlp extraction failed: {result['error']}")
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+            # Fall back to stderr if stdout is empty or unparseable
             error_msg = stderr.decode() if stderr else "Unknown error"
             raise RuntimeError(f"yt-dlp failed: {error_msg}")
 
         result = json.loads(stdout.decode())
-        if "error" in result:
-            raise RuntimeError(f"yt-dlp extraction failed: {result['error']}")
-
         return result
 
     finally:

@@ -9,6 +9,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 logger = logging.getLogger(__name__)
 
+# Module-level lock for thread-safe access to _worker_state
+_state_lock = threading.Lock()
+
 # Global state updated by the worker main loop
 _worker_state = {
     "status": "starting",
@@ -24,9 +27,10 @@ _health_server = None
 
 
 def update_worker_state(**kwargs):
-    """Update worker state for health reporting."""
-    _worker_state.update(kwargs)
-    _worker_state["last_heartbeat"] = datetime.now(UTC).isoformat()
+    """Update worker state for health reporting (thread-safe)."""
+    with _state_lock:
+        _worker_state.update(kwargs)
+        _worker_state["last_heartbeat"] = datetime.now(UTC).isoformat()
 
 
 def get_redis_url() -> str:
@@ -143,12 +147,13 @@ class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             uptime = (datetime.now(UTC) - _start_time).total_seconds()
-            # Clone worker state to avoid race conditions
-            worker_status = _worker_state.get("status", "unknown")
-            health_data = {
-                **_worker_state,
-                "uptime_seconds": round(uptime),
-            }
+            # Clone worker state under lock to avoid race conditions
+            with _state_lock:
+                worker_status = _worker_state.get("status", "unknown")
+                health_data = {
+                    **_worker_state,
+                    "uptime_seconds": round(uptime),
+                }
 
             # Determine health status based on worker state and heartbeat
             last_hb = _worker_state.get("last_heartbeat")

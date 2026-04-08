@@ -57,9 +57,17 @@
                             window.showToast(response.error.message, 'error');
                         }
                     } catch (e) {
-                        // If not JSON, use response text directly
+                        // If not JSON, extract plain text from HTML response
                         if (xhr.responseText) {
-                            window.showToast(xhr.responseText, 'error');
+                            const tempDiv = document.createElement('div');
+                            tempDiv.innerHTML = xhr.responseText;
+                            const plainText = tempDiv.textContent || tempDiv.innerText || '';
+                            const trimmedText = plainText.trim();
+                            if (trimmedText) {
+                                window.showToast(trimmedText, 'error');
+                            } else {
+                                window.showToast('Request failed. Please try again.', 'error');
+                            }
                         }
                     }
                 }

@@ -162,12 +162,6 @@ async def main() -> None:
                 logger.warning("Failed to write health: %s", e)
             heartbeat_counter = 0
 
-        # Use wait with timeout for fast shutdown response
-        try:
-            await asyncio.wait_for(shutdown_event.wait(), timeout=0.1)
-        except TimeoutError:
-            pass
-
     # Shutdown
     if health_server:
         stop_health_server()

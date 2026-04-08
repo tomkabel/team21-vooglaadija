@@ -32,7 +32,7 @@ def _estimate_entropy(text: str) -> float:
 class Settings(BaseSettings):
     database_url: str = ""
     secret_key: str = ""
-    redis_url: str = "redis://localhost:6379"
+    redis_url: str = ""
     cors_origins: str = "http://localhost:3000"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     db_name: str = "ytprocessor"
     db_host: str = "localhost"
     db_port: str = "5432"
+
+    # Used to construct REDIS_URL if not set directly
+    redis_host: str = "localhost"
+    redis_port: str = "6379"
+    redis_password: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -108,6 +113,14 @@ class Settings(BaseSettings):
 
         # Resolve storage path to absolute
         self.storage_path = str(Path(self.storage_path).resolve())
+
+        # Construct REDIS_URL from components if not set directly
+        if not self.redis_url:
+            if self.redis_password:
+                encoded_password = quote_plus(self.redis_password)
+                self.redis_url = f"redis://:{encoded_password}@{self.redis_host}:{self.redis_port}"
+            else:
+                self.redis_url = f"redis://{self.redis_host}:{self.redis_port}"
 
         return self
 

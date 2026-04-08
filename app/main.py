@@ -24,19 +24,18 @@ from app.logging_config import setup_logging
 from app.metrics import init_metrics
 from app.schemas.error import ErrorCode, error_response_dict
 
-setup_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI, *args, **kwargs):
     """Lifespan context manager for startup/shutdown events."""
+    setup_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
+    init_metrics()
     logger.info("Starting YouTube Link Processor API")
     yield
     logger.info("Shutting down YouTube Link Processor API")
 
-
-init_metrics()
 
 app = FastAPI(title="YouTube Link Processor", lifespan=lifespan)
 
@@ -58,7 +57,7 @@ async def add_security_headers(request: Request, call_next):
     # CSP: Allow same-origin scripts with nonce for inline scripts, allow Google Fonts CDN
     response.headers["Content-Security-Policy"] = (
         f"default-src 'self'; "
-        f"script-src 'self' https://fonts.googleapis.com 'nonce-{nonce}'; "
+        f"script-src 'self' 'nonce-{nonce}'; "
         f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
         f"font-src 'self' https://fonts.gstatic.com; "
         f"img-src 'self' data: blob:; "

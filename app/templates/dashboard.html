@@ -36,7 +36,7 @@
         </div>
 
         <form hx-post="/web/downloads"
-              action="/web/downloads"
+              action="/web/downloads/full"
               method="POST"
               hx-target="#download-rows"
               hx-swap="beforeend"
@@ -161,9 +161,9 @@
         rows.forEach(row => {
             const statusEl = row.querySelector('.status-badge');
             if (statusEl) {
-                const status = statusEl.textContent.toLowerCase();
+                const status = statusEl.textContent.trim().toLowerCase();
                 if (status === 'completed') completed++;
-                else if (status === 'processing' || status === 'pending') inProgress++;
+                else if (status === 'processing') inProgress++;
             }
         });
 
@@ -247,7 +247,16 @@
 
     function getRowHTML(data) {
         const statusText = data.status.charAt(0).toUpperCase() + data.status.slice(1);
-        const date = new Date().toISOString().slice(0, 16).replace('T', ' ');
+        // Use server-provided timestamp from data.created_at, or fallback to current time
+        let date = 'Just now';
+        if (data.created_at) {
+            try {
+                const serverDate = new Date(data.created_at);
+                date = serverDate.toISOString().slice(0, 16).replace('T', ' ');
+            } catch (e) {
+                date = new Date().toISOString().slice(0, 16).replace('T', ' ');
+            }
+        }
 
         return `
             <div class="flex-1 min-w-0">

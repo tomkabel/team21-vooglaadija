@@ -14,7 +14,7 @@ MIGRATION_LOCK_PX=60000  # 60 seconds in milliseconds for PX option
 
 # Helper to build redis-cli command with optional auth
 redis_cmd() {
-    redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" "${REDISCLI_AUTH:+-a $REDISCLI_AUTH}"
+    redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" "$@"
 }
 
 acquire_lock() {
@@ -40,13 +40,9 @@ wait_for_lock_release() {
         holder=$(redis_cmd GET "$MIGRATION_LOCK_KEY" 2>/dev/null)
         
         if [ -z "$holder" ]; then
-            # Lock expired or missing - try to re-acquire
-            lock_result=$(acquire_lock)
-            if [ "$lock_result" = "OK" ]; then
-                echo "Lock expired and re-acquired"
-                return 0
-            fi
-            # Someone else got it first, keep waiting
+            # Lock expired or released
+            echo "Lock has been released"
+            return 0
         elif [ "$holder" = "done" ]; then
             # Previous owner marked done - wait a bit more for actual deletion
             sleep 1
@@ -70,8 +66,13 @@ lock_result=$(acquire_lock)
 if [ "$lock_result" = "OK" ]; then
     echo "Acquired migration lock, running migrations..."
     
-    # Start lock renewal in background (renew every MIGRATION_LOCK_TIMEOUT/2 seconds)
-    renew_lock &
+    # Start lock renewal in background (continuous loop renewing every MIGRATION_LOCK_TIMEOUT/2 seconds)
+    (
+        while true; do
+            sleep $((MIGRATION_LOCK_TIMEOUT / 2))
+            renew_lock
+        done
+    ) &
     RENEW_PID=$!
     
     # Register trap to release lock on EXIT only (not ERR - don't mark done on failure)
@@ -87,14 +88,15 @@ if [ "$lock_result" = "OK" ]; then
     if [ $migrations_result -eq 0 ]; then
         echo "Migrations completed successfully"
         
-        # Verify migrations are at head
+        # Verify migrations are at head - treat as hard failure if not
         current=$(python -m alembic current 2>/dev/null | tr -d '[:space:]')
         head=$(python -m alembic heads 2>/dev/null | head -1 | awk '{print $1}' | tr -d '[:space:]')
         
         if [ "$current" = "$head" ]; then
             echo "Verified: migrations at head ($head)"
         else
-            echo "Warning: current ($current) does not match head ($head)"
+            echo "ERROR: current ($current) does not match head ($head). Schema is out of date!"
+            migrations_result=1
         fi
     else
         echo "Migration failed with exit code $migrations_result"
@@ -118,14 +120,15 @@ else
         exit 1
     fi
     
-    # Check if migrations already ran
+    # Check if migrations already ran - treat as hard failure if not at head
     current=$(python -m alembic current 2>/dev/null | tr -d '[:space:]')
     if [ -n "$current" ]; then
         head=$(python -m alembic heads 2>/dev/null | head -1 | awk '{print $1}' | tr -d '[:space:]')
         if [ "$current" = "$head" ]; then
             echo "Migrations already at head ($head)"
         else
-            echo "Warning: current ($current) does not match head ($head)"
+            echo "ERROR: current ($current) does not match head ($head). Schema is out of date!"
+            exit 1
         fi
     else
         echo "Warning: Could not verify migration status"

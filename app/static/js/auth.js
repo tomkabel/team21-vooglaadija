@@ -9,9 +9,15 @@
      */
     async function refreshAccessToken() {
         try {
+            const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+            const csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
+            
             const response = await fetch('/api/v1/auth/refresh', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': csrfToken
+                },
                 credentials: 'include',  // Include cookies automatically
             });
             

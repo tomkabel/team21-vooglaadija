@@ -10,7 +10,8 @@ x-common-env: &common-env
   DB_NAME: ${DB_NAME:-ytprocessor}
   DB_HOST: ${DB_HOST:-db}
   DB_PORT: ${DB_PORT:-5432}
-  # Redis components (worker/health.py constructs URL)
+  # Redis components (app/config.py constructs URL from REDIS_URL or components)
+  REDIS_URL: ${REDIS_URL:-}
   REDIS_HOST: ${REDIS_HOST:-redis}
   REDIS_PORT: ${REDIS_PORT:-6379}
   REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
@@ -110,8 +111,7 @@ services:
       redis:
         condition: service_healthy
     <<: *resource-limits
-    security_opt:
-      - no-new-privileges=true
+    <<: *x-security-context
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8000)); s.close()"]
       interval: 30s
@@ -280,7 +280,7 @@ services:
 
   # Optional: API documentation (for development)
   swagger-ui:
-    image: swaggerapi/swagger-ui:latest
+    image: swaggerapi/swagger-ui:5.1.0  # Pinned version for stability
     container_name: swagger-ui
     restart: unless-stopped
     environment:

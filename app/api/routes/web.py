@@ -446,6 +446,52 @@ async def create_download_form(
     )
 
 
+@router.post("/downloads/full")
+@limiter.limit("10/minute")
+async def create_download_full_page(
+    request: Request,
+    url: Annotated[str, Form(max_length=2000)],
+    current_user: CurrentUserFromCookie,
+    db: DbSession,
+):
+    """Full-page handler for form submissions (non-HTMX fallback)."""
+    # CSRF validation
+    if not await validate_csrf_token(request):
+        return _htmx_or_redirect(
+            request, 403, _error_html("Invalid CSRF token"), "/web/downloads?error=csrf"
+        )
+
+    # Validate URL
+    if not is_youtube_url(url):
+        return _htmx_or_redirect(
+            request, 422, _error_html("Invalid YouTube URL"), "/web/downloads?error=invalid_url"
+        )
+
+    # Create job with transactional outbox pattern (same as REST API)
+    job_id = uuid.uuid4()
+    job = DownloadJob(id=job_id, user_id=current_user.id, url=url, status="pending")
+    db.add(job)
+    await write_job_to_outbox(db, job_id)
+    await db.commit()
+    await db.refresh(job)
+
+    # Enqueue job for processing (best-effort; outbox handles recovery)
+    try:
+        await enqueue_job(job_id)
+        # Mark outbox as enqueued to prevent sync_outbox_to_queue from re-publishing
+        await db.execute(
+            update(Outbox)
+            .where(Outbox.job_id == job_id, Outbox.status == "pending")
+            .values(status="enqueued")
+        )
+        await db.commit()
+    except Exception:
+        logger.warning("Failed to enqueue job %s (outbox will handle recovery)", job_id)
+
+    # Redirect to dashboard for full-page non-HTMX fallback
+    return RedirectResponse(url="/web/downloads", status_code=303)
+
+
 @router.delete("/downloads/{job_id}")
 async def delete_download_form(
     request: Request,

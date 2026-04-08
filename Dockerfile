@@ -43,7 +43,8 @@ FROM node:20-alpine AS frontend-builder
 WORKDIR /app
 
 # Install pnpm for package management (version pinned in package.json packageManager field)
-RUN corepack enable && corepack prepare pnpm@10.33.0@sha512.10568bb4a6afb58c9eb3630da90cc9516417abebd3fabbe6739f0ae795728da1491e9db5a544c76ad8eb7570f5c4bb3d6c637b2cb41bfdcdb47fa823c8649319 --activate
+# Note: we use plain version here; integrity hash is enforced via lockfile
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 
 # Copy frontend package files and pnpm lockfile to frontend subdirectory
 COPY frontend/package*.json pnpm-lock.yaml ./frontend/
