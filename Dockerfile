@@ -51,7 +51,7 @@ COPY frontend/package*.json pnpm-lock.yaml ./frontend/
 
 # Install frontend dependencies using pnpm from the frontend directory
 WORKDIR /app/frontend
-RUN pnpm install --frozen-lockfile
+RUN pnpm install
 
 # Copy Tailwind config
 COPY frontend/tailwind.config.js ./tailwind.config.js
