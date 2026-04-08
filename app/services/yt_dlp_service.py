@@ -6,6 +6,7 @@ import re
 import signal
 import sys
 import uuid
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -79,31 +80,29 @@ except Exception as e:
 
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=YT_DLP_TIMEOUT)
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             # Kill the entire process group to ensure all descendants (e.g., ffmpeg) are terminated
             try:
                 os.killpg(process.pid, signal.SIGTERM)
                 await process.wait()
             except ProcessLookupError:
                 pass  # Process already terminated
-            raise asyncio.TimeoutError(
-                f"yt-dlp extraction timed out after {YT_DLP_TIMEOUT}s"
-            ) from e
+            raise TimeoutError(f"yt-dlp extraction timed out after {YT_DLP_TIMEOUT}s") from e
 
         if process.returncode != 0:
             # Try to parse stdout first for extractor error payloads
             try:
-                result = json.loads(stdout.decode())
-                if "error" in result:
-                    raise RuntimeError(f"yt-dlp extraction failed: {result['error']}")
+                error_result: dict[str, Any] = json.loads(stdout.decode())
+                if "error" in error_result:
+                    raise RuntimeError(f"yt-dlp extraction failed: {error_result['error']}")
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
             # Fall back to stderr if stdout is empty or unparseable
             error_msg = stderr.decode() if stderr else "Unknown error"
             raise RuntimeError(f"yt-dlp failed: {error_msg}")
 
-        result = json.loads(stdout.decode())
-        return result
+        success_result: dict[str, Any] = json.loads(stdout.decode())
+        return success_result
 
     finally:
         # Ensure process is fully cleaned up

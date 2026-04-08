@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def validate_and_construct(self) -> "Settings":
+    def validate_and_construct(self) -> "Settings":  # noqa: C901
         # TESTING override — skip all validation
         testing_val = os.environ.get("TESTING", "").lower()
         is_testing = testing_val in ("1", "true", "yes", "on")

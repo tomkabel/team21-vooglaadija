@@ -28,9 +28,27 @@ release_lock() {
     redis_cmd EVAL "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end" 1 "$MIGRATION_LOCK_KEY" "$$"
 }
 
-# Renew lock timeout while holding it (called periodically in background)
+# Renew lock timeout while holding it - loops until lock is lost
 renew_lock() {
-    redis_cmd EVAL "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end" 1 "$MIGRATION_LOCK_KEY" "$$" "$MIGRATION_LOCK_PX"
+    local sleep_interval=$((MIGRATION_LOCK_PX / 2 / 1000))  # Half of lock timeout in seconds
+    while true; do
+        # Check if we still own the lock
+        current_holder=$(redis_cmd GET "$MIGRATION_LOCK_KEY" 2>/dev/null)
+        if [ "$current_holder" != "$$" ]; then
+            # Lock lost or different owner
+            exit 0
+        fi
+        
+        # Refresh the lock expiration
+        result=$(redis_cmd EVAL "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end" 1 "$MIGRATION_LOCK_KEY" "$$" "$MIGRATION_LOCK_PX")
+        
+        if [ "$result" != "1" ]; then
+            # Failed to renew - lock lost
+            exit 0
+        fi
+        
+        sleep "$sleep_interval"
+    done
 }
 
 wait_for_lock_release() {
@@ -40,9 +58,15 @@ wait_for_lock_release() {
         holder=$(redis_cmd GET "$MIGRATION_LOCK_KEY" 2>/dev/null)
         
         if [ -z "$holder" ]; then
-            # Lock expired or released
-            echo "Lock has been released"
-            return 0
+            # Lock expired or released - try to acquire it ourselves
+            echo "Lock released, attempting to acquire..."
+            acquire_result=$(acquire_lock)
+            if [ "$acquire_result" = "OK" ]; then
+                echo "Successfully acquired migration lock"
+                return 0  # We now own the lock
+            fi
+            # Someone else got it first - continue waiting
+            echo "Lock acquired by another process, continuing to wait..."
         elif [ "$holder" = "done" ]; then
             # Previous owner marked done - wait a bit more for actual deletion
             sleep 1
@@ -120,19 +144,51 @@ else
         exit 1
     fi
     
-    # Check if migrations already ran - treat as hard failure if not at head
-    current=$(python -m alembic current 2>/dev/null | tr -d '[:space:]')
-    if [ -n "$current" ]; then
+    # We now own the lock (wait_for_lock_release acquired it for us)
+    # Run migrations with lock renewal and cleanup
+    echo "Running migrations with acquired lock..."
+    
+    # Start lock renewal in background
+    (
+        renew_lock
+    ) &
+    RENEW_PID=$!
+    
+    # Register trap to release lock on EXIT
+    trap 'kill $RENEW_PID 2>/dev/null; release_lock' EXIT
+    
+    python -m alembic upgrade head
+    migrations_result=$?
+    
+    # Stop renewal background job
+    kill $RENEW_PID 2>/dev/null
+    wait $RENEW_PID 2>/dev/null || true
+    
+    if [ $migrations_result -eq 0 ]; then
+        echo "Migrations completed successfully"
+        
+        # Verify migrations are at head - treat as hard failure if not
+        current=$(python -m alembic current 2>/dev/null | tr -d '[:space:]')
         head=$(python -m alembic heads 2>/dev/null | head -1 | awk '{print $1}' | tr -d '[:space:]')
+        
         if [ "$current" = "$head" ]; then
-            echo "Migrations already at head ($head)"
+            echo "Verified: migrations at head ($head)"
         else
             echo "ERROR: current ($current) does not match head ($head). Schema is out of date!"
-            exit 1
+            migrations_result=1
         fi
     else
-        echo "Warning: Could not verify migration status"
+        echo "Migration failed with exit code $migrations_result"
     fi
+    
+    # Release lock before exiting
+    release_lock
+    
+    # Remove trap since we already released
+    trap - EXIT
+    
+    # Exit with migration result
+    exit $migrations_result
 fi
 
 echo "Migration check complete"

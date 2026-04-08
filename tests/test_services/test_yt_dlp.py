@@ -223,7 +223,7 @@ class TestExtractMediaUrl:
 
         async def mock_subprocess_exec(*args, **kwargs):
             # Simulate a timeout by raising asyncio.TimeoutError
-            raise asyncio.TimeoutError("timed out")
+            raise TimeoutError("timed out")
 
         with (
             patch(

@@ -538,3 +538,86 @@ async def delete_download_form(
 
     # Return empty response for hx-swap="outerHTML" (removes element)
     return HTMLResponse(content="")
+
+
+@router.get("/downloads/{job_id}/file")
+async def download_file(
+    request: Request,
+    job_id: str,
+    current_user: CurrentUserFromCookie,
+    db: DbSession,
+):
+    """Download the file for a completed job using cookie authentication.
+
+    This endpoint mirrors the API endpoint /api/v1/downloads/{job_id}/file
+    but uses cookie-based authentication instead of bearer tokens.
+    """
+    from fastapi.responses import FileResponse
+
+    # Validate job_id is a valid UUID
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid job ID format",
+        ) from None
+
+    result = await db.execute(
+        select(DownloadJob).where(
+            DownloadJob.id == job_uuid,
+            DownloadJob.user_id == current_user.id,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Download job not found",
+        )
+
+    if job.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Job is not completed. Current status: {job.status}",
+        )
+
+    if not job.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found",
+        )
+
+    # Check if download has expired
+    if job.expires_at:
+        # SQLite returns naive datetimes even for timezone-aware columns
+        # Normalize both to naive UTC for comparison to avoid TypeError
+        now_utc = datetime.now(UTC)
+        expires_at = job.expires_at
+        # Strip timezone info if present (SQLite may return naive)
+        if expires_at.tzinfo is not None:
+            expires_at = expires_at.replace(tzinfo=None)
+        now_naive = now_utc.replace(tzinfo=None)
+        if expires_at < now_naive:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail="Download link has expired",
+            )
+
+    # Validate path is within storage directory (prevents path traversal)
+    safe_path = _validate_file_path(job.file_path)
+
+    # Check file exists on disk
+    if not os.path.isfile(safe_path):
+        safe_job_id = str(job_id).replace("\r", "").replace("\n", "")
+        logger.error("File missing from disk for job %s: %s", safe_job_id, safe_path)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found on disk",
+        )
+
+    return FileResponse(
+        path=safe_path,
+        filename=job.file_name,
+        media_type="application/octet-stream",
+    )

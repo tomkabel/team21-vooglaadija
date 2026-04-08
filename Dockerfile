@@ -104,8 +104,10 @@ RUN echo '{"buildType": "https://slsa-framework.fr.dev/build-types/1.0", "invoca
 FROM python:3.12-slim AS runtime-base
 
 # Install ffmpeg for yt-dlp media merging and other dependencies
+# Also install redis-tools for migrate.sh's redis-cli commands
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    redis-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python runtime from builder (with dependencies installed)
@@ -189,8 +191,6 @@ COPY migrate.sh /app/migrate.sh
 RUN chmod +x ./entrypoint-worker.sh /app/migrate.sh && \
     chown appuser:appuser ./entrypoint-worker.sh /app/migrate.sh
 
-# Switch to non-root user
-USER appuser
-
-# Run worker
+# Run worker as root initially so entrypoint can set up storage directories;
+# the script will exec Python directly (storage is already owned by appuser in image)
 ENTRYPOINT ["./entrypoint-worker.sh"]

@@ -11,6 +11,7 @@
         <span class="font-body">{{ current_user.email }}</span>
     </div>
     <form method="POST" action="/web/logout" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn-secondary text-sm">
             Sign out
         </button>
@@ -126,7 +127,7 @@
                 <div>
                     <p class="text-xs text-gray-500 font-display font-medium uppercase tracking-wider">In Progress</p>
                     <p id="stat-in-progress" class="text-2xl font-display font-bold text-white mt-0.5">
-                        {{ jobs|selectattr('status', 'equalto', 'processing')|list|length }}
+                        {{ jobs|selectattr('status', 'in', ['processing', 'pending'])|list|length }}
                     </p>
                 </div>
             </div>
@@ -163,7 +164,7 @@
             if (statusEl) {
                 const status = statusEl.textContent.trim().toLowerCase();
                 if (status === 'completed') completed++;
-                else if (status === 'processing') inProgress++;
+                else if (status === 'processing' || status === 'pending') inProgress++;
             }
         });
 
@@ -222,7 +223,7 @@
             if (!downloadBtn) {
                 // Create download button if it doesn't exist
                 downloadBtn = document.createElement('a');
-                downloadBtn.href = `/api/v1/downloads/${data.id}/file`;
+                downloadBtn.href = `/web/downloads/${data.id}/file`;
                 downloadBtn.className = 'download-btn btn-download text-xs';
                 downloadBtn.download = '';
                 downloadBtn.target = '_blank';
@@ -277,7 +278,7 @@
                 <span class="status-badge status-${data.status}">${statusText}</span>
 
                 ${data.status === 'completed' ? `
-                <a href="/api/v1/downloads/${data.id}/file"
+                <a href="/web/downloads/${data.id}/file"
                    class="download-btn btn-download text-xs"
                    download
                    target="_blank"

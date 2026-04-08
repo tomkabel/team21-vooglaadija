@@ -183,11 +183,13 @@ async def get_download_file(
 
     # Check if download has expired
     if job.expires_at:
-        # SQLite returns naive datetimes even for timezone-aware columns
-        # Normalize both to naive UTC for comparison to avoid TypeError
+        # SQLite compatibility workaround: SQLite can return naive datetimes even for
+        # timezone-aware columns (datetime with UTC tzinfo), whereas PostgreSQL in
+        # production returns proper timezone-aware datetimes. This normalization
+        # ensures consistent comparison by stripping timezone info from both timestamps.
         now_utc = datetime.now(UTC)
         expires_at = job.expires_at
-        # Strip timezone info if present (SQLite may return naive)
+        # Strip timezone info if present (SQLite may return naive, PostgreSQL won't need this)
         if expires_at.tzinfo is not None:
             expires_at = expires_at.replace(tzinfo=None)
         now_naive = now_utc.replace(tzinfo=None)
