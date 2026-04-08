@@ -22,12 +22,14 @@ jobs:
     name: Lint with ruff
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683a
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@0c5e2b81a507ac2d3e2d5d1b6c6f2a6e7b2b6c5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -52,12 +54,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [lint]
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683a
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@0c5e2b81a507ac2d3e2d5d1b6c6f2a6e7b2b6c5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -79,12 +83,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [lint]
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683a
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@0c5e2b81a507ac2d3e2d5d1b6c6f2a6e7b2b6c5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -99,7 +105,7 @@ jobs:
         run: hatch run test:unit
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@e28ff129e5465c2c0dcc6f003fc735cb6ae0c673
         with:
           files: ./coverage.xml
           flags: unittests
@@ -114,6 +120,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [lint]
+    permissions:
+      contents: read
 
     services:
       postgres:
@@ -142,10 +150,10 @@ jobs:
           - 6379:6379
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683a
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@0c5e2b81a507ac2d3e2d5d1b6c6f2a6e7b2b6c5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -187,7 +195,7 @@ jobs:
         run: hatch run test:integration
 
       - name: Upload integration coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@e28ff129e5465c2c0dcc6f003fc735cb6ae0c673
         with:
           files: ./coverage.xml
           flags: integrationtests
@@ -202,12 +210,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [lint]
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683a
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@0c5e2b81a507ac2d3e2d5d1b6c6f2a6e7b2b6c5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -225,7 +235,7 @@ jobs:
         run: hatch run security:scan-safety
 
       - name: Upload security report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
         if: always()
         with:
           name: security-report
@@ -240,15 +250,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [type-check, unit-tests, integration-tests, security]
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683a
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5
 
       - name: Build API Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c038f3e463c
+
+      - name: Build Worker Docker image
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c038f3e463c
         with:
           context: .
           file: ./Dockerfile
