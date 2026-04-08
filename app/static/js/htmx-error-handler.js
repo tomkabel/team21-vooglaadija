@@ -51,23 +51,43 @@
                 const target = evt.detail.target;
                 if (target) {
                     // Try to parse error from response
+                    let errorMessage = null;
                     try {
                         const response = JSON.parse(xhr.responseText);
+                        // Check various error response shapes in order of specificity
                         if (response.error && response.error.message) {
-                            window.showToast(response.error.message, 'error');
+                            errorMessage = response.error.message;
+                        } else if (response.message) {
+                            errorMessage = response.message;
+                        } else if (response.error) {
+                            // response.error could be a string or object with other fields
+                            errorMessage = typeof response.error === 'string' 
+                                ? response.error 
+                                : response.error.error || response.error.detail || JSON.stringify(response.error);
+                        } else if (response.errors && Array.isArray(response.errors)) {
+                            // Field-level validation errors - join them
+                            errorMessage = response.errors.map(e => e.message || JSON.stringify(e)).join('; ');
+                        } else if (response.detail) {
+                            errorMessage = response.detail;
                         }
                     } catch (e) {
-                        // If not JSON, extract plain text from HTML response
-                        if (xhr.responseText) {
-                            const tempDiv = document.createElement('div');
-                            tempDiv.innerHTML = xhr.responseText;
-                            const plainText = tempDiv.textContent || tempDiv.innerText || '';
-                            const trimmedText = plainText.trim();
-                            if (trimmedText) {
-                                window.showToast(trimmedText, 'error');
-                            } else {
-                                window.showToast('Request failed. Please try again.', 'error');
-                            }
+                        // If not JSON, continue to HTML extraction below
+                    }
+                    
+                    if (errorMessage) {
+                        // Sanitize: strip any HTML tags that might be present
+                        const sanitized = errorMessage.replace(/<[^>]*>/g, '').trim();
+                        window.showToast(sanitized || 'Request failed. Please try again.', 'error');
+                    } else if (xhr.responseText) {
+                        // Fall back to extracting plain text from HTML response
+                        const tempDiv = document.createElement('div');
+                        tempDiv.innerHTML = xhr.responseText;
+                        const plainText = tempDiv.textContent || tempDiv.innerText || '';
+                        const trimmedText = plainText.replace(/<[^>]*>/g, '').trim();
+                        if (trimmedText) {
+                            window.showToast(trimmedText, 'error');
+                        } else {
+                            window.showToast('Request failed. Please try again.', 'error');
                         }
                     }
                 }

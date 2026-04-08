@@ -165,8 +165,9 @@ LABEL org.opencontainers.image.source="https://github.com/team21/vooglaadija" \
       io.buildkit.sbom="true" \
       io.sigstore.cosign.signature="true"
 
-# Switch to non-root user
-USER appuser
+# Keep root so entrypoint can fix ownership of mounted volumes
+# The entrypoint script will exec to appuser after setup
+USER root
 
 # Run application via entrypoint script
 ENTRYPOINT ["/app/entrypoint.sh"]

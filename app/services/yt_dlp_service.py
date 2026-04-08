@@ -62,7 +62,7 @@ try:
         sanitized_info = ydl.sanitize_info(info)
         print(json.dumps(sanitized_info))
 except Exception as e:
-    print(json.dumps({"error": str(e)}))
+    print(json.dumps({{"error": str(e)}}))
     sys.exit(1)
 """
     process = None

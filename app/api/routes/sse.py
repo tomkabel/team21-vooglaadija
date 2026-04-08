@@ -79,6 +79,9 @@ async def event_generator(
                                     "status": job.status,
                                     "file_name": job.file_name,
                                     "error": job.error,
+                                    "created_at": job.created_at.isoformat()
+                                    if job.created_at
+                                    else None,
                                 }
                             ),
                         }

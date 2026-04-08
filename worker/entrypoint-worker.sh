@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Worker entrypoint that runs migrations with lock then starts the worker
+# Fix ownership of storage directory (needed when volume is mounted from host as root)
+echo "Ensuring storage directory ownership..."
+chown -R appuser:appuser /app/storage 2>/dev/null || true
+
+# Ensure non-root user can still access everything under /app
+chown -R appuser:appuser /app
+
 echo "Running database migrations..."
 /app/migrate.sh
 
-echo "Starting worker..."
-exec python -m worker.main
+echo "Starting worker as appuser..."
+exec su -s /bin/sh appuser -c "python -m worker.main"

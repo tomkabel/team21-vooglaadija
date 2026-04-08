@@ -14,7 +14,11 @@ MIGRATION_LOCK_PX=60000  # 60 seconds in milliseconds for PX option
 
 # Helper to build redis-cli command with optional auth
 redis_cmd() {
-    redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" "$@"
+    if [ -n "$REDISCLI_AUTH" ]; then
+        redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" -a "$REDISCLI_AUTH" "$@"
+    else
+        redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" "$@"
+    fi
 }
 
 acquire_lock() {
