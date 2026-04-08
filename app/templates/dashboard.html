@@ -237,7 +237,7 @@
             if (!downloadBtn) {
                 // Create download button if it doesn't exist
                 downloadBtn = document.createElement('a');
-                downloadBtn.href = `/web/downloads/${data.id}/file`;
+                downloadBtn.href = `/api/v1/downloads/${data.id}/file`;
                 downloadBtn.className = 'download-btn btn-download text-xs';
                 downloadBtn.download = '';
                 downloadBtn.target = '_blank';
@@ -290,7 +290,7 @@
                 <span class="status-badge status-${data.status}">${statusText}</span>
 
                 ${data.status === 'completed' ? `
-                <a href="/web/downloads/${data.id}/file"
+                <a href="/api/v1/downloads/${data.id}/file"
                    class="download-btn btn-download text-xs"
                    download
                    target="_blank"

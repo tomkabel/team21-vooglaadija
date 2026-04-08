@@ -84,7 +84,12 @@ except Exception as e:
             # Kill the entire process group to ensure all descendants (e.g., ffmpeg) are terminated
             try:
                 os.killpg(process.pid, signal.SIGTERM)
-                await process.wait()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    # Escalate to SIGKILL if SIGTERM didn't work within 5 seconds
+                    os.killpg(process.pid, signal.SIGKILL)
+                    await asyncio.wait_for(process.wait(), timeout=5)
             except (ProcessLookupError, OSError):
                 pass  # Process already terminated
             raise TimeoutError(f"yt-dlp extraction timed out after {YT_DLP_TIMEOUT}s") from e
@@ -110,7 +115,11 @@ except Exception as e:
         if process and process.returncode is None:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
-                await process.wait()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    # Process is stuck, but we've already sent SIGKILL, so just continue
+                    pass
             except (ProcessLookupError, OSError):
                 pass  # Process already terminated
 

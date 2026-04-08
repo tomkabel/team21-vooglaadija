@@ -28,16 +28,6 @@ x-common-env: &common-env
   FEATURE_METRICS_ENABLED: ${FEATURE_METRICS_ENABLED:-true}
   FEATURE_TRACING_ENABLED: ${FEATURE_TRACING_ENABLED:-true}
 
-x-resource-limits: &resource-limits
-  # Resource limits - adjust based on actual usage profiling
-  deploy:
-    resources:
-      limits:
-        cpus: "1.0"
-        memory: 512M
-      reservations:
-        cpus: "0.25"
-        memory: 128M
 
 x-security-context: &security-context
   # Security context - run as non-root, read-only root filesystem
@@ -168,7 +158,7 @@ services:
         condition: service_healthy
     <<: *resources-security
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8081/health || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request, sys; urllib.request.urlopen('http://localhost:8081/health'); sys.exit(0)\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -280,7 +270,7 @@ services:
       - ./infra/otel-collector-config.yml:/etc/otel-collector-config.yml:ro
     ports:
       - "4317:4317"  # OTLP gRPC
-      - "55681:55681"  # Web UI (if enabled)
+      - "4318:4318"  # OTLP HTTP
     security_opt:
       - no-new-privileges=true
     logging:
@@ -329,7 +319,7 @@ services:
     container_name: swagger-ui
     restart: unless-stopped
     environment:
-      URL: http://api:8000/openapi.json
+      URL: http://localhost/openapi.json
     ports:
       - "8081:8080"
     # swagger-ui doesn't need resource limits or security context restrictions

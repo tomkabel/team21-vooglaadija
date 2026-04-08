@@ -237,6 +237,7 @@ class TestExtractMediaUrl:
                 "app.services.yt_dlp_service.asyncio.create_subprocess_exec", mock_subprocess_exec
             ),
             patch("app.services.yt_dlp_service.asyncio.wait_for", mock_wait_for),
+            patch("app.services.yt_dlp_service.os.killpg"),
         ):
             with pytest.raises(asyncio.TimeoutError):
                 await extract_media_url(sample_url, str(temp_storage_path))

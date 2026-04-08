@@ -258,7 +258,7 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
     session_factory = get_async_session_factory()
     synced = 0
 
-    # Phase 1: Claim entries and collect their IDs (brief DB lock)
+    # Phase 1: Claim entries, push to Redis, and mark as enqueued (DB lock held throughout)
     async with session_factory() as db:
         claim_result = await db.execute(
             select(Outbox)
@@ -272,34 +272,42 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
         if not entries:
             return 0
 
-        # Collect entry data before releasing lock
-        entry_ids = [(entry.id, entry.job_id) for entry in entries]
+        # Phase 2: Push to Redis and mark as enqueued (DB lock held)
+        now = datetime.now(UTC)
+        for entry in entries:
+            try:
+                if entry.event_type == "retry_scheduled":
+                    # Parse payload to get next_retry_at and add to retry_queue
+                    payload_data = json.loads(entry.payload) if entry.payload else {}
+                    next_retry_at = payload_data.get("next_retry_at")
+                    if next_retry_at:
+                        # Convert to UNIX timestamp
+                        retry_timestamp = time.mktime(
+                            datetime.fromisoformat(next_retry_at).timetuple()
+                        )
+                        await redis_client.zadd("retry_queue", {str(entry.job_id): retry_timestamp})
+                    else:
+                        logger.error(
+                            "Missing next_retry_at in retry_scheduled payload for job %s",
+                            entry.job_id,
+                        )
+                        continue
+                else:
+                    # Default: push to download_queue
+                    await redis_client.lpush("download_queue", str(entry.job_id))
 
-        # Release DB lock immediately - don't hold during Redis I/O
-        await db.rollback()
-
-    # Phase 2: Push to Redis (no DB lock held)
-    successfully_enqueued_ids = []
-    for entry_id, job_id in entry_ids:
-        try:
-            await redis_client.lpush("download_queue", str(job_id))
-            successfully_enqueued_ids.append(entry_id)
-            synced += 1
-        except Exception as e:
-            logger.error("Failed to enqueue job %s from outbox: %s", job_id, e)
-            # Don't change status - entry stays "pending" for next sync cycle
-
-    # Phase 3: Mark successfully enqueued entries (new DB session)
-    if successfully_enqueued_ids:
-        async with session_factory() as db:
-            now = datetime.now(UTC)
-            for entry_id in successfully_enqueued_ids:
+                # Mark as enqueued
                 await db.execute(
                     update(Outbox)
-                    .where(Outbox.id == entry_id)
+                    .where(Outbox.id == entry.id)
                     .values(status="enqueued", processed_at=now)
                 )
-            await db.commit()
+                synced += 1
+            except Exception as e:
+                logger.error("Failed to enqueue job %s from outbox: %s", entry.job_id, e)
+                # Don't change status - entry stays "pending" for next sync cycle
+
+        await db.commit()
 
     if synced > 0:
         logger.info("Synced %d outbox entries to Redis queue", synced)

@@ -19,7 +19,7 @@ POLL_INTERVAL_SECONDS = 15
 
 async def event_generator(
     request: Request,
-    db_session_factory,
+    session_factory,
     user_id: uuid.UUID,
 ):
     """SSE event generator that polls for job status changes.
@@ -37,9 +37,7 @@ async def event_generator(
             if await request.is_disconnected():
                 break
 
-            # db_session_factory is a sessionmaker; the first call () creates an instance,
-            # the second call () on that instance starts an actual async session
-            async with db_session_factory()() as db:
+            async with session_factory() as db:
                 # Order by created_at for initial load, updated_at for subsequent polls
                 order_by = (
                     DownloadJob.updated_at.desc()

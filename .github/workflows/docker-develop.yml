@@ -37,7 +37,7 @@ jobs:
           version=$(grep -E '^version = ' pyproject.toml | cut -d'"' -f2)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push Docker image
+      - name: Build and push API Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -48,5 +48,19 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:develop
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-develop
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Worker Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: worker
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-worker:develop
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-worker:${{ steps.version.outputs.version }}-develop
           cache-from: type=gha
           cache-to: type=gha,mode=max
