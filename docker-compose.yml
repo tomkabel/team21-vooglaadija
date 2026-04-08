@@ -225,6 +225,8 @@ services:
       - "appendonly.aof"
     volumes:
       - redis_data:/data:Z
+    environment:
+      REDISCLI_AUTH: "${REDIS_PASSWORD}"
     security_opt:
       - no-new-privileges=true
     logging:
@@ -247,8 +249,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-      env:
-        - REDISCLI_AUTH=${REDIS_PASSWORD}
     networks:
       ytprocessor-network:
         aliases:
@@ -288,15 +288,6 @@ services:
     ports:
       - "8081:8080"
     # swagger-ui doesn't need resource limits or security context restrictions
-    # Only apply logging and basic deploy limits
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-        reservations:
-          cpus: "0.1"
-          memory: 64M
     logging:
       driver: "json-file"
       options:

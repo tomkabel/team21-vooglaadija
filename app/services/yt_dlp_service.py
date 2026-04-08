@@ -1,28 +1,15 @@
 import asyncio
-import atexit
+import json
 import logging
 import os
 import re
+import sys
 import uuid
-from concurrent.futures import ThreadPoolExecutor
-
-import yt_dlp
 
 logger = logging.getLogger(__name__)
 
-# Shared thread pool for yt-dlp operations (avoids per-request leak)
-_executor = ThreadPoolExecutor(max_workers=4)
-
 # Timeout for yt-dlp operations in seconds (5 minutes)
 YT_DLP_TIMEOUT = 300
-
-
-def _shutdown_executor():
-    """Gracefully shut down the thread pool on process exit."""
-    _executor.shutdown(wait=False, cancel_futures=True)
-
-
-atexit.register(_shutdown_executor)
 
 
 class StorageError(Exception):
@@ -40,20 +27,78 @@ def _sanitize_title(title: str) -> str:
     return sanitized or "download"
 
 
-def _extract_sync(url: str, output_template: str) -> dict:
-    """Synchronous wrapper for yt_dlp.extract_info with timeout enforcement."""
-    ydl_opts = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "outtmpl": output_template,
-        "quiet": True,
-        "no_warnings": True,
-        "socket_timeout": 60,
-        "retries": 3,
-        # Prevent yt-dlp from hanging indefinitely
-        "extractor_args": {"youtube": {"player_client": ["web", "ios"]}},
-    }
+async def _extract_via_subprocess(url: str, output_template: str) -> dict:
+    """
+    Extract media info via subprocess that can be forcibly killed on timeout.
+
+    This runs yt-dlp as a separate OS process so that on TimeoutError,
+    process.kill() can terminate it immediately rather than leaving a thread running.
+    """
+    # Create a temporary Python script that runs yt-dlp extraction
+    # We write it to a temp file to avoid command-line quoting issues with the URL
+    extract_script = f"""
+import sys
+import json
+import yt_dlp
+
+url = {json.dumps(url)}
+output_template = {json.dumps(output_template)}
+
+ydl_opts = {{
+    "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+    "outtmpl": output_template,
+    "quiet": True,
+    "no_warnings": True,
+    "socket_timeout": 60,
+    "retries": 3,
+    "extractor_args": {{"youtube": {{"player_client": ["web", "ios"]}}}},
+}}
+
+try:
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        return ydl.extract_info(url, download=True)  # type: ignore[no-any-return]
+        info = ydl.extract_info(url, download=True)
+        print(json.dumps(info))
+except Exception as e:
+    print(json.dumps({{"error": str(e)}}))
+    sys.exit(1)
+"""
+    process = None
+    try:
+        # Use asyncio.create_subprocess_exec to run the extraction
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            extract_script,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=YT_DLP_TIMEOUT)
+        except asyncio.TimeoutError:
+            # Kill the process and wait for it to terminate
+            process.kill()
+            await process.wait()
+            raise asyncio.TimeoutError(f"yt-dlp extraction timed out after {YT_DLP_TIMEOUT}s")
+
+        if process.returncode != 0:
+            error_msg = stderr.decode() if stderr else "Unknown error"
+            raise RuntimeError(f"yt-dlp failed: {error_msg}")
+
+        result = json.loads(stdout.decode())
+        if "error" in result:
+            raise RuntimeError(f"yt-dlp extraction failed: {result['error']}")
+
+        return result
+
+    finally:
+        # Ensure process is fully cleaned up
+        if process and process.returncode is None:
+            try:
+                process.kill()
+                await process.wait()
+            except Exception:
+                pass
 
 
 def _validate_path_within(base_path: str, target_path: str) -> str:
@@ -97,12 +142,8 @@ async def extract_media_url(url: str, storage_path: str) -> tuple[str, str]:
     # Use ONLY the UUID for the filesystem path — never the title
     output_template = os.path.join(download_dir, f"{file_id}.%(ext)s")
 
-    loop = asyncio.get_running_loop()
-    # Run with timeout to prevent thread pool exhaustion from hung yt-dlp calls
-    info = await asyncio.wait_for(
-        loop.run_in_executor(_executor, _extract_sync, url, output_template),
-        timeout=YT_DLP_TIMEOUT,
-    )
+    # Run via subprocess so it can be killed on timeout
+    info = await _extract_via_subprocess(url, output_template)
 
     title = info.get("title") or file_id
     ext = info.get("ext") or "mp4"

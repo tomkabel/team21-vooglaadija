@@ -45,23 +45,26 @@ WORKDIR /app
 # Install pnpm for package management (version pinned in package.json packageManager field)
 RUN corepack enable && corepack prepare pnpm@10.33.0@sha512.10568bb4a6afb58c9eb3630da90cc9516417abebd3fabbe6739f0ae795728da1491e9db5a544c76ad8eb7570f5c4bb3d6c637b2cb41bfdcdb47fa823c8649319 --activate
 
-# Install frontend dependencies using pnpm (lockfile provides supply-chain integrity)
-COPY frontend/package*.json pnpm-lock.yaml ./
+# Copy frontend package files and pnpm lockfile to frontend subdirectory
+COPY frontend/package*.json pnpm-lock.yaml ./frontend/
+
+# Install frontend dependencies using pnpm from the frontend directory
+WORKDIR /app/frontend
 RUN pnpm install --frozen-lockfile
 
 # Copy Tailwind config
-COPY frontend/tailwind.config.js ./frontend/tailwind.config.js
-COPY frontend/postcss.config.js ./frontend/postcss.config.js
-COPY frontend/.browserslistrc ./frontend/.browserslistrc
+COPY frontend/tailwind.config.js ./tailwind.config.js
+COPY frontend/postcss.config.js ./postcss.config.js
+COPY frontend/.browserslistrc ./.browserslistrc
 
 # Copy source templates for Tailwind scanning
 COPY app/templates ./app/templates
 
 # Copy CSS source
-COPY frontend/css ./frontend/css
+COPY frontend/css ./css
 
 # Build Tailwind CSS
-RUN cd frontend && npm run build
+RUN pnpm run build
 
 # ============================================
 # Stage 4: Application Builder
@@ -99,6 +102,11 @@ RUN echo '{"buildType": "https://slsa-framework.fr.dev/build-types/1.0", "invoca
 # Use python:slim as base for runtime (distroless lacks ffmpeg dependencies)
 FROM python:3.12-slim AS runtime-base
 
+# Install ffmpeg for yt-dlp media merging and other dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy Python runtime from builder (with dependencies installed)
 COPY --from=app-builder /opt/venv /opt/venv
 
@@ -122,13 +130,6 @@ RUN groupadd -r appuser -g 1000 && \
 # Create storage directory and set ownership
 RUN mkdir -p /app/storage && \
     chown -R appuser:appuser /app /opt/venv
-
-# Note: ffmpeg is not copied as it's not required for basic operation
-# yt-dlp will work without ffmpeg for basic downloading (some post-processing features limited)
-# For production use with ffmpeg post-processing, consider:
-# 1. Using a distroless ffmpeg variant from Chainguard
-# 2. Building ffmpeg statically and adding it
-# 3. Use cosign to verify ffmpeg binary
 
 # ============================================
 # Stage 6: API Service
@@ -177,9 +178,9 @@ ENV PYTHONPATH=/app \
     PATH=/opt/venv/bin:$PATH \
     STORAGE_PATH=/app/storage
 
-# Health check - Python-based check using worker's health server on port 8081
+# Health check - HTTP check using worker's health endpoint on port 8081
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ["python", "-c", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8081)); s.close()"]
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=5)"]
 
 # Copy worker entrypoint
 COPY --from=app-builder /app/worker/entrypoint-worker.sh ./entrypoint-worker.sh

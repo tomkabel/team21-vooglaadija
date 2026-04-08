@@ -237,6 +237,7 @@ async def retry_download(
     job.retry_count = 0
     job.next_retry_at = None
     job.error = None
+    job.completed_at = None
 
     await write_job_to_outbox(db, job.id)
     await db.commit()

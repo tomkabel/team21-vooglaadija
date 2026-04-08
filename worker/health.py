@@ -76,10 +76,18 @@ def write_health_sync() -> bool:
         "pid": os.getpid(),
     }
 
-    r = redis.from_url(redis_url)
+    r = redis.from_url(
+        redis_url,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry_on_timeout=False,
+    )
     try:
         r.setex(f"worker:health:{worker_id}", 30, json.dumps(health_data))
         return True
+    except (redis.exceptions.TimeoutError, redis.exceptions.ConnectionError) as e:
+        logger.error("Failed to write sync health (timeout/connection): %s", e)
+        return False
     except Exception as e:
         logger.error("Failed to write sync health: %s", e)
         return False
@@ -90,6 +98,10 @@ def write_health_sync() -> bool:
 async def write_health_async() -> bool:
     """Write worker health (async version for use in worker loop)."""
     import redis.asyncio as aioredis
+    from redis.exceptions import (
+        TimeoutError as SyncTimeoutError,
+        ConnectionError as SyncConnectionError,
+    )
 
     redis_url = get_redis_url()
     worker_id = get_worker_id()
@@ -101,10 +113,22 @@ async def write_health_async() -> bool:
         "pid": os.getpid(),
     }
 
-    client = aioredis.from_url(redis_url, decode_responses=True)
+    client = aioredis.from_url(
+        redis_url,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry_on_timeout=False,
+    )
     try:
         await client.setex(f"worker:health:{worker_id}", 30, json.dumps(health_data))
         return True
+    except (TimeoutError, SyncTimeoutError, SyncConnectionError) as e:
+        logger.error("Failed to write async health (timeout/connection): %s", e)
+        return False
+    except Exception as e:
+        logger.error("Failed to write async health: %s", e)
+        return False
     finally:
         # Always close the Redis client
         if hasattr(client, "aclose"):
@@ -201,6 +225,10 @@ def stop_health_server():
     global _health_server
     if _health_server:
         _health_server.shutdown()
+        try:
+            _health_server.server_close()
+        except Exception as e:
+            logger.warning("Error closing health server socket: %s", e)
         _health_server = None
 
 

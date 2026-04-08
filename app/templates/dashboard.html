@@ -109,7 +109,7 @@
                 </div>
                 <div>
                     <p class="text-xs text-gray-500 font-display font-medium uppercase tracking-wider">Completed</p>
-                    <p class="text-2xl font-display font-bold text-white mt-0.5">
+                    <p id="stat-completed" class="text-2xl font-display font-bold text-white mt-0.5">
                         {{ jobs|selectattr('status', 'equalto', 'completed')|list|length }}
                     </p>
                 </div>
@@ -125,7 +125,7 @@
                 </div>
                 <div>
                     <p class="text-xs text-gray-500 font-display font-medium uppercase tracking-wider">In Progress</p>
-                    <p class="text-2xl font-display font-bold text-white mt-0.5">
+                    <p id="stat-in-progress" class="text-2xl font-display font-bold text-white mt-0.5">
                         {{ jobs|selectattr('status', 'equalto', 'processing')|list|length }}
                     </p>
                 </div>
@@ -141,7 +141,7 @@
                 </div>
                 <div>
                     <p class="text-xs text-gray-500 font-display font-medium uppercase tracking-wider">Total</p>
-                    <p class="text-2xl font-display font-bold text-white mt-0.5">
+                    <p id="stat-total" class="text-2xl font-display font-bold text-white mt-0.5">
                         {{ jobs|length }}
                     </p>
                 </div>
@@ -151,6 +151,31 @@
 </div>
 
 <script nonce="{{ nonce }}">
+    // Update stats by counting current job rows
+    function updateStats() {
+        const rows = document.querySelectorAll('.download-row');
+        let completed = 0;
+        let inProgress = 0;
+        let total = rows.length;
+
+        rows.forEach(row => {
+            const statusEl = row.querySelector('.status-badge');
+            if (statusEl) {
+                const status = statusEl.textContent.toLowerCase();
+                if (status === 'completed') completed++;
+                else if (status === 'processing' || status === 'pending') inProgress++;
+            }
+        });
+
+        const completedEl = document.getElementById('stat-completed');
+        const inProgressEl = document.getElementById('stat-in-progress');
+        const totalEl = document.getElementById('stat-total');
+
+        if (completedEl) completedEl.textContent = completed;
+        if (inProgressEl) inProgressEl.textContent = inProgress;
+        if (totalEl) totalEl.textContent = total;
+    }
+
     document.body.addEventListener('sse:job_update', function(evt) {
         const data = JSON.parse(evt.detail.data);
 
@@ -170,6 +195,9 @@
         }
 
         row.classList.add('fade-in');
+
+        // Update stats after any job change
+        updateStats();
     });
 
     function createDownloadRow(data) {
@@ -206,7 +234,9 @@
                     Save
                 `;
                 downloadBtn.style.display = 'inline-flex';
-                row.querySelector('.flex.items-center.gap-3').appendChild(downloadBtn);
+                // Append to the last .flex.items-center.gap-3 (actions column, not thumbnail)
+                const actionsContainers = row.querySelectorAll('.flex.items-center.gap-3');
+                actionsContainers[actionsContainers.length - 1].appendChild(downloadBtn);
             } else {
                 downloadBtn.style.display = 'inline-flex';
             }
