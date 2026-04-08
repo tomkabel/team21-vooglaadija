@@ -3,8 +3,8 @@
 # Resource Limits, Security, Observability, GitOps Ready
 # ============================================
 
-x-common-env: &common-env
-  # Database components (app/config.py constructs URL with proper encoding)
+x-common-env:
+  &common-env # Database components (app/config.py constructs URL with proper encoding)
   DB_USER: ${DB_USER:-postgres}
   DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
   DB_NAME: ${DB_NAME:-ytprocessor}
@@ -28,21 +28,20 @@ x-common-env: &common-env
   FEATURE_METRICS_ENABLED: ${FEATURE_METRICS_ENABLED:-true}
   FEATURE_TRACING_ENABLED: ${FEATURE_TRACING_ENABLED:-true}
 
-
-x-security-context: &security-context
-  # Security context - run as non-root, read-only root filesystem
+x-security-context:
+  &security-context # Security context - run as non-root, read-only root filesystem
   read_only: true
   tmpfs:
     - /tmp
     - /var/run
     - /var/cache
   # Note: Storage and other writable paths need to be mounted as volumes
-  user: "1000:1000"  # appuser:appuser
+  user: "1000:1000" # appuser:appuser
   # Drop all privileges and add only necessary ones
   cap_drop:
     - ALL
   cap_add:
-    - CHOWN  # For entrypoint scripts that might need to chown volumes
+    - CHOWN # For entrypoint scripts that might need to chown volumes
     - SETGID
     - SETUID
   # Additional security - use security_opt for no-new-privileges
@@ -51,7 +50,6 @@ x-security-context: &security-context
   # AppArmor and Seccomp profiles (if available)
   # apparmor: docker-default
   # seccomp: runtime/default
-
 
 x-resources-security: &resources-security
   deploy:
@@ -96,7 +94,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - storage:/app/storage:Z  # SELinux label
+      - storage:/app/storage:Z # SELinux label
       # Config could be mounted as read-only if needed
       # - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
@@ -106,7 +104,13 @@ services:
         condition: service_healthy
     <<: *resources-security
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8000)); s.close()"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8000)); s.close()",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -143,7 +147,11 @@ services:
         condition: service_healthy
     <<: *resources-security
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request, sys; urllib.request.urlopen('http://localhost:8081/health'); sys.exit(0)\" || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import urllib.request, sys; urllib.request.urlopen(''http://localhost:8081/health''); sys.exit(0)" || exit 1',
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -160,7 +168,7 @@ services:
           - worker
 
   db:
-    image: postgres:15-alpine  # Removed problematic digest for now
+    image: postgres:15-alpine # Removed problematic digest for now
     container_name: ytprocessor-db
     restart: unless-stopped
     environment:
@@ -171,7 +179,12 @@ services:
       POSTGRES_INITDB_ARGS: "--data-checksums"
     volumes:
       - postgres_data:/var/lib/postgresql/data:Z
-    logging: *logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
     # Database typically needs more resources
     # Note: PostgreSQL must run as its default user, not overridden by security-context
     deploy:
@@ -183,7 +196,11 @@ services:
           cpus: "0.5"
           memory: 256M
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-ytprocessor}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-ytprocessor}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -211,7 +228,7 @@ services:
       - --maxmemory-policy
       - allkeys-lru
       - --save
-      - ""  # Disable RDB snapshots (we rely on AOF)
+      - "" # Disable RDB snapshots (we rely on AOF)
       - --appendfilename
       - "appendonly.aof"
     volumes:
@@ -254,8 +271,8 @@ services:
     volumes:
       - ./infra/otel-collector-config.yml:/etc/otel-collector-config.yml:ro
     ports:
-      - "4317:4317"  # OTLP gRPC
-      - "4318:4318"  # OTLP HTTP
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
     security_opt:
       - no-new-privileges=true
     logging:
@@ -282,7 +299,8 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:80/health || exit 1"]
+      test:
+        ["CMD-SHELL", "wget -q --spider http://localhost:80/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -300,7 +318,7 @@ services:
 
   # Optional: API documentation (for development)
   swagger-ui:
-    image: swaggerapi/swagger-ui:v5.1.0  # Pinned version for stability
+    image: swaggerapi/swagger-ui:v5.1.0 # Pinned version for stability
     container_name: swagger-ui
     restart: unless-stopped
     environment:
