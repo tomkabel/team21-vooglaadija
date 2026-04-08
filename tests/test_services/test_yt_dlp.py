@@ -430,3 +430,43 @@ class TestExtractViaSubprocessTimeoutHandling:
         sigterm_idx = killed_with.index(_signal.SIGTERM)
         sigkill_idx = killed_with.index(_signal.SIGKILL)
         assert sigterm_idx < sigkill_idx, "SIGTERM must be sent before SIGKILL"
+
+    @pytest.mark.asyncio
+    async def test_process_lookup_error_on_killpg_is_handled(self) -> None:
+        """When os.killpg raises ProcessLookupError, it must be silently handled.
+
+        This can happen if the process group already terminated between the
+        timeout detection and the kill attempt.
+        """
+        from app.services.yt_dlp_service import _extract_via_subprocess
+
+        call_count = 0
+
+        async def mock_wait_for(coro, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise TimeoutError("extraction timed out")
+            return await asyncio.wait_for(coro, timeout=timeout)
+
+        mock_process = AsyncMock()
+        mock_process.communicate = AsyncMock(return_value=(b'{"title": "T", "ext": "mp4"}', b""))
+        mock_process.returncode = 0
+        mock_process.pid = 12345
+
+        async def mock_subprocess_exec(*args, **kwargs):
+            return mock_process
+
+        def mock_killpg_raises(pgid, sig):
+            raise ProcessLookupError(f"Process group {pgid} not found")
+
+        with (
+            patch(
+                "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
+                mock_subprocess_exec,
+            ),
+            patch("app.services.yt_dlp_service.asyncio.wait_for", mock_wait_for),
+            patch("app.services.yt_dlp_service.os.killpg", mock_killpg_raises),
+        ):
+            with pytest.raises(TimeoutError):
+                await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
