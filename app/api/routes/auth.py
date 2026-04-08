@@ -18,6 +18,7 @@ from app.auth import (
 )
 from app.config import settings
 from app.models.user import User
+from app.schemas.error import ErrorCode, error_response_doc, success_response_doc
 from app.schemas.token import Token, TokenRefresh
 from app.schemas.user import UserCreate, UserResponse
 from app.services.auth_service import hash_password, verify_password
@@ -25,7 +26,41 @@ from app.services.auth_service import hash_password, verify_password
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register a new user",
+    description="Create a user account with email and password.",
+    responses={
+        201: success_response_doc(
+            "User created successfully",
+            {"id": "f47ac10b-58cc-4372-a567-0e02b2c3d479", "email": "user@example.com"},
+        ),
+        409: error_response_doc(
+            "Email already registered", ErrorCode.RESOURCE_CONFLICT, "Email already registered"
+        ),
+        422: error_response_doc(
+            "Validation error",
+            ErrorCode.VALIDATION_ERROR,
+            "Request validation failed",
+            details={
+                "validation_errors": [
+                    {
+                        "field": "password",
+                        "message": "Password must be at least 8 characters",
+                        "type": "value_error",
+                    },
+                ],
+            },
+        ),
+        429: error_response_doc(
+            "Rate limit exceeded",
+            ErrorCode.RATE_LIMIT_EXCEEDED,
+            "Rate limit exceeded. Try again in 42 seconds.",
+        ),
+    },
+)
 @limiter.limit("5/minute")
 async def register(
     request: Request,
@@ -51,7 +86,46 @@ async def register(
     return UserResponse(id=user.id, email=user.email)
 
 
-@router.post("/login", response_model=Token)
+@router.post(
+    "/login",
+    response_model=Token,
+    summary="Authenticate user",
+    description="Authenticate with email and password and receive access/refresh JWT tokens.",
+    responses={
+        200: success_response_doc(
+            "Authentication successful",
+            {
+                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.access",
+                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.refresh",
+                "token_type": "bearer",
+            },
+        ),
+        401: error_response_doc(
+            "Invalid credentials or inactive user",
+            ErrorCode.UNAUTHORIZED,
+            "Incorrect email or password",
+        ),
+        422: error_response_doc(
+            "Validation error",
+            ErrorCode.VALIDATION_ERROR,
+            "Request validation failed",
+            details={
+                "validation_errors": [
+                    {
+                        "field": "email",
+                        "message": "value is not a valid email address",
+                        "type": "value_error",
+                    },
+                ],
+            },
+        ),
+        429: error_response_doc(
+            "Rate limit exceeded",
+            ErrorCode.RATE_LIMIT_EXCEEDED,
+            "Rate limit exceeded. Try again in 42 seconds.",
+        ),
+    },
+)
 @limiter.limit("5/minute")
 async def login(
     request: Request,
@@ -89,7 +163,42 @@ async def login(
     )
 
 
-@router.post("/refresh", response_model=Token)
+@router.post(
+    "/refresh",
+    response_model=Token,
+    summary="Refresh access token",
+    description="Exchange a valid refresh token for a new access token and refresh token pair.",
+    responses={
+        200: success_response_doc(
+            "Token refreshed successfully",
+            {
+                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.newaccess",
+                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.newrefresh",
+                "token_type": "bearer",
+            },
+        ),
+        401: error_response_doc(
+            "Invalid or expired refresh token",
+            ErrorCode.UNAUTHORIZED,
+            "Invalid or expired refresh token",
+        ),
+        422: error_response_doc(
+            "Validation error",
+            ErrorCode.VALIDATION_ERROR,
+            "Request validation failed",
+            details={
+                "validation_errors": [
+                    {"field": "refresh_token", "message": "Field required", "type": "missing"},
+                ],
+            },
+        ),
+        429: error_response_doc(
+            "Rate limit exceeded",
+            ErrorCode.RATE_LIMIT_EXCEEDED,
+            "Rate limit exceeded. Try again in 42 seconds.",
+        ),
+    },
+)
 @limiter.limit("5/minute")
 async def refresh(
     request: Request,
@@ -167,7 +276,21 @@ async def refresh(
     )
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    summary="Get current user",
+    description="Return the authenticated user's profile based on bearer access token.",
+    responses={
+        200: success_response_doc(
+            "Current user profile",
+            {"id": "f47ac10b-58cc-4372-a567-0e02b2c3d479", "email": "user@example.com"},
+        ),
+        401: error_response_doc(
+            "Unauthorized", ErrorCode.UNAUTHORIZED, "Could not validate credentials"
+        ),
+    },
+)
 async def me(current_user: CurrentUser) -> UserResponse:
     return UserResponse(id=current_user.id, email=current_user.email)
 
