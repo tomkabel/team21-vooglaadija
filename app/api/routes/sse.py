@@ -50,13 +50,13 @@ async def event_generator(
                     )
                     # Filter: (updated_at > last_updated_at) OR (updated_at = last_updated_at AND id > last_id)
                     from sqlalchemy import and_, or_
+
                     query = query.where(
                         or_(
                             DownloadJob.updated_at > last_updated_at,
                             and_(
-                                DownloadJob.updated_at == last_updated_at,
-                                DownloadJob.id > last_id
-                            )
+                                DownloadJob.updated_at == last_updated_at, DownloadJob.id > last_id
+                            ),
                         )
                     )
                 else:
