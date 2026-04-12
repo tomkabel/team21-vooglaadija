@@ -5,7 +5,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
 
-# Solo importamos lo que sabemos con certeza que existe en el proyecto
+# We only import what we know for sure exists in the project.
 from app.schemas.error import ErrorCode, error_response_doc, success_response_doc
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -33,7 +33,7 @@ async def health_check() -> dict:
     db_url = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:light_sound@ytprocessor-db:5432/ytprocessor")
     if db_url:
         try:
-            # Creamos un motor temporal solo para revisar el pulso
+            # We created a temporary engine just to check the pulse
             engine = create_async_engine(db_url)
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
