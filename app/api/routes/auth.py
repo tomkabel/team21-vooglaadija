@@ -22,6 +22,7 @@ from app.schemas.error import ErrorCode, error_response_doc, success_response_do
 from app.schemas.token import Token, TokenRefresh
 from app.schemas.user import UserCreate, UserResponse
 from app.services.auth_service import hash_password, verify_password
+from app.utils.username import default_username_from_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -69,7 +70,7 @@ async def register(
 ) -> UserResponse:
     user = User(
         id=uuid4(),
-        username=user_data.email.split("@")[0][:64] or "user",
+        username=default_username_from_email(user_data.email),
         email=user_data.email,
         password_hash=hash_password(user_data.password),
     )
