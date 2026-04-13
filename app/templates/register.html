@@ -161,6 +161,13 @@
                 };
             }
 
+            if (!hasMinimumLength) {
+                return {
+                    levelClass: "is-weak",
+                    label: "Weak password"
+                };
+            }
+
             if (checksPassed === 3) {
                 return {
                     levelClass: "is-strong",
