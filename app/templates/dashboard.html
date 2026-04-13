@@ -10,6 +10,9 @@
         </svg>
         <span class="font-body">{{ current_user.email }}</span>
     </div>
+    <a href="/web/settings" class="btn-secondary text-sm">
+        Settings
+    </a>
     <form method="POST" action="/web/logout" class="inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn-secondary text-sm">
@@ -24,7 +27,7 @@
     <!-- Welcome Header -->
     <div class="mb-10 slide-up opacity-0-initial animate-fill-forwards">
         <h1 class="text-3xl sm:text-4xl font-display font-bold text-white tracking-tight">
-            Welcome back, <span class="text-gradient">{{ current_user.email.split('@')[0] }}</span>
+            Welcome back, <span class="text-gradient">{{ current_user.username }}</span>
         </h1>
         <p class="mt-2 text-gray-500 font-body text-lg">Manage your YouTube downloads</p>
     </div>

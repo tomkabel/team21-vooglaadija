@@ -69,6 +69,7 @@ async def register(
 ) -> UserResponse:
     user = User(
         id=uuid4(),
+        username=user_data.email.split("@")[0][:64] or "user",
         email=user_data.email,
         password_hash=hash_password(user_data.password),
     )
