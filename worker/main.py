@@ -58,23 +58,38 @@ async def cleanup_expired_jobs() -> int:
                     try:
                         os.remove(resolved_path)
                         logger.info("Cleaned up expired file: %s", resolved_path)
-                        # Only delete DB row after successful file removal
-                        await db.delete(job)
-                        cleanup_count += 1
                     except OSError as e:
                         logger.warning("Failed to delete expired file %s: %s", job.file_path, e)
-                        # Don't delete DB row - cleanup will retry next interval
+                        # Mark job to retry deletion later by not deleting DB row
+                        continue  # Skip DB deletion but continue to next job
+                    # Only delete DB row after successful file removal (or file didn't exist)
+                    try:
+                        await db.delete(job)
+                        cleanup_count += 1
+                    except Exception as db_err:
+                        logger.warning("Failed to delete DB row for job %s: %s", job.id, db_err)
                 elif resolved_path.startswith(safe_dir):
                     # File already deleted, just remove DB row
                     logger.info("File already deleted for job %s: %s", job.id, job.file_path)
-                    await db.delete(job)
-                    cleanup_count += 1
+                    try:
+                        await db.delete(job)
+                        cleanup_count += 1
+                    except Exception as db_err:
+                        logger.warning("Failed to delete DB row for job %s: %s", job.id, db_err)
                 else:
                     logger.warning(
                         "Skipping path traversal attempt for job %s: %s", job.id, job.file_path
                     )
+            else:
+                # No file_path, just delete the DB row
+                try:
+                    await db.delete(job)
+                    cleanup_count += 1
+                except Exception as db_err:
+                    logger.warning("Failed to delete DB row for job %s: %s", job.id, db_err)
 
-            await db.commit()
+        # Batch commit after processing all jobs
+        await db.commit()
 
         if cleanup_count > 0:
             logger.info("Cleaned up %d expired jobs", cleanup_count)
@@ -145,9 +160,13 @@ async def main() -> None:
                     redis.call('LPUSH', KEYS[2], job_id)
                 end
             end
-            return due_jobs
+            return #due_jobs
             """
-            await redis_client.eval(lua_script, 2, "retry_queue", "download_queue", now_ts)
+            moved_count = await redis_client.eval(
+                lua_script, 2, "retry_queue", "download_queue", now_ts
+            )
+            if moved_count and moved_count > 0:
+                logger.info("Moved %d due retry jobs to download queue", moved_count)
 
             # Use BRPOP with timeout for efficient blocking — no busy-waiting
             # Pass the job_id directly to process_next_job to avoid race condition

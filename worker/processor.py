@@ -139,7 +139,7 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
 
             update_worker_state(status="running", current_job_started_at=None)
 
-            # Fetch job for retry/error handling
+            # Re-fetch job for error handling (job may be stale after long operations)
             result = await db.execute(select(DownloadJob).where(DownloadJob.id == job_id))
             job = result.scalar_one_or_none()
 
@@ -160,11 +160,11 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
                         completed_at=datetime.now(UTC),
                     )
                 )
+                JOBS_COMPLETED.labels(status="failed").inc()
                 if not is_format_error:
                     logger.warning(
                         "Job %s failed permanently after %d retries", job_id, job.max_retries
                     )
-                JOBS_COMPLETED.labels(status="failed").inc()
                 await db.commit()
             else:
                 next_retry = datetime.now(UTC) + timedelta(minutes=2**job.retry_count)

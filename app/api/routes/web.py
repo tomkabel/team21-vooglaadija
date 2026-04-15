@@ -139,8 +139,20 @@ async def validate_csrf_token(request: Request) -> bool:
     if not cookie_token:
         return False
 
+    # Check header token first (primary method for HTMX requests)
     if header_token and cookie_token and header_token == cookie_token:
         return True
+
+    # For HTMX requests, also check form data as fallback (handles cases where
+    # header isn't properly sent but form token is present in hidden input)
+    if is_htmx_request(request):
+        try:
+            form_data = await request.form()
+            form_token = form_data.get("csrf_token")
+            if form_token and str(form_token) == cookie_token:
+                return True
+        except Exception:
+            pass
 
     # For non-HTMX requests, check form data
     if not is_htmx_request(request):

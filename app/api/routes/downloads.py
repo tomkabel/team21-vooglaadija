@@ -13,17 +13,17 @@ from app.api.dependencies import CurrentUser, DbSession
 from app.api.rate_limit_config import limiter
 from app.config import settings
 from app.models.download_job import DownloadJob
-from app.schemas.error import (
-    ErrorCode,
-    build_error_example,
-    error_response_doc,
-    success_response_doc,
-)
 from app.schemas.download import (
     DownloadCreate,
     DownloadListResponse,
     DownloadResponse,
     PaginationInfo,
+)
+from app.schemas.error import (
+    ErrorCode,
+    build_error_example,
+    error_response_doc,
+    success_response_doc,
 )
 from app.services.outbox_service import write_job_to_outbox
 

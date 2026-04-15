@@ -47,18 +47,30 @@ url = {json.dumps(url)}
 output_template = {json.dumps(output_template)}
 
 ydl_opts = {{
-    "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+    # Format: best video + best audio, merge if needed
+    # Handles videos that are video-only or audio-only
+    "format": "bestvideo*+bestaudio*/best",
     "outtmpl": output_template,
     "quiet": True,
     "no_warnings": True,
     "socket_timeout": 60,
     "retries": 3,
-    "extractor_args": {{"youtube": {{"player_client": ["web", "ios"]}}}},
+    # Merge formats when video-only and audio-only streams need combining
+    "merge_formats": "prefer_merge",
+    # Use youtube client that supports more formats
+    "extractor_args": {{
+        "youtube": {{
+            "player_client": ["web", "default", "tv"],
+        }},
+    }},
 }}
 
 try:
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
+        if info is None:
+            print(json.dumps({{"error": "No video info returned"}}))
+            sys.exit(1)
         sanitized_info = ydl.sanitize_info(info)
         print(json.dumps(sanitized_info))
 except Exception as e:
@@ -94,20 +106,38 @@ except Exception as e:
                 pass  # Process already terminated
             raise TimeoutError(f"yt-dlp extraction timed out after {YT_DLP_TIMEOUT}s") from e
 
-        if process.returncode != 0:
-            # Try to parse stdout first for extractor error payloads
+        # Parse yt-dlp output - may have extra text before JSON
+        output = stdout.decode().strip()
+
+        # Find JSON in output (yt-dlp may output progress text before JSON)
+        json_start = output.find("{")
+        if json_start >= 0:
+            json_str = output[json_start:]
             try:
-                error_result: dict[str, Any] = json.loads(stdout.decode())
-                if "error" in error_result:
-                    raise RuntimeError(f"yt-dlp extraction failed: {error_result['error']}")
-            except (json.JSONDecodeError, UnicodeDecodeError):
+                result: dict[str, Any] = json.loads(json_str)
+                # Check for error in the result
+                if "error" in result:
+                    raise RuntimeError(f"yt-dlp extraction failed: {result['error']}")
+                return result
+            except json.JSONDecodeError as je:
+                # JSON parse failed, fall through to error handling
                 pass
-            # Fall back to stderr if stdout is empty or unparseable
-            error_msg = stderr.decode() if stderr else "Unknown error"
+
+        # If we get here with non-zero return code, or JSON parsing failed
+        if process.returncode != 0:
+            error_msg = stderr.decode().strip() if stderr else "Unknown error"
+            # Extract the most relevant error line
+            for line in error_msg.split("\n"):
+                line = line.strip()
+                if "ERROR" in line or "error" in line.lower()[:50]:
+                    error_msg = line
+                    break
+            if not error_msg or error_msg == "Unknown error":
+                error_msg = output if output else error_msg
             raise RuntimeError(f"yt-dlp failed: {error_msg}")
 
-        success_result: dict[str, Any] = json.loads(stdout.decode())
-        return success_result
+        # Should not reach here - either returned result or raised error
+        raise RuntimeError("yt-dlp extraction completed but produced no usable output")
 
     finally:
         # Ensure process is fully cleaned up using process group kill

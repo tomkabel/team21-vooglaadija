@@ -98,10 +98,12 @@ FROM python:3.12-slim AS runtime-base
 
 # Install ffmpeg for yt-dlp media merging, redis-tools for migrate.sh, and gosu for privilege dropping
 # Also install redis-tools for migrate.sh's redis-cli commands
+# Node.js is required for yt-dlp to solve YouTube video signatures (JS-based decryption)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     redis-tools \
     gosu \
+    nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python runtime from builder (with dependencies installed)
