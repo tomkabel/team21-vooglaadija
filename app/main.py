@@ -37,7 +37,38 @@ async def lifespan(app: FastAPI, *args, **kwargs):
     logger.info("Shutting down YouTube Link Processor API")
 
 
-app = FastAPI(title="YouTube Link Processor", lifespan=lifespan)
+app = FastAPI(
+    title="YouTube Link Processor API",
+    summary="Asynchronous API for authenticated YouTube download jobs.",
+    description=(
+        "REST API for user authentication, creating download jobs, tracking job status, "
+        "and retrieving processed files. Authentication uses bearer JWT access tokens."
+    ),
+    version="0.1.0",
+    contact={
+        "name": "Team 21",
+        "url": "https://github.com/tomkabel/team21-vooglaadija",
+    },
+    license_info={
+        "name": "GPLv3",
+        "url": "https://www.gnu.org/licenses/gpl-3.0.html",
+    },
+    openapi_tags=[
+        {
+            "name": "auth",
+            "description": "User registration, user authentication, token refresh, and current user profile.",
+        },
+        {
+            "name": "downloads",
+            "description": "Create, query, download, and delete media extraction jobs.",
+        },
+        {
+            "name": "health",
+            "description": "Service health and readiness checks.",
+        },
+    ],
+    lifespan=lifespan,
+)
 
 app.add_middleware(PrometheusMiddleware)
 app.state.limiter = limiter
