@@ -1,5 +1,6 @@
 import logging
 import os
+import posixpath
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
@@ -62,6 +63,9 @@ def _validate_redirect_url(url: str | None, default: str) -> str:
     # Only allow absolute paths that start with known safe prefixes
     if not normalized.startswith("/"):
         return default
+
+    # Normalize path to resolve . and .. components
+    normalized = posixpath.normpath(normalized)
 
     if any(normalized.startswith(prefix) for prefix in _ALLOWED_REDIRECT_HOSTS):
         return normalized
