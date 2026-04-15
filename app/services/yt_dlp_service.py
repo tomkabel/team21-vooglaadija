@@ -18,6 +18,28 @@ class StorageError(Exception):
     """Raised when storage operations fail."""
 
 
+async def _kill_process_group(process: asyncio.subprocess.Process) -> None:
+    """Kill a process group and wait for it to terminate."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except TimeoutError:
+            # Process is stuck, but we've already sent SIGKILL, so just continue
+            pass
+    except (ProcessLookupError, OSError):
+        pass  # Process already terminated
+
+
+def _extract_error_message(error_msg: str, fallback: str) -> str:
+    """Extract the most relevant error line from error output."""
+    for error_line in error_msg.split("\n"):
+        stripped = error_line.strip()
+        if "ERROR" in stripped or "error" in stripped.lower()[:50]:
+            return stripped
+    return fallback if fallback else error_msg
+
+
 def _sanitize_title(title: str) -> str:
     """Sanitize a video title for safe use as a display name (not a path)."""
     # Remove any path separators, null bytes, and dots (prevent path traversal in display name)
@@ -100,8 +122,7 @@ except Exception as e:
                     await asyncio.wait_for(process.wait(), timeout=5)
                 except TimeoutError:
                     # Escalate to SIGKILL if SIGTERM didn't work within 5 seconds
-                    os.killpg(process.pid, signal.SIGKILL)
-                    await asyncio.wait_for(process.wait(), timeout=5)
+                    await _kill_process_group(process)
             except (ProcessLookupError, OSError):
                 pass  # Process already terminated
             raise TimeoutError(f"yt-dlp extraction timed out after {YT_DLP_TIMEOUT}s") from e
@@ -119,21 +140,16 @@ except Exception as e:
                 if "error" in result:
                     raise RuntimeError(f"yt-dlp extraction failed: {result['error']}")
                 return result
-            except json.JSONDecodeError as je:
+            except json.JSONDecodeError:
                 # JSON parse failed, fall through to error handling
                 pass
 
         # If we get here with non-zero return code, or JSON parsing failed
         if process.returncode != 0:
             error_msg = stderr.decode().strip() if stderr else "Unknown error"
-            # Extract the most relevant error line
-            for line in error_msg.split("\n"):
-                line = line.strip()
-                if "ERROR" in line or "error" in line.lower()[:50]:
-                    error_msg = line
-                    break
-            if not error_msg or error_msg == "Unknown error":
-                error_msg = output if output else error_msg
+            error_msg = _extract_error_message(error_msg, output if output else "")
+            if not error_msg:
+                error_msg = "Unknown error"
             raise RuntimeError(f"yt-dlp failed: {error_msg}")
 
         # Should not reach here - either returned result or raised error
@@ -143,15 +159,7 @@ except Exception as e:
         # Ensure process is fully cleaned up using process group kill
         # process.pid is the group ID since start_new_session=True
         if process and process.returncode is None:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=5)
-                except TimeoutError:
-                    # Process is stuck, but we've already sent SIGKILL, so just continue
-                    pass
-            except (ProcessLookupError, OSError):
-                pass  # Process already terminated
+            await _kill_process_group(process)
 
 
 def _validate_path_within(base_path: str, target_path: str) -> str:

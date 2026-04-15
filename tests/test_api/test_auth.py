@@ -35,7 +35,7 @@ async def test_register_duplicate_email_fails():
             json={"email": "duplicate@example.com", "password": "testpassword123"},
         )
     assert response.status_code == 409
-    assert "Email already registered" in response.json()["detail"]
+    assert "Email already registered" in response.json()["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,7 @@ async def test_login_wrong_password_fails():
             json={"email": "wrongpass@example.com", "password": "wrongpassword"},
         )
     assert response.status_code == 401
-    assert "Incorrect email or password" in response.json()["detail"]
+    assert "Incorrect email or password" in response.json()["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -119,7 +119,7 @@ async def test_login_nonexistent_user_fails():
             json={"email": "nonexistent@example.com", "password": "testpassword123"},
         )
     assert response.status_code == 401
-    assert "Incorrect email or password" in response.json()["detail"]
+    assert "Incorrect email or password" in response.json()["error"]["message"]
 
 
 @pytest.mark.asyncio

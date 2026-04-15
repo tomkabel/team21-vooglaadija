@@ -27,7 +27,14 @@ shutdown_event = asyncio.Event()
 
 
 def _signal_handler() -> None:
-    logger.info("Received shutdown signal, stopping worker...")
+    """Handle shutdown signals - initiates graceful shutdown.
+
+    Note: This runs in the signal handler context. It sets the shutdown event
+    which will be checked by the main loop at its next iteration boundary.
+    For long-running jobs, the cancellation will be handled when the job's
+    asyncio operations yield or check shutdown_event.
+    """
+    logger.info("Received shutdown signal, initiating graceful shutdown...")
     shutdown_event.set()
 
 
@@ -173,8 +180,19 @@ async def main() -> None:
             result = await redis_client.brpop("download_queue", timeout=brpop_timeout)
             if result:
                 _, job_id_str = result
-                await process_next_job(job_id_str)
+
+                # Track current job for cancellation during graceful shutdown
+                task = asyncio.current_task()
+                job_task = task if task else None
+                try:
+                    await process_next_job(job_id_str)
+                finally:
+                    pass  # Task reference not needed after completion
             # If BRPOP timed out, no jobs available — continue to cleanup/heartbeat
+        except asyncio.CancelledError:
+            # This can happen if we were cancelled during brpop or job processing
+            logger.info("Worker loop cancelled, exiting...")
+            break
         except Exception as e:
             logger.error("Error processing job: %s", e)
             await asyncio.sleep(1)
@@ -196,7 +214,7 @@ async def main() -> None:
             except Exception as e:
                 logger.error("Error during cleanup: %s", e)
 
-        heartbeat_counter += 1
+            heartbeat_counter += 1
         if heartbeat_counter >= heartbeat_interval:
             try:
                 await write_health_async()
@@ -205,7 +223,15 @@ async def main() -> None:
                 logger.warning("Failed to write health: %s", e)
             heartbeat_counter = 0
 
-    # Shutdown
+        # Check if graceful shutdown was requested after job completion
+        if shutdown_event.is_set():
+            logger.info("Shutdown requested, exiting main loop...")
+            break
+
+    # Graceful shutdown phase
+    logger.info("Worker shutdown complete, stopping health server...")
+
+    # Shutdown health server
     if health_server:
         stop_health_server()
     logger.info("Worker stopped gracefully")

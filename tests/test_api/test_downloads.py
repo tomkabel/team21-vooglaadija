@@ -287,7 +287,7 @@ async def test_get_download_file_not_completed():
             headers={"Authorization": f"Bearer {token}"},
         )
     assert response.status_code == 400
-    assert "not completed" in response.json()["detail"]
+    assert "not completed" in response.json()["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -313,7 +313,7 @@ async def test_get_download_file_not_found(db_session: AsyncSession):
             headers={"Authorization": f"Bearer {token}"},
         )
     assert response.status_code == 404
-    assert "File not found" in response.json()["detail"]
+    assert "File not found" in response.json()["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -406,7 +406,7 @@ async def test_get_download_file_expired_returns_410(db_session: AsyncSession):
                 headers={"Authorization": f"Bearer {token}"},
             )
     assert response.status_code == 410
-    assert "expired" in response.json()["detail"].lower()
+    assert "expired" in response.json()["error"]["message"].lower()
 
 
 @pytest.mark.asyncio
@@ -442,7 +442,7 @@ async def test_get_download_file_path_traversal_returns_403(db_session: AsyncSes
             headers={"Authorization": f"Bearer {token}"},
         )
     assert response.status_code == 403
-    assert "Access denied" in response.json()["detail"]
+    assert "Access denied" in response.json()["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -486,7 +486,7 @@ async def test_get_download_file_not_on_disk(db_session: AsyncSession):
             headers={"Authorization": f"Bearer {token}"},
         )
     assert response.status_code == 404
-    assert "not found" in response.json()["detail"].lower()
+    assert "not found" in response.json()["error"]["message"].lower()
 
 
 @pytest.mark.asyncio

@@ -43,13 +43,28 @@ jobs:
           # Leave it empty so docker-compose uses the service name from the compose file
           sed -i 's|^REDIS_URL=.*|REDIS_URL=|' .env
 
+      # Generate self-signed SSL certificates for nginx (not tracked in git)
+      - name: Generate SSL certificates for nginx
+        run: |
+          echo "Generating self-signed SSL certificates for CI..."
+          mkdir -p infra/ssl
+          openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
+            -keyout infra/ssl/privkey.pem \
+            -out infra/ssl/fullchain.pem \
+            -subj "/C=US/ST=Test/L=Test/O=CI/CN=localhost" \
+            2>/dev/null
+          chmod 644 infra/ssl/fullchain.pem
+          chmod 644 infra/ssl/privkey.pem
+          echo "SSL certificates generated successfully"
+          ls -la infra/ssl/
+
       # ============================================
       # 2. BUILD & START SERVICES
       # ============================================
       - name: Build and start services
         run: |
           echo "Building and starting all services..."
-          docker compose up -d --build
+          docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 
       - name: Wait for services to initialize
         run: |
@@ -275,7 +290,7 @@ jobs:
         if: always()
         run: |
           echo "Stopping and removing services..."
-          docker compose down -v --remove-orphans
+          docker compose -f docker-compose.yml -f docker-compose.local.yml down -v --remove-orphans
           echo "Cleanup complete"
 
       # ============================================

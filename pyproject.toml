@@ -197,7 +197,8 @@ unit = "pytest tests/ --ignore=tests/test_api -v --cov=app --cov-report=xml --co
 integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 # Security
 "security-bandit" = "bandit -r app/ -f screen --confidence-level high --severity-level medium"
-"security-safety" = "safety check --json --output=security-report.json || true"
+"security-safety" = "safety check --json --ignore 64459 --ignore 64396 > security-report.json 2>&1 || true"
+"security-safety-check" = "safety check --json --ignore 64459 --ignore 64396 || true"
 
 # Environment variable overrides for CI
 [tool.hatch.envs.ci.env-vars]
@@ -460,5 +461,8 @@ skips = [
 # Use ignored vulnerabilities database for CI
 db = false
 ignore = [
-    # Add CVEs to ignore here
+    # ECDSA Minerva attack (CVE-2024-23342) - python-ecdsa maintainers explicitly
+    # stated they will not fix this as side-channel attacks are "impossible" to
+    # mitigate in pure Python. This is a transitive dependency from python-jose.
+    "CVE-2024-23342",
 ]

@@ -28,7 +28,33 @@ async def _heartbeat(db, job_id: UUID) -> None:
     await db.commit()
 
 
-async def process_next_job(job_id: UUID | str | None = None) -> None:
+async def _requeue_job(job_id: UUID, db) -> None:
+    """Requeue a job by setting its status back to 'queued'."""
+    await db.execute(
+        update(DownloadJob)
+        .where(DownloadJob.id == job_id)
+        .values(
+            status="queued",
+            updated_at=datetime.now(UTC),
+        )
+    )
+    await db.commit()
+
+
+def _cleanup_downloaded_file(file_path: str | None) -> None:
+    """Clean up a downloaded file if it exists."""
+    if file_path:
+        try:
+            import os
+
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info("Cleaned up partial download: %s", file_path)
+        except OSError as e:
+            logger.warning("Failed to clean up partial download %s: %s", file_path, e)
+
+
+async def process_next_job(job_id: UUID | str | None = None) -> bool:
     """Process the next job in the queue.
 
     If job_id is provided, process that specific job (avoids race condition
@@ -41,11 +67,16 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
     reset_stuck_jobs() can detect and recover from crashes.
 
     Implements retry logic with exponential backoff for transient failures.
+
+    Returns True if job completed successfully, False if cancelled or skipped.
     """
+    # Import here to avoid circular import and get reference to shutdown event
+    from worker.main import shutdown_event
+
     if job_id is None:
         job_id_str = await redis_client.rpop("download_queue")
         if not job_id_str:
-            return
+            return False
         job_id = UUID(job_id_str)
     elif isinstance(job_id, str):
         job_id = UUID(job_id)
@@ -72,7 +103,7 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
         if not claimed:
             # Job was already claimed by another worker or is not pending
             logger.info("Job %s was not claimed (possibly by another worker)", job_id)
-            return
+            return False
 
         # Job claimed successfully - mark as running in health state
         update_worker_state(status="running", current_job_started_at=datetime.now(UTC).isoformat())
@@ -85,12 +116,28 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
             if not job:
                 logger.warning("Job %s not found after claim", job_id)
                 update_worker_state(status="running", current_job_started_at=None)
-                return
+                return False
 
             # Initial heartbeat after claiming
             await _heartbeat(db, job_id)
 
+            # Check for cancellation before starting download
+            if shutdown_event.is_set():
+                logger.info("Shutdown requested, requeueing job %s", job_id)
+                await _requeue_job(job_id, db)
+                update_worker_state(status="running", current_job_started_at=None)
+                return False
+
             file_path, file_name = await extract_media_url(job.url, settings.storage_path)
+
+            # Check for cancellation after download (before marking complete)
+            if shutdown_event.is_set():
+                logger.info("Shutdown requested after download, requeueing job %s", job_id)
+                await _requeue_job(job_id, db)
+                # Clean up the downloaded file since job is being requeued
+                _cleanup_downloaded_file(file_path)
+                update_worker_state(status="running", current_job_started_at=None)
+                return False
 
             # Heartbeat after extract_media_url completes
             await _heartbeat(db, job_id)
@@ -110,18 +157,12 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
             update_worker_state(status="running", current_job_started_at=None)
             JOBS_COMPLETED.labels(status="success").inc()
             logger.info("Job %s completed successfully", job_id)
+            return True
         except asyncio.CancelledError:
             # Requeue the job to prevent it being stuck in 'processing'
             # reset_stuck_jobs would otherwise hard-fail it later
-            await db.execute(
-                update(DownloadJob)
-                .where(DownloadJob.id == job_id)
-                .values(
-                    status="queued",
-                    updated_at=datetime.now(UTC),
-                )
-            )
-            await db.commit()
+            logger.info("Job %s cancelled, requeueing...", job_id)
+            await _requeue_job(job_id, db)
             update_worker_state(status="running", current_job_started_at=None)
             raise
         except Exception as e:
@@ -145,7 +186,7 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
 
             if not job:
                 logger.error("Job %s not found during error handling", job_id)
-                return
+                return False
 
             # Format errors are non-retryable — YouTube's available formats won't change
             if is_format_error or job.retry_count >= job.max_retries:
@@ -219,6 +260,9 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
 
         finally:
             JOB_DURATION_SECONDS.observe(time.time() - start_time)
+
+    # This should never be reached, but satisfies type checker
+    return False
 
 
 async def reset_stuck_jobs(timeout_minutes: int = 10) -> int:

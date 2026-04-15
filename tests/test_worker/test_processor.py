@@ -52,6 +52,8 @@ class TestProcessNextJob:
     @pytest.mark.unit
     async def test_process_next_job_completes_success(self, db_session, mock_redis_client):
         """Test successful job completion."""
+        import asyncio
+
         from app.database import get_async_session_factory
         from worker.processor import process_next_job
 
@@ -65,12 +67,16 @@ class TestProcessNextJob:
         db_session.add(job)
         await db_session.commit()
 
+        # Mock shutdown_event to ensure it's not set during test
+        mock_shutdown_event = asyncio.Event()
+
         with (
             patch("worker.processor.redis_client", mock_redis_client),
             patch(
                 "worker.processor.extract_media_url",
                 new_callable=AsyncMock,
             ) as mock_extract,
+            patch("worker.main.shutdown_event", mock_shutdown_event),
         ):
             mock_extract.return_value = ("/storage/test.mp4", "test.mp4")
             mock_redis_client.rpop = AsyncMock(return_value="550e8400-e29b-41d4-a716-446655440000")
