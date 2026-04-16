@@ -230,8 +230,8 @@ unit = "pytest tests/ --ignore=tests/test_api -v --cov=app --cov-report=xml --co
 integration = "pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 # Security
 "security-bandit" = "bandit -r app/ -f screen --confidence-level high --severity-level medium"
-"security-safety" = "safety check --json --ignore 64459 --ignore 64396 > security-report.json 2>&1 || true"
-"security-safety-check" = "safety check --json --ignore 64459 --ignore 64396 || true"
+"security-safety" = "safety scan --policy-file .safety-policy.yml --output json > security-report.json 2>&1 || true"
+"security-safety-check" = "safety scan --policy-file .safety-policy.yml --output json || true"
 
 # Environment variable overrides for CI
 [tool.hatch.envs.ci.env-vars]
