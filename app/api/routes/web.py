@@ -1,3 +1,4 @@
+import html
 import logging
 import os
 import uuid
@@ -160,7 +161,7 @@ def _error_html(message: str) -> str:
     """Render a standardized error HTML fragment."""
     return (
         f"<div class='error bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded'>"
-        f"{message}</div>"
+        f"{html.escape(message)}</div>"
     )
 
 
@@ -168,7 +169,7 @@ def _success_html(message: str) -> str:
     """Render a standardized success HTML fragment."""
     return (
         f"<div class='success bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded'>"
-        f"{message}</div>"
+        f"{html.escape(message)}</div>"
     )
 
 
