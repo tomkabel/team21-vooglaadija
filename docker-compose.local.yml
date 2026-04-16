@@ -1,6 +1,6 @@
 # ============================================
 # Local Development Override
-# Usage: docker compose -f docker-compose.yml -f docker-compose.production.yml -f docker-compose.local.yml up -d
+# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
 #
 # This file overrides ports for local rootless environments
 # where privileged ports (80, 443) cannot be bound.
