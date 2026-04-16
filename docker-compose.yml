@@ -95,6 +95,8 @@ services:
       # Enable observability
       OTEL_PYTHON_TRACER_PROVIDER: otel
       OTEL_PYTHON_METER_PROVIDER: otel
+    expose:
+      - "8000"
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -311,7 +313,7 @@ services:
         condition: service_healthy
     healthcheck:
       test:
-        ["CMD-SHELL", "wget -q --spider http://localhost:80/health || exit 1"]
+        ["CMD-SHELL", "wget -q --spider http://127.0.0.1:80/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3

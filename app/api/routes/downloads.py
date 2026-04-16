@@ -1,6 +1,5 @@
 """Download job CRUD endpoints."""
 
-import logging
 import os
 import uuid
 from datetime import UTC, datetime
@@ -12,6 +11,7 @@ from sqlalchemy import func, select
 from app.api.dependencies import CurrentUser, DbSession
 from app.api.rate_limit_config import limiter
 from app.config import settings
+from app.logging_config import get_logger
 from app.models.download_job import DownloadJob
 from app.schemas.download import (
     DownloadCreate,
@@ -27,7 +27,7 @@ from app.schemas.error import (
 )
 from app.services.outbox_service import write_job_to_outbox
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/downloads", tags=["downloads"])
 
@@ -49,7 +49,7 @@ def _validate_file_path(file_path: str) -> str:
     if not safe_dir.endswith(os.sep):
         safe_dir += os.sep
     if not resolved.startswith(safe_dir):
-        logger.warning("Path traversal attempt blocked: %s", file_path)
+        logger.warning("path_traversal_attempt_blocked", file_path=file_path)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: invalid file path",
@@ -361,7 +361,7 @@ async def get_download_file(
     # Check file exists on disk
     if not os.path.isfile(safe_path):
         safe_job_id = str(job_id).replace("\r", "").replace("\n", "")
-        logger.error("File missing from disk for job %s: %s", safe_job_id, safe_path)
+        logger.error("file_missing_from_disk", job_id=safe_job_id, file_path=safe_path)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found on disk",
@@ -436,12 +436,12 @@ async def delete_download(
             safe_path = _validate_file_path(job.file_path)
             if os.path.isfile(safe_path):
                 os.remove(safe_path)
-                logger.info("Deleted file: %s", safe_path)
+                logger.info("file_deleted", file_path=safe_path)
         except HTTPException:
             raise
         except OSError as e:
             # File deletion failed - do not commit DB deletion so cleanup_expired_jobs can retry
-            logger.warning("Failed to delete file %s: %s", job.file_path, e)
+            logger.warning("failed_to_delete_file", file_path=job.file_path, error=str(e))
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to delete file from disk",

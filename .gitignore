@@ -106,3 +106,10 @@ tmp/
 temp/
 *.tmp
 coverage.xml
+
+# Personal notes and course materials (do not commit)
+Junior_To_Senior_Course*.md
+awesome-python*.md
+video-plan*.md
+gemini/
+minimax/

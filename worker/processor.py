@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -10,6 +9,7 @@ from sqlalchemy import select, update
 
 from app.config import settings
 from app.database import get_async_session_factory
+from app.logging_config import get_logger
 from app.metrics import JOB_DURATION_SECONDS, JOBS_COMPLETED
 from app.models.download_job import DownloadJob
 from app.models.outbox import Outbox
@@ -17,7 +17,7 @@ from app.services.yt_dlp_service import extract_media_url
 from worker.health import update_worker_state
 from worker.queue import redis_client
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def _heartbeat(db, job_id: UUID) -> None:
@@ -102,7 +102,7 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
 
         if not claimed:
             # Job was already claimed by another worker or is not pending
-            logger.info("Job %s was not claimed (possibly by another worker)", job_id)
+            logger.info("job_not_claimed", job_id=str(job_id))
             return False
 
         # Job claimed successfully - mark as running in health state
@@ -114,7 +114,7 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
             job = result.scalar_one_or_none()
 
             if not job:
-                logger.warning("Job %s not found after claim", job_id)
+                logger.warning("job_not_found_after_claim", job_id=str(job_id))
                 update_worker_state(status="running", current_job_started_at=None)
                 return False
 
@@ -156,8 +156,7 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
             await db.commit()
             update_worker_state(status="running", current_job_started_at=None)
             JOBS_COMPLETED.labels(status="success").inc()
-            logger.info("Job %s completed successfully", job_id)
-            return True
+            logger.info("job_completed_successfully", job_id=str(job_id))
         except asyncio.CancelledError:
             # Requeue the job to prevent it being stuck in 'processing'
             # reset_stuck_jobs would otherwise hard-fail it later
@@ -171,12 +170,12 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
 
             if is_format_error:
                 logger.error(
-                    "Job %s failed — video format unavailable (DASH/WebM only, no MP4/M4A): %s",
-                    job_id,
-                    error_str,
+                    "job_failed_format_unavailable",
+                    job_id=str(job_id),
+                    error=error_str,
                 )
             else:
-                logger.error("Job %s failed: %s", job_id, error_str)
+                logger.error("job_failed", job_id=str(job_id), error=error_str)
 
             update_worker_state(status="running", current_job_started_at=None)
 
@@ -185,7 +184,7 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
             job = result.scalar_one_or_none()
 
             if not job:
-                logger.error("Job %s not found during error handling", job_id)
+                logger.error("job_not_found_during_error_handling", job_id=str(job_id))
                 return False
 
             # Format errors are non-retryable — YouTube's available formats won't change
@@ -204,7 +203,10 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
                 JOBS_COMPLETED.labels(status="failed").inc()
                 if not is_format_error:
                     logger.warning(
-                        "Job %s failed permanently after %d retries", job_id, job.max_retries
+                        "job_failed_permanently_max_retries",
+                        job_id=str(job_id),
+                        retry_count=job.retry_count,
+                        max_retries=job.max_retries,
                     )
                 await db.commit()
             else:
@@ -248,15 +250,19 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
                     outbox_entry.processed_at = datetime.now(UTC)
                     await db.commit()
                     logger.info(
-                        "Job %s scheduled for retry %d/%d",
-                        job_id,
-                        job.retry_count + 1,
-                        job.max_retries,
+                        "job_scheduled_for_retry",
+                        job_id=str(job_id),
+                        retry_count=job.retry_count + 1,
+                        max_retries=job.max_retries,
                     )
                 except Exception as enqueue_error:
                     # DB is already committed with pending status and outbox entry
                     # This is recoverable - sync_outbox will eventually enqueue it
-                    logger.error("Job %s failed to enqueue for retry: %s", job_id, enqueue_error)
+                    logger.error(
+                        "job_failed_to_enqueue_for_retry",
+                        job_id=str(job_id),
+                        error=str(enqueue_error),
+                    )
 
         finally:
             JOB_DURATION_SECONDS.observe(time.time() - start_time)
@@ -287,9 +293,9 @@ async def reset_stuck_jobs(timeout_minutes: int = 10) -> int:
         count = result.rowcount  # type: ignore[attr-defined]
         if count > 0:
             logger.warning(
-                "Reset %d stuck jobs that exceeded %d minute timeout",
-                count,
-                timeout_minutes,
+                "reset_stuck_jobs",
+                count=count,
+                timeout_minutes=timeout_minutes,
             )
 
         return count
@@ -340,8 +346,8 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
                         await redis_client.zadd("retry_queue", {str(entry.job_id): retry_timestamp})
                     else:
                         logger.error(
-                            "Missing next_retry_at in retry_scheduled payload for job %s",
-                            entry.job_id,
+                            "missing_next_retry_at_in_payload",
+                            job_id=str(entry.job_id),
                         )
                         continue
                 else:
@@ -356,12 +362,14 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
                 )
                 synced += 1
             except Exception as e:
-                logger.error("Failed to enqueue job %s from outbox: %s", entry.job_id, e)
+                logger.error(
+                    "failed_to_enqueue_job_from_outbox", job_id=str(entry.job_id), error=str(e)
+                )
                 # Don't change status - entry stays "pending" for next sync cycle
 
         await db.commit()
 
     if synced > 0:
-        logger.info("Synced %d outbox entries to Redis queue", synced)
+        logger.info("synced_outbox_entries_to_queue", count=synced)
 
     return synced

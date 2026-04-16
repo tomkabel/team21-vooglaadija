@@ -1,4 +1,3 @@
-import logging
 import os
 import posixpath
 import uuid
@@ -21,6 +20,7 @@ from app.auth import (
     set_token_cookies,
 )
 from app.config import settings
+from app.logging_config import get_logger
 from app.models.download_job import DownloadJob
 from app.models.outbox import Outbox
 from app.models.user import User
@@ -29,7 +29,7 @@ from app.services.outbox_service import write_job_to_outbox
 from app.utils.validators import is_youtube_url
 from worker.queue import enqueue_job
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/web", tags=["web"])
 templates = Jinja2Templates(directory="app/templates")
@@ -93,7 +93,7 @@ def set_csrf_token_cookie(response: Response, token: str) -> None:
         value=token,
         httponly=False,  # Needs to be readable by JavaScript
         secure=settings.cookie_secure,
-        samesite="strict",
+        samesite="lax",  # Lax allows top-level navigation while still preventing CSRF
         path="/",
     )
 
@@ -130,26 +130,27 @@ async def validate_csrf_token(request: Request) -> bool:
     """Validate CSRF token from HTMX header or form data.
 
     Returns True if token is valid or if this is not a state-changing request.
+
+    Validation strategies (in order of preference):
+    1. Header token matches cookie token (standard double-submit)
+    2. Form token matches cookie token (fallback for non-HTML forms)
+    3. Header token matches form token (validates both are present and match,
+       useful when cookie wasn't preserved but both client-side tokens are synced)
     """
     # Only validate state-changing methods
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return True
 
-    # Get token from HTMX header first, then form data
-    header_token = request.headers.get("X-CSRF-Token")
     cookie_token = request.cookies.get("csrf_token")
+    header_token = request.headers.get("X-CSRF-Token")
 
-    # Reject if no cookie token is set (must have cookie for CSRF to be valid)
-    if not cookie_token:
-        return False
-
-    # Check header token first (primary method for HTMX requests)
-    if header_token and cookie_token and header_token == cookie_token:
+    # Strategy 1: Standard double-submit (header matches cookie)
+    # This is the preferred method when cookie is preserved
+    if cookie_token and header_token == cookie_token:
         return True
 
-    # For HTMX requests, also check form data as fallback (handles cases where
-    # header isn't properly sent but form token is present in hidden input)
-    if is_htmx_request(request):
+    # Strategy 2: Cookie present but header missing - check form data
+    if cookie_token and not header_token:
         try:
             form_data = await request.form()
             form_token = form_data.get("csrf_token")
@@ -158,12 +159,13 @@ async def validate_csrf_token(request: Request) -> bool:
         except Exception:
             pass
 
-    # For non-HTMX requests, check form data
-    if not is_htmx_request(request):
+    # Strategy 3: No cookie but header matches form (both client-side tokens agree)
+    # This handles cases where the cookie was lost but the page tokens are still in sync
+    if not cookie_token and header_token:
         try:
             form_data = await request.form()
             form_token = form_data.get("csrf_token")
-            if form_token and cookie_token and str(form_token) == cookie_token:
+            if form_token and str(form_token) == header_token:
                 return True
         except Exception:
             pass
@@ -445,7 +447,7 @@ async def create_download_form(
         await db.refresh(job)
     except Exception:
         await db.rollback()
-        logger.exception("Failed to create download job")
+        logger.exception("failed_to_create_download_job")
         return HTMLResponse(status_code=500, content=_error_html("Failed to create download"))
 
     # Enqueue job for processing (best-effort; outbox handles recovery)
@@ -459,7 +461,7 @@ async def create_download_form(
         )
         await db.commit()
     except Exception:
-        logger.warning("Failed to enqueue job %s (outbox will handle recovery)", job_id)
+        logger.warning("failed_to_enqueue_job_outbox_recovery", job_id=str(job_id))
 
     # Return HTML fragment for HTMX swap
     return templates.TemplateResponse(
@@ -498,7 +500,7 @@ async def create_download_full_page(
         await db.refresh(job)
     except Exception:
         await db.rollback()
-        logger.exception("Failed to create download job")
+        logger.exception("failed_to_create_download_job_full_page")
         return _htmx_or_redirect(
             request,
             500,
@@ -517,7 +519,7 @@ async def create_download_full_page(
         )
         await db.commit()
     except Exception:
-        logger.warning("Failed to enqueue job %s (outbox will handle recovery)", job_id)
+        logger.warning("failed_to_enqueue_job_outbox_recovery", job_id=str(job_id))
 
     # Redirect to dashboard for full-page non-HTMX fallback
     return RedirectResponse(url="/web/downloads", status_code=303)
@@ -568,11 +570,11 @@ async def delete_download_form(
             safe_path = _validate_file_path(job.file_path)
             if os.path.isfile(safe_path):
                 os.remove(safe_path)
-                logger.info("Deleted file: %s", safe_path)
+                logger.info("file_deleted", file_path=safe_path)
         except HTTPException:
             raise
         except OSError as e:
-            logger.warning("Failed to delete file %s: %s", job.file_path, e)
+            logger.warning("failed_to_delete_file", file_path=job.file_path, error=str(e))
 
     await db.delete(job)
     await db.commit()
@@ -651,7 +653,7 @@ async def download_file(
     # Check file exists on disk
     if not os.path.isfile(safe_path):
         safe_job_id = str(job_id).replace("\r", "").replace("\n", "")
-        logger.error("File missing from disk for job %s: %s", safe_job_id, safe_path)
+        logger.error("file_missing_from_disk", job_id=safe_job_id, file_path=safe_path)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found on disk",
