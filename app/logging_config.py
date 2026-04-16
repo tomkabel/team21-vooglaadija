@@ -129,7 +129,7 @@ def configure_logging(log_level: str = "INFO") -> None:
         )
     else:
         # Development: Pretty console output with colors
-        dev_processors = [
+        dev_processors: list[Processor] = [
             *shared_processors,
             structlog.dev.ConsoleRenderer(
                 colors=True,

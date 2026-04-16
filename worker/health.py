@@ -210,7 +210,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
 def start_health_server(port: int | None = None) -> HTTPServer | None:
     """Start the health check HTTP server in a background thread.
 
-    Port is read from WORKER_HEALTH_PORT env var (default: 8081).
+    Port is read from WORKER_HEALTH_PORT env var (default: 8082).
     Set WORKER_HEALTH_PORT=0 to disable.
 
     Returns the server instance (call server.shutdown() to stop).
@@ -219,7 +219,7 @@ def start_health_server(port: int | None = None) -> HTTPServer | None:
     if _health_server is not None:
         return _health_server
 
-    env_port = os.environ.get("WORKER_HEALTH_PORT", "8081")
+    env_port = os.environ.get("WORKER_HEALTH_PORT", "8082")
     if port is None:
         port = int(env_port)
 
