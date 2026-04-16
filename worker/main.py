@@ -175,14 +175,7 @@ async def main() -> None:
             result = await redis_client.brpop("download_queue", timeout=brpop_timeout)
             if result:
                 _, job_id_str = result
-
-                # Track current job for cancellation during graceful shutdown
-                task = asyncio.current_task()
-                job_task = task if task else None
-                try:
-                    await process_next_job(job_id_str)
-                finally:
-                    pass  # Task reference not needed after completion
+                await process_next_job(job_id_str)
             # If BRPOP timed out, no jobs available — continue to cleanup/heartbeat
         except asyncio.CancelledError:
             # This can happen if we were cancelled during brpop or job processing
@@ -209,7 +202,7 @@ async def main() -> None:
             except Exception as e:
                 logger.error("cleanup_error", error=str(e))
 
-            heartbeat_counter += 1
+        heartbeat_counter += 1
         if heartbeat_counter >= heartbeat_interval:
             try:
                 await write_health_async()

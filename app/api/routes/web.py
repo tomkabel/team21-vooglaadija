@@ -65,7 +65,10 @@ def _validate_redirect_url(url: str | None, default: str) -> str:
         return default
 
     # Normalize path to resolve . and .. components
+    had_trailing_slash = normalized.endswith("/")
     normalized = posixpath.normpath(normalized)
+    if had_trailing_slash and normalized != "/":
+        normalized += "/"
 
     if any(normalized.startswith(prefix) for prefix in _ALLOWED_REDIRECT_HOSTS):
         return normalized
