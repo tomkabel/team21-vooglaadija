@@ -7,8 +7,8 @@
 set -e
 
 # Configuration - modify these for your environment
-VPS_HOST="ubuntu@37.114.46.226"
-VPS_PATH="/opt/vooglaadija"
+VPS_HOST="${VPS_HOST:-ubuntu@37.114.46.226}"
+VPS_PATH="${VPS_PATH:-/opt/vooglaadija}"
 SSL_SOURCE="./infra/ssl"
 
 # Colors
@@ -37,8 +37,12 @@ openssl x509 -in "$SSL_SOURCE/fullchain.pem" -noout -subject -dates
 log_info "Copying to VPS..."
 scp "$SSL_SOURCE/fullchain.pem" "$SSL_SOURCE/privkey.pem" "$VPS_HOST:$VPS_PATH/infra/ssl/"
 
-# Set permissions on VPS
-ssh "$VPS_HOST" "chmod 644 $VPS_PATH/infra/ssl/fullchain.pem $VPS_PATH/infra/ssl/cert.pem 2>/dev/null || true; chmod 600 $VPS_PATH/infra/ssl/privkey.pem $VPS_PATH/infra/ssl/key.pem 2>/dev/null || true"
+# Create symlinks and set permissions on VPS
+ssh "$VPS_HOST" "cd $VPS_PATH/infra/ssl && \
+  ln -sf fullchain.pem cert.pem && \
+  ln -sf privkey.pem key.pem && \
+  chmod 644 fullchain.pem cert.pem && \
+  chmod 600 privkey.pem key.pem"
 
 log_info "Certificates copied successfully!"
 log_info "Verify on VPS: openssl x509 -in $VPS_PATH/infra/ssl/fullchain.pem -noout -enddate"

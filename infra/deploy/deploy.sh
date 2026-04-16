@@ -13,7 +13,6 @@ DEPLOY_DIR="/opt/vooglaadija"
 SSL_DIR="$DEPLOY_DIR/infra/ssl"
 CERTBOT_DATA_DIR="$DEPLOY_DIR/infra/certbot/data"
 BACKUP_DIR="/opt/vooglaadija-backups"
-APACHE_USER="www-data"
 
 # Colors for output
 RED='\033[0;31m'
@@ -35,8 +34,9 @@ phase0() {
 
     # Check if running as root
     if [[ $EUID -ne 0 ]]; then
-        log_warn "This script should be run as root for system installation"
-        printf '%s\n' "Re-run with: sudo \"$0\" \"\$@\""
+        log_error "This script must be run as root for system installation"
+        log_info "Re-run with: sudo $0 $*"
+        exit 1
     fi
 
     # Check for required files
@@ -210,7 +210,12 @@ EOF
     ln -sf /etc/nginx/sites-available/"$DOMAIN" /etc/nginx/sites-enabled/"$DOMAIN"
 
     # Test and reload nginx
-    nginx -t && systemctl reload nginx || systemctl start nginx
+    if nginx -t; then
+        systemctl reload nginx || systemctl start nginx
+    else
+        log_error "Nginx configuration test failed"
+        return 1
+    fi
 
     # Obtain certificate
     certbot certonly \
