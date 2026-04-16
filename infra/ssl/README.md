@@ -39,9 +39,13 @@ sudo certbot certonly --webroot -w /var/www/certbot -d youtube.tomabel.ee
 sudo cp /etc/letsencrypt/live/youtube.tomabel.ee/fullchain.pem ./
 sudo cp /etc/letsencrypt/live/youtube.tomabel.ee/privkey.pem ./
 
+# Create compatibility symlinks:
+ln -sf fullchain.pem cert.pem
+ln -sf privkey.pem key.pem
+
 # Set permissions:
-sudo chmod 644 fullchain.pem cert.pem
-sudo chmod 600 privkey.pem key.pem
+sudo chmod 644 fullchain.pem
+sudo chmod 600 privkey.pem
 ```
 
 ### Option 2: Existing Certificates

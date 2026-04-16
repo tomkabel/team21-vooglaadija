@@ -17,6 +17,7 @@
 The project implements the **transactional outbox pattern** for reliable job enqueueing. Jobs are written to an `outbox` table in the same transaction as the `DownloadJob`, guaranteeing atomicity. A background worker (`sync_outbox_to_queue`) processes the outbox and marks entries as enqueued. This prevents the classic dual-write problem where a database commit succeeds but Redis enqueue fails.
 
 **Key files:**
+
 - `app/models/outbox.py` - Outbox model definition
 - `app/services/outbox_service.py` - Outbox write helper
 - `worker/processor.py` - `sync_outbox_to_queue()` implementation
@@ -43,7 +44,6 @@ result = await db.execute(
     update(DownloadJob)
     .where(DownloadJob.id == job_id, DownloadJob.status == "pending")
     .values(status="processing", updated_at=datetime.now(UTC))
-)
 )
 claimed = result.rowcount == 1
 ```
@@ -103,11 +103,13 @@ Dual authentication system (cookie-based for web, bearer tokens for API) with CS
 ## Expertise Domains
 
 ### Distributed Systems & Reliability
+
 - Outbox pattern, retry queues, crash recovery
 - Atomic job claiming, stuck job detection
 - Two-phase outbox sync (claim → Redis push → mark)
 
 ### Security
+
 - JWT with access/refresh token separation
 - bcrypt password hashing (12 rounds)
 - Path traversal prevention at multiple layers
@@ -117,12 +119,14 @@ Dual authentication system (cookie-based for web, bearer tokens for API) with CS
 - Secret key entropy validation
 
 ### Async Python / FastAPI
+
 - Full async/await throughout (SQLAlchemy 2.0 async, redis.asyncio)
 - `asynccontextmanager` lifespan events
 - `asyncpg` for PostgreSQL, `aiosqlite` for tests
 - Background tasks and graceful shutdown
 
 ### Container Orchestration
+
 - Multi-stage Dockerfile (builder → frontend-builder → app-builder → runtime-base → api/worker)
 - Docker Compose with health checks, resource limits, security contexts
 - Non-root user execution, read-only filesystems, capability dropping
@@ -131,30 +135,30 @@ Dual authentication system (cookie-based for web, bearer tokens for API) with CS
 
 ## Technologies & Frameworks
 
-| Category | Technology |
-|----------|------------|
-| **Backend API** | FastAPI 0.100+, Pydantic v2 |
-| **Database** | PostgreSQL 15 (async via asyncpg), SQLite for tests |
-| **ORM** | SQLAlchemy 2.0 (async, declarative base, mapped_column) |
-| **Migrations** | Alembic with numbered revisions |
-| **Queue** | Redis 7 (async, sorted sets for retry) |
-| **Worker** | asyncio-based consumer with BRPOP blocking |
-| **Auth** | JWT (python-jose), bcrypt, passlib |
-| **Rate Limiting** | slowapi |
-| **SSE** | sse-starlette for real-time job status |
-| **Web UI** | HTMX + Jinja2 templates + Tailwind CSS (build via pnpm) |
-| **Media Processing** | yt-dlp + ffmpeg |
-| **Metrics** | prometheus-client |
-| **Testing** | pytest, pytest-asyncio, pytest-xdist (parallel), httpx |
-| **Linting** | ruff (with isort, pyupgrade, bugbear rules) |
-| **Type Checking** | mypy with pydantic plugin |
-| **Security Scanning** | bandit, safety |
+| Category              | Technology                                              |
+| --------------------- | ------------------------------------------------------- |
+| **Backend API**       | FastAPI 0.100+, Pydantic v2                             |
+| **Database**          | PostgreSQL 15 (async via asyncpg), SQLite for tests     |
+| **ORM**               | SQLAlchemy 2.0 (async, declarative base, mapped_column) |
+| **Migrations**        | Alembic with numbered revisions                         |
+| **Queue**             | Redis 7 (async, sorted sets for retry)                  |
+| **Worker**            | asyncio-based consumer with BRPOP blocking              |
+| **Auth**              | JWT (python-jose), bcrypt, passlib                      |
+| **Rate Limiting**     | slowapi                                                 |
+| **SSE**               | sse-starlette for real-time job status                  |
+| **Web UI**            | HTMX + Jinja2 templates + Tailwind CSS (build via pnpm) |
+| **Media Processing**  | yt-dlp + ffmpeg                                         |
+| **Metrics**           | prometheus-client                                       |
+| **Testing**           | pytest, pytest-asyncio, pytest-xdist (parallel), httpx  |
+| **Linting**           | ruff (with isort, pyupgrade, bugbear rules)             |
+| **Type Checking**     | mypy with pydantic plugin                               |
+| **Security Scanning** | bandit, safety                                          |
 
 ---
 
 ## Architectural Stack
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                        Client (Browser)                       │
 │              HTMX + Tailwind CSS + SSE (via nginx)           │
@@ -233,7 +237,7 @@ Dual authentication system (cookie-based for web, bearer tokens for API) with CS
 
 ## Project Structure
 
-```
+```text
 vooglaadija/
 ├── app/
 │   ├── api/
@@ -271,22 +275,22 @@ vooglaadija/
 
 ## Key API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/v1/auth/register` | User registration |
-| POST | `/api/v1/auth/login` | User login (returns JWT) |
-| POST | `/api/v1/auth/refresh` | Refresh access token |
-| GET | `/api/v1/auth/me` | Current user profile |
-| POST | `/api/v1/downloads` | Create download job |
-| GET | `/api/v1/downloads` | List user's jobs (paginated) |
-| GET | `/api/v1/downloads/{id}` | Get job status |
-| GET | `/api/v1/downloads/{id}/file` | Download file |
-| POST | `/api/v1/downloads/{id}/retry` | Retry failed job |
-| DELETE | `/api/v1/downloads/{id}` | Delete job |
-| GET | `/web/downloads` | Dashboard (HTMX) |
-| GET | `/web/downloads/stream` | SSE real-time updates |
-| GET | `/health` | Health check |
-| GET | `/metrics` | Prometheus metrics |
+| Method | Path                           | Description                  |
+| ------ | ------------------------------ | ---------------------------- |
+| POST   | `/api/v1/auth/register`        | User registration            |
+| POST   | `/api/v1/auth/login`           | User login (returns JWT)     |
+| POST   | `/api/v1/auth/refresh`         | Refresh access token         |
+| GET    | `/api/v1/auth/me`              | Current user profile         |
+| POST   | `/api/v1/downloads`            | Create download job          |
+| GET    | `/api/v1/downloads`            | List user's jobs (paginated) |
+| GET    | `/api/v1/downloads/{id}`       | Get job status               |
+| GET    | `/api/v1/downloads/{id}/file`  | Download file                |
+| POST   | `/api/v1/downloads/{id}/retry` | Retry failed job             |
+| DELETE | `/api/v1/downloads/{id}`       | Delete job                   |
+| GET    | `/web/downloads`               | Dashboard (HTMX)             |
+| GET    | `/web/downloads/stream`        | SSE real-time updates        |
+| GET    | `/health`                      | Health check                 |
+| GET    | `/metrics`                     | Prometheus metrics           |
 
 ---
 

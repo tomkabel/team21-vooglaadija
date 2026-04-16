@@ -28,6 +28,7 @@ SSH to your VPS and run the deployment script:
 sudo bash deploy.sh all
 
 # Or run phases individually for troubleshooting:
+sudo bash deploy.sh 0   # Pre-flight checks (optional)
 sudo bash deploy.sh 1   # System preparation
 sudo bash deploy.sh 2   # DNS verification
 sudo bash deploy.sh 3   # Directory setup (copies project files)
