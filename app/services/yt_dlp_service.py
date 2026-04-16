@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 import os
 import re
 import signal
@@ -8,7 +7,9 @@ import sys
 import uuid
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 # Timeout for yt-dlp operations in seconds (5 minutes)
 YT_DLP_TIMEOUT = 300
@@ -158,7 +159,7 @@ async def extract_media_url(url: str, storage_path: str) -> tuple[str, str]:
     try:
         os.makedirs(download_dir, exist_ok=True)
     except OSError as e:
-        logger.error("Failed to create download directory %s: %s", download_dir, e)
+        logger.error("failed_to_create_download_directory", directory=download_dir, error=str(e))
         raise StorageError(f"Failed to create download directory: {e}") from e
 
     file_id = str(uuid.uuid4())

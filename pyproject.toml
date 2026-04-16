@@ -8,12 +8,12 @@ version = "1.0.0"
 description = "YouTube Link Processor - REST API Service"
 requires-python = ">=3.12"
 dependencies = [
+    # Core framework
     "alembic",
     "fastapi",
     "uvicorn[standard]",
     "sqlalchemy[asyncio]",
     "asyncpg",
-    "psycopg2-binary",
     "redis",
     "python-jose[cryptography]",
     "passlib[bcrypt]",
@@ -27,9 +27,37 @@ dependencies = [
     "prometheus-client>=0.19.0",
     "slowapi>=0.1.9",
     "yt-dlp>=2025.3.0",
+    
+    # HIGH PRIORITY - Observability & Performance Enhancements
+    # Structured logging with structlog
+    "structlog>=24.0.0",
+    # Fast JSON serialization (2-3x faster than stdlib)
+    "orjson>=3.9.0",
+    # Async event loop performance (2-4x faster)
+    "uvloop>=0.19.0; sys_platform != 'win32'",
+    # Modern PostgreSQL driver (psycopg3)
+    "psycopg[binary]>=3.1.0",
+    
+    # MEDIUM PRIORITY - Reliability & Debugging
+    # Battle-tested retry logic
+    "tenacity>=8.2.0",
+    # Redis Queue for robust job processing (optional)
+    "rq>=1.15.0",
+    # Error tracking and performance monitoring
+    "sentry-sdk>=1.40.0",
 ]
 
+# Optional feature groups
 [project.optional-dependencies]
+# Observability stack - includes NetData-compatible libraries
+observability = [
+    "structlog>=24.0.0",
+    "orjson>=3.9.0",
+    "uvloop>=0.19.0",
+    "psycopg[binary]>=3.1.0",
+    "tenacity>=8.2.0",
+    "sentry-sdk>=1.40.0",
+]
 server = [
     "fastapi",
     "uvicorn[standard]",
@@ -110,12 +138,13 @@ description = "Default development environment"
 
 [tool.hatch.default.scripts]
 dev = "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+dev-uvloop = "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --loop uvloop"
 test = "pytest tests/ -v --cov=app --cov-report=term-missing"
 lint = "ruff check app/ tests/ --output-format=github"
 "lint-format" = "ruff format --check app/ tests/"
 type-check = "mypy app/ --ignore-missing-imports --install-types --non-interactive"
 # Coverage convenience scripts
-cov = "pytest tests/ -v --cov=app --cov-report=term-missing --cov-report=xml"
+cov = "pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing --cov-report=html"
 "cov-html" = "coverage html"
 # Clean script
 clean = "find . -type d -name __pycache__ -exec rm -rf {} +"
@@ -124,6 +153,10 @@ db-migrate = "alembic upgrade head"
 db-rollback = "alembic downgrade -1"
 db-history = "alembic history"
 db-current = "alembic current"
+# Observability scripts
+"netdata-status" = "curl -s http://localhost:19999/api/v1/info | jq ."
+"netdata-metrics" = "curl -s http://localhost:19999/api/v1/allmetrics?format=json | jq ."
+"sentry-test" = "python -c \"import sentry_sdk; sentry_sdk.init(dsn=None); raise Exception('Sentry test')\" 2>&1 || echo 'Sentry test complete'"
 
 # ============================================
 # LINT ENVIRONMENT (detached - no project install)
@@ -219,6 +252,23 @@ scan-bandit = "bandit -r app/ -f screen --confidence-level high --severity-level
 scan-safety = "safety check --json --output=security-report.json || true"
 "bandit-report" = "bandit -r app/ -f html -o bandit_report.html"
 "safety-report" = "safety check --json --output=security-report.json || true"
+
+# ============================================
+# MONITORING ENVIRONMENT (NetData, etc.)
+# ============================================
+[tool.hatch.envs.monitoring]
+description = "Monitoring and observability scripts"
+installer = "uv"
+skip-install = true  # No dependencies needed for curl scripts
+
+[tool.hatch.envs.monitoring.scripts]
+# NetData monitoring
+netdata-status = "curl -s http://localhost:19999/api/v1/info | jq ."
+netdata-metrics = "curl -s http://localhost:19999/api/v1/allmetrics?format=json | jq ."
+netdata-charts = "curl -s http://localhost:19999/api/v1/charts | jq ."
+netdata-alarms = "curl -s http://localhost:19999/api/v1/alarms | jq ."
+# Sentry test
+sentry-test = "python -c \"import sentry_sdk; sentry_sdk.init(dsn=None); raise Exception('Sentry test')\" 2>&1 || echo 'Sentry test complete'"
 
 # ============================================
 # INTERNAL HATCH-TEST ENVIRONMENT

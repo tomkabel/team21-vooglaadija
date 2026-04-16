@@ -1,16 +1,34 @@
-import logging
+"""FastAPI application entry point with structured logging and performance optimizations.
+
+Features:
+- structlog for structured JSON logging in production
+- orjson for fast JSON serialization
+- uvloop for improved async performance
+- Sentry for error tracking (production only)
+"""
+
 import os
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, ORJSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles  # noqa: F401 - imported for mounting
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+# Optional: uvloop for better async performance (installed separately)
+try:
+    import uvloop
+
+    uvloop.install()
+    UVLOOP_AVAILABLE = True
+except ImportError:
+    UVLOOP_AVAILABLE = False
 
 from app.api.middleware import PrometheusMiddleware
 from app.api.rate_limit_config import limiter, rate_limit_exceeded_handler
@@ -20,21 +38,49 @@ from app.api.routes.sse import router as sse_router
 from app.api.routes.web import router as web_router
 from app.auth import verify_token
 from app.config import settings
-from app.logging_config import setup_logging
+from app.logging_config import configure_logging, get_logger
 from app.metrics import init_metrics
 from app.schemas.error import ErrorCode, error_response_dict
 
-logger = logging.getLogger(__name__)
+# Initialize structlog - must happen before any logging
+configure_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
+logger = get_logger(__name__)
+
+
+# Sentry initialization (production only)
+if settings.environment == "production" and os.environ.get("SENTRY_DSN"):
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.sqlalchemy import SqlAlchemyIntegration
+    from sentry_sdk.integrations.redis import RedisIntegration
+
+    sentry_sdk.init(
+        dsn=os.environ["SENTRY_DSN"],
+        integrations=[
+            FastApiIntegration(transaction_style="endpoint"),
+            SqlAlchemyIntegration(),
+            RedisIntegration(),
+        ],
+        traces_sample_rate=0.1,  # 10% of transactions for performance monitoring
+        profiles_sample_rate=0.1,
+        environment=settings.environment,
+        release="vooglaadija@1.0.0",
+    )
+    logger.info("sentry_initialized", dsn_masked="***")
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI, *args, **kwargs):
+async def lifespan(app: FastAPI, *args: Any, **kwargs: Any) -> AsyncIterator[None]:
     """Lifespan context manager for startup/shutdown events."""
-    setup_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
+    logger.info(
+        "application_starting",
+        version="0.1.0",
+        environment=settings.environment,
+        uvloop_available=UVLOOP_AVAILABLE,
+    )
     init_metrics()
-    logger.info("Starting YouTube Link Processor API")
     yield
-    logger.info("Shutting down YouTube Link Processor API")
+    logger.info("application_shutting_down")
 
 
 app = FastAPI(
@@ -45,6 +91,8 @@ app = FastAPI(
         "and retrieving processed files. Authentication uses bearer JWT access tokens."
     ),
     version="0.1.0",
+    # Use ORJSONResponse for faster JSON serialization
+    default_response_class=ORJSONResponse,
     contact={
         "name": "Team 21",
         "url": "https://github.com/tomkabel/team21-vooglaadija",
@@ -77,7 +125,7 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # Security headers middleware (CSP and other best practices)
 @app.middleware("http")
-async def add_security_headers(request: Request, call_next):
+async def add_security_headers(request: Request, call_next: Any) -> Any:
     """Add Content-Security-Policy and other security headers to all responses."""
     # Generate a secure nonce for inline script tags
     nonce = uuid.uuid4().hex
@@ -108,7 +156,7 @@ async def add_security_headers(request: Request, call_next):
 
 # Request ID middleware for debugging
 @app.middleware("http")
-async def add_request_id(request: Request, call_next):
+async def add_request_id(request: Request, call_next: Any) -> Any:
     """Add a unique request ID to each request for debugging."""
     request_id = str(uuid.uuid4())
     request.state.request_id = request_id
@@ -135,8 +183,11 @@ app.mount(
 
 # Global exception handlers
 @app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     """Handle HTTP exceptions with standardized error response."""
+    # Get request_id if available
+    request_id = getattr(request.state, "request_id", "unknown")
+
     # Map status codes to error codes
     error_code_map = {
         400: ErrorCode.VALIDATION_ERROR,
@@ -159,6 +210,14 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         ErrorCode.VALIDATION_ERROR if 400 <= exc.status_code < 500 else ErrorCode.INTERNAL_ERROR,
     )
 
+    logger.warning(
+        "http_exception",
+        status_code=exc.status_code,
+        error_code=code.value,
+        detail=str(exc.detail),
+        request_id=request_id,
+    )
+
     return JSONResponse(
         status_code=exc.status_code,
         content=error_response_dict(code, str(exc.detail)),
@@ -167,8 +226,10 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """Handle validation errors with standardized error response."""
+    request_id = getattr(request.state, "request_id", "unknown")
+
     # Extract validation errors details
     errors = []
     for error in exc.errors():
@@ -179,6 +240,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 "type": error["type"],
             },
         )
+
+    logger.warning(
+        "validation_error",
+        error_count=len(errors),
+        request_id=request_id,
+    )
 
     return JSONResponse(
         status_code=422,
@@ -191,11 +258,18 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 @app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
+async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle unexpected exceptions with standardized error response."""
     request_id = getattr(request.state, "request_id", "unknown")
-    logger.error(f"Unhandled exception [{request_id}]: {exc}", exc_info=True)
+    logger.error(
+        "unhandled_exception",
+        exception_type=type(exc).__name__,
+        exception_message=str(exc),
+        request_id=request_id,
+        exc_info=True,
+    )
 
+    # Sentry will automatically capture the exception if configured
     return JSONResponse(
         status_code=500,
         content=error_response_dict(ErrorCode.INTERNAL_ERROR, "An internal error occurred"),
@@ -215,7 +289,7 @@ app.include_router(web_router)  # prefix="/web", routes: /web/login, /web/downlo
 
 
 @app.get("/")
-async def root(request: Request):
+async def root(request: Request) -> RedirectResponse:
     """Redirect root to login or dashboard based on auth status."""
     # Check if user has a valid token in cookies
     token = request.cookies.get("access_token")

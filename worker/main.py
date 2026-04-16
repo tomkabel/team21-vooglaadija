@@ -1,5 +1,6 @@
+"""Worker main loop for processing download jobs with structured logging."""
+
 import asyncio
-import logging
 import os
 import signal
 from datetime import UTC, datetime, timedelta
@@ -8,7 +9,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database import get_async_session_factory
-from app.logging_config import setup_logging
+from app.logging_config import configure_logging, get_logger
 from app.models.download_job import DownloadJob
 from worker.health import (
     start_health_server,
@@ -19,15 +20,17 @@ from worker.health import (
 from worker.processor import process_next_job, reset_stuck_jobs, sync_outbox_to_queue
 from worker.queue import redis_client
 
-setup_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
-logger = logging.getLogger(__name__)
+# Initialize structured logging
+configure_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
+logger = get_logger(__name__)
 
 # Graceful shutdown event
 shutdown_event = asyncio.Event()
 
 
 def _signal_handler() -> None:
-    logger.info("Received shutdown signal, stopping worker...")
+    """Handle shutdown signals gracefully."""
+    logger.info("received_shutdown_signal", signal="SIGTERM/SIGINT")
     shutdown_event.set()
 
 
@@ -57,27 +60,27 @@ async def cleanup_expired_jobs() -> int:
                 if resolved_path.startswith(safe_dir) and os.path.exists(resolved_path):
                     try:
                         os.remove(resolved_path)
-                        logger.info("Cleaned up expired file: %s", resolved_path)
+                        logger.info("cleaned_up_expired_file", file_path=resolved_path, job_id=str(job.id))
                         # Only delete DB row after successful file removal
                         await db.delete(job)
                         cleanup_count += 1
                     except OSError as e:
-                        logger.warning("Failed to delete expired file %s: %s", job.file_path, e)
+                        logger.warning("failed_to_delete_expired_file", file_path=job.file_path, error=str(e))
                         # Don't delete DB row - cleanup will retry next interval
                 elif resolved_path.startswith(safe_dir):
                     # File already deleted, just remove DB row
-                    logger.info("File already deleted for job %s: %s", job.id, job.file_path)
+                    logger.info("file_already_deleted", job_id=str(job.id), file_path=job.file_path)
                     await db.delete(job)
                     cleanup_count += 1
                 else:
                     logger.warning(
-                        "Skipping path traversal attempt for job %s: %s", job.id, job.file_path
+                        "path_traversal_attempt_skipped", job_id=str(job.id), file_path=job.file_path
                     )
 
             await db.commit()
 
         if cleanup_count > 0:
-            logger.info("Cleaned up %d expired jobs", cleanup_count)
+            logger.info("cleanup_completed", expired_jobs_cleaned=cleanup_count)
 
         return cleanup_count
 
@@ -93,28 +96,28 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, _signal_handler)
 
-    logger.info("Worker started, waiting for jobs...")
+    logger.info("worker_started")
 
     # Test Redis connection before starting
-    logger.info("Testing Redis connection...")
+    logger.info("testing_redis_connection")
     try:
         await redis_client.ping()
-        logger.info("Redis connection successful")
+        logger.info("redis_connection_successful")
     except Exception as e:
-        logger.error("Failed to connect to Redis: %s", e)
+        logger.error("redis_connection_failed", error=str(e))
         raise
 
     # Test database connection before starting
-    logger.info("Testing database connection...")
+    logger.info("testing_database_connection")
     try:
         session_factory = get_async_session_factory()
         async with session_factory() as db:
             from sqlalchemy import text
 
             await db.execute(text("SELECT 1"))
-        logger.info("Database connection successful")
+        logger.info("database_connection_successful")
     except Exception as e:
-        logger.error("Failed to connect to database: %s", e)
+        logger.error("database_connection_failed", error=str(e))
         raise
 
     # Start HTTP health server for orchestration tools
@@ -157,7 +160,7 @@ async def main() -> None:
                 await process_next_job(job_id_str)
             # If BRPOP timed out, no jobs available — continue to cleanup/heartbeat
         except Exception as e:
-            logger.error("Error processing job: %s", e)
+            logger.error("job_processing_error", error=str(e))
             await asyncio.sleep(1)
 
         now = datetime.now(UTC)
@@ -168,14 +171,14 @@ async def main() -> None:
                 cleanup_count = await cleanup_expired_jobs()
                 stuck_count = await reset_stuck_jobs(timeout_minutes=10)
                 logger.info(
-                    "Cleanup completed: cleaned up %d expired jobs, reset %d stuck jobs",
-                    cleanup_count,
-                    stuck_count,
+                    "cleanup_cycle_completed",
+                    expired_jobs_cleaned=cleanup_count,
+                    stuck_jobs_reset=stuck_count,
                 )
                 last_cleanup = now
                 update_worker_state(last_cleanup=last_cleanup.isoformat())
             except Exception as e:
-                logger.error("Error during cleanup: %s", e)
+                logger.error("cleanup_error", error=str(e))
 
         heartbeat_counter += 1
         if heartbeat_counter >= heartbeat_interval:
@@ -183,13 +186,13 @@ async def main() -> None:
                 await write_health_async()
                 update_worker_state()
             except Exception as e:
-                logger.warning("Failed to write health: %s", e)
+                logger.warning("health_write_failed", error=str(e))
             heartbeat_counter = 0
 
     # Shutdown
     if health_server:
         stop_health_server()
-    logger.info("Worker stopped gracefully")
+    logger.info("worker_stopped_gracefully")
 
 
 if __name__ == "__main__":
