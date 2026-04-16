@@ -66,11 +66,21 @@ while getopts ":hvnc:d:e:k:" opt; do
     e) CLOUDFLARE_EMAIL=$OPTARG ;;
     k) CLOUDFLARE_API_KEY=$OPTARG ;;
     :) error_exit "The -$OPTARG rune requires a sacrifice. You offered only void." ;;
-    \?) error_exit "Invalid option. You fucking stupid: -$OPTARG" ;;
+    \?) error_exit "Invalid option: -$OPTARG. Use -h for help." ;;
   esac
 done
 
 if [[ -n "$CONFIG_FILE" ]]; then
+  # Resolve to absolute path and validate
+  CONFIG_FILE="$(realpath "$CONFIG_FILE" 2>/dev/null)" || {
+    error_exit "Cannot resolve config file path: $CONFIG_FILE"
+  }
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    error_exit "Config file not found: $CONFIG_FILE"
+  fi
+  if [[ ! -r "$CONFIG_FILE" ]]; then
+    error_exit "Config file not readable: $CONFIG_FILE"
+  fi
   log "Receiving transmission from alternate timeline: $CONFIG_FILE"
   # shellcheck source=/dev/null
   source "$CONFIG_FILE"
@@ -155,6 +165,7 @@ prompt_inputs() {
 save_config() {
   echo "$CLOUDFLARE_EMAIL"  > "${CONFIG_DIR}/cf_email.txt"
   echo "$CLOUDFLARE_API_KEY" > "${CONFIG_DIR}/cf_api_key.txt"
+  chmod 600 "${CONFIG_DIR}/cf_email.txt" "${CONFIG_DIR}/cf_api_key.txt"
   log "Your secrets have been inscribed onto disposable data-slates."
 }
 
