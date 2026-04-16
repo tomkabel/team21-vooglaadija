@@ -47,7 +47,7 @@ class TestUvloopAsyncPerformance:
         uvloop.install()
 
         tasks = []
-        for i in range(100):
+        for _ in range(100):
             tasks.append(asyncio.create_task(asyncio.sleep(0.001)))
 
         await asyncio.gather(*tasks)

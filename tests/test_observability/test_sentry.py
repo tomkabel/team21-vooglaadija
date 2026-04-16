@@ -50,21 +50,28 @@ class TestSentryFastAPIIntegration:
 
     def test_sentry_fastapi_integration_importable(self):
         """Test that FastAPI integration can be imported."""
-        pytest.importorskip("sentry_sdk.integrations.fastapi", reason="FastAPI integration not installed")
+        pytest.importorskip(
+            "sentry_sdk.integrations.fastapi", reason="FastAPI integration not installed"
+        )
         from sentry_sdk.integrations.fastapi import FastApiIntegration
 
         assert FastApiIntegration is not None
 
     def test_sentry_sqlalchemy_integration_importable(self):
         """Test that SQLAlchemy integration can be imported."""
-        pytest.importorskip("sentry_sdk.integrations.sqlalchemy", reason="SQLAlchemy integration not installed")
-        from sentry_sdk.integrations.sqlalchemy import SqlAlchemyIntegration
+        pytest.importorskip("sqlalchemy", reason="SQLAlchemy not installed")
+        pytest.importorskip(
+            "sentry_sdk.integrations.sqlalchemy", reason="SQLAlchemy integration not installed"
+        )
+        from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
-        assert SqlAlchemyIntegration is not None
+        assert SqlalchemyIntegration is not None
 
     def test_sentry_redis_integration_importable(self):
         """Test that Redis integration can be imported."""
-        pytest.importorskip("sentry_sdk.integrations.redis", reason="Redis integration not installed")
+        pytest.importorskip(
+            "sentry_sdk.integrations.redis", reason="Redis integration not installed"
+        )
         from sentry_sdk.integrations.redis import RedisIntegration
 
         assert RedisIntegration is not None

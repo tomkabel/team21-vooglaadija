@@ -23,7 +23,7 @@ async def do_register(client: AsyncClient, email: str, password: str) -> str:
     if csrf_token:
         headers["X-CSRF-Token"] = csrf_token
 
-    reg_response = await client.post(
+    _ = await client.post(
         "/web/register",
         data={
             "email": email,
@@ -390,7 +390,7 @@ class TestLoginForm:
             transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
         ) as client:
             await do_register(client, email, password)
-            csrf_token = await do_login(client, email, password)
+            _ = await do_login(client, email, password)
 
             login_response = await client.post(
                 "/web/login",
@@ -643,7 +643,7 @@ class TestLogout:
             transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
         ) as client:
             await do_register(client, email, password)
-            csrf_token = await do_login(client, email, password)
+            _ = await do_login(client, email, password)
 
             logout_response = await client.post(
                 "/web/logout",
@@ -1108,7 +1108,7 @@ class TestHtmxBehavior:
             transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
         ) as client:
             await do_register(client, email, password)
-            csrf_token = await do_login(client, email, password)
+            _ = await do_login(client, email, password)
 
             logout_response = await client.post(
                 "/web/logout",

@@ -4,10 +4,9 @@ import os
 
 import pytest
 
-# structlog is a project dependency
-structlog = pytest.importorskip("structlog", reason="structlog not installed")
-
 from app.logging_config import configure_logging, get_logger
+
+structlog = pytest.importorskip("structlog", reason="structlog not installed")
 
 
 @pytest.fixture(autouse=True)
