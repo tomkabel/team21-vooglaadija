@@ -17,6 +17,8 @@ Usage:
 
 import logging
 import sys
+from collections.abc import MutableMapping
+from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -27,22 +29,22 @@ if TYPE_CHECKING:
 
 
 def add_timestamp(
-    logger: logging.Logger,  # noqa: ARG001 - required by structlog processor signature
-    method_name: str,  # noqa: ARG001 - required by structlog processor signature
-    event_dict: dict[str, Any],
-) -> dict[str, Any]:
+    logger: Any,
+    method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
     """Add ISO timestamp to all log entries."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    event_dict["timestamp"] = datetime.now(timezone.utc).isoformat()
+    event_dict["timestamp"] = datetime.now(UTC).isoformat()
     return event_dict
 
 
 def add_service_context(
-    logger: logging.Logger,  # noqa: ARG001 - required by structlog processor signature
-    method_name: str,  # noqa: ARG001 - required by structlog processor signature
-    event_dict: dict[str, Any],
-) -> dict[str, Any]:
+    logger: Any,
+    method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
     """Add service context to all log entries."""
     event_dict["service"] = "vooglaadija"
     # Try to get environment from settings, fall back to env var
@@ -50,7 +52,7 @@ def add_service_context(
         from app.config import settings
 
         event_dict["environment"] = (
-            settings.ENVIRONMENT.value if hasattr(settings, "ENVIRONMENT") else "unknown"
+            settings.environment if hasattr(settings, "environment") else "unknown"
         )
     except Exception:
         import os
@@ -60,10 +62,10 @@ def add_service_context(
 
 
 def rename_event_key(
-    logger: logging.Logger,  # noqa: ARG001 - required by structlog processor signature
+    logger: Any,
     method_name: str,
-    event_dict: dict[str, Any],
-) -> dict[str, Any]:
+    event_dict: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
     """Rename 'event' key to 'message' for standard log aggregation compatibility.
 
     structlog uses 'event' as the default key for log messages.
@@ -115,10 +117,10 @@ def configure_logging(log_level: str = "INFO") -> None:
         shared_processors.append(structlog.processors.format_exc_info)
 
         structlog.configure(
-            processors=shared_processors
-            + [
+            processors=[
+                *shared_processors,
                 # Final renderer - JSON output
-                structlog.processors.JSONRenderer()
+                structlog.processors.JSONRenderer(),
             ],
             wrapper_class=structlog.stdlib.BoundLogger,
             context_class=dict,
@@ -179,8 +181,9 @@ def get_logger(name: str | None = None, **kwargs: Any) -> "BoundLogger":
     """
     logger = structlog.get_logger(name)
     if kwargs:
-        return logger.bind(**kwargs)
-    return logger
+        bound_logger = logger.bind(**kwargs)
+        return bound_logger  # type: ignore[no-any-return]
+    return logger  # type: ignore[no-any-return]
 
 
 # Backward compatibility alias for type hints

@@ -19,13 +19,11 @@ from tenacity import (
 class TransientError(Exception):
     """Error that should trigger a retry."""
 
-    pass
 
 
 class PermanentError(Exception):
     """Error that should NOT trigger a retry."""
 
-    pass
 
 
 class TestTenacityRetry:

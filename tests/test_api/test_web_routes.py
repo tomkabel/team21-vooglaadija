@@ -146,8 +146,9 @@ class TestValidateCsrfToken:
     @pytest.mark.asyncio
     async def test_get_request_always_valid(self):
         """Test that GET requests don't require CSRF validation."""
-        from fastapi import Request
         from unittest.mock import MagicMock
+
+        from fastapi import Request
 
         from app.api.routes.web import validate_csrf_token
 
@@ -162,8 +163,9 @@ class TestValidateCsrfToken:
     @pytest.mark.asyncio
     async def test_head_request_always_valid(self):
         """Test that HEAD requests don't require CSRF validation."""
-        from fastapi import Request
         from unittest.mock import MagicMock
+
+        from fastapi import Request
 
         from app.api.routes.web import validate_csrf_token
 
@@ -178,8 +180,9 @@ class TestValidateCsrfToken:
     @pytest.mark.asyncio
     async def test_options_request_always_valid(self):
         """Test that OPTIONS requests don't require CSRF validation."""
-        from fastapi import Request
         from unittest.mock import MagicMock
+
+        from fastapi import Request
 
         from app.api.routes.web import validate_csrf_token
 
@@ -194,8 +197,9 @@ class TestValidateCsrfToken:
     @pytest.mark.asyncio
     async def test_missing_cookie_token_returns_false(self):
         """Test that missing cookie CSRF token returns False."""
+        from unittest.mock import AsyncMock, MagicMock
+
         from fastapi import Request
-        from unittest.mock import MagicMock, AsyncMock
 
         from app.api.routes.web import validate_csrf_token
 
@@ -211,8 +215,9 @@ class TestValidateCsrfToken:
     @pytest.mark.asyncio
     async def test_valid_header_token(self):
         """Test that matching header and cookie tokens return True."""
-        from fastapi import Request
         from unittest.mock import MagicMock
+
+        from fastapi import Request
 
         from app.api.routes.web import validate_csrf_token
 
@@ -227,8 +232,9 @@ class TestValidateCsrfToken:
     @pytest.mark.asyncio
     async def test_invalid_header_token(self):
         """Test that non-matching header and cookie tokens return False."""
-        from fastapi import Request
         from unittest.mock import MagicMock
+
+        from fastapi import Request
 
         from app.api.routes.web import validate_csrf_token
 
@@ -261,8 +267,9 @@ class TestValidateFilePath:
 
     def test_path_traversal_blocked(self, tmp_path):
         """Test that path traversal attempts are blocked."""
-        from app.api.routes.web import _validate_file_path
         from fastapi import HTTPException
+
+        from app.api.routes.web import _validate_file_path
 
         downloads_dir = tmp_path / "downloads"
         downloads_dir.mkdir()
@@ -285,8 +292,9 @@ class TestIsHtmxRequest:
 
     def test_htmx_request_true(self):
         """Test that HX-Request header set to 'true' returns True."""
-        from fastapi import Request
         from unittest.mock import MagicMock
+
+        from fastapi import Request
 
         from app.api.routes.web import is_htmx_request
 
@@ -297,8 +305,9 @@ class TestIsHtmxRequest:
 
     def test_htmx_request_false(self):
         """Test that missing or non-true HX-Request returns False."""
-        from fastapi import Request
         from unittest.mock import MagicMock
+
+        from fastapi import Request
 
         from app.api.routes.web import is_htmx_request
 
@@ -309,8 +318,9 @@ class TestIsHtmxRequest:
 
     def test_htmx_request_not_true(self):
         """Test that HX-Request header set to 'false' returns False."""
-        from fastapi import Request
         from unittest.mock import MagicMock
+
+        from fastapi import Request
 
         from app.api.routes.web import is_htmx_request
 

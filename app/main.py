@@ -9,15 +9,16 @@ Features:
 
 import os
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles  # noqa: F401 - imported for mounting
+from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -51,14 +52,14 @@ logger = get_logger(__name__)
 if settings.environment == "production" and os.environ.get("SENTRY_DSN"):
     import sentry_sdk
     from sentry_sdk.integrations.fastapi import FastApiIntegration
-    from sentry_sdk.integrations.sqlalchemy import SqlAlchemyIntegration
     from sentry_sdk.integrations.redis import RedisIntegration
+    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
     sentry_sdk.init(
         dsn=os.environ["SENTRY_DSN"],
         integrations=[
             FastApiIntegration(transaction_style="endpoint"),
-            SqlAlchemyIntegration(),
+            SqlalchemyIntegration(),
             RedisIntegration(),
         ],
         traces_sample_rate=0.1,  # 10% of transactions for performance monitoring
@@ -226,7 +227,9 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
     """Handle validation errors with standardized error response."""
     request_id = getattr(request.state, "request_id", "unknown")
 

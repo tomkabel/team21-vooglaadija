@@ -1,6 +1,5 @@
 """Tests for structured logging configuration (structlog)."""
 
-import logging
 import os
 
 import pytest

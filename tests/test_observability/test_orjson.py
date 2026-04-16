@@ -1,6 +1,7 @@
 """Tests for ORJSON JSON serialization performance."""
 
 import json
+from datetime import UTC
 from typing import Any
 
 import pytest
@@ -39,9 +40,9 @@ class TestORJSONSerialization:
 
     def test_orjson_dumps_datetime(self):
         """Test that orjson.dumps handles datetime objects."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        data = {"timestamp": datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc)}
+        data = {"timestamp": datetime(2026, 4, 15, 12, 0, 0, tzinfo=UTC)}
         result = orjson.dumps(data)
         # orjson serializes datetime to ISO format by default
         assert b"2026-04-15" in result
@@ -106,13 +107,13 @@ class TestORJSONEdgeCases:
 
     def test_orjson_default_option(self):
         """Test orjson default parameter for custom serialization."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         def serialize_datetime(obj: Any) -> str:
             if isinstance(obj, datetime):
                 return obj.isoformat()
             raise TypeError()
 
-        data = {"timestamp": datetime(2026, 4, 15, tzinfo=timezone.utc)}
+        data = {"timestamp": datetime(2026, 4, 15, tzinfo=UTC)}
         result = orjson.dumps(data, default=serialize_datetime)
         assert b"2026-04-15" in result
