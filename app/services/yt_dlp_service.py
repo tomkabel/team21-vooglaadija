@@ -36,7 +36,7 @@ def _extract_error_message(error_msg: str, fallback: str) -> str:
     """Extract the most relevant error line from error output."""
     for error_line in error_msg.split("\n"):
         stripped = error_line.strip()
-        if "ERROR" in stripped or "error" in stripped.lower()[:50]:
+        if "ERROR" in stripped or "error" in stripped.lower():
             return stripped
     return fallback if fallback else error_msg
 
@@ -78,8 +78,6 @@ ydl_opts = {{
     "no_warnings": True,
     "socket_timeout": 60,
     "retries": 3,
-    # Merge formats when video-only and audio-only streams need combining
-    "merge_formats": "prefer_merge",
     # Use youtube client that supports more formats
     "extractor_args": {{
         "youtube": {{

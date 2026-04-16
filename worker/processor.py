@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -45,8 +46,6 @@ def _cleanup_downloaded_file(file_path: str | None) -> None:
     """Clean up a downloaded file if it exists."""
     if file_path:
         try:
-            import os
-
             if os.path.exists(file_path):
                 os.remove(file_path)
                 logger.info("Cleaned up partial download: %s", file_path)
@@ -267,7 +266,7 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
         finally:
             JOB_DURATION_SECONDS.observe(time.time() - start_time)
 
-    # This should never be reached, but satisfies type checker
+    # Fallback return for paths that don't explicitly return
     return False
 
 
