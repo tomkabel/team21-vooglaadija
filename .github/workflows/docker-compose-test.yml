@@ -64,12 +64,7 @@ jobs:
       - name: Build and start services
         run: |
           echo "Building and starting all services..."
-          docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
-
-      - name: Wait for services to initialize
-        run: |
-          echo "Waiting for services to initialize (45s)..."
-          sleep 45
+          docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build --wait
 
       # ============================================
       # 3. WAIT FOR DOCKER HEALTH CHECKS

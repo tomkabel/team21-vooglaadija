@@ -26,7 +26,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Install build dependencies (cached layer)
 COPY pyproject.toml .
-RUN pip install --upgrade pip setuptools wheel && \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip setuptools wheel && \
     pip install hatchling hatch-uv
 
 # ============================================
@@ -44,7 +45,7 @@ COPY frontend/package*.json pnpm-lock.yaml ./frontend/
 
 # Install frontend dependencies using pnpm from the frontend directory
 WORKDIR /app/frontend
-RUN pnpm install
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm install
 
 # Copy Tailwind config
 COPY frontend/tailwind.config.js ./tailwind.config.js
