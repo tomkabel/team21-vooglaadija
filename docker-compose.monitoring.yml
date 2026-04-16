@@ -10,8 +10,6 @@
 #   - Redis (built-in Redis metrics)
 #   - Docker system-wide metrics
 
-version: "3.8"
-
 x-netdata-common: &netdata-common
   image: netdata/netdata:stable
   hostname: "{{.Service.Name}}"

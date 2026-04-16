@@ -29,7 +29,6 @@ services:
         echo 'Storage permissions fixed';
         exit 0;
       "
-    profiles: []
 
   # ==========================================
   # API Service - Production Overrides
@@ -146,12 +145,3 @@ services:
     restart: "no"
     deploy:
       replicas: 0
-
-# ==========================================
-# Networks - Ensure production network exists
-# Uses dict format to match base docker-compose.yml network merging
-# ==========================================
-networks:
-  ytprocessor-network:
-    name: ytprocessor-network
-    external: false

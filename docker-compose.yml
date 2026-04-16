@@ -28,30 +28,7 @@ x-common-env:
   FEATURE_METRICS_ENABLED: ${FEATURE_METRICS_ENABLED:-true}
   FEATURE_TRACING_ENABLED: ${FEATURE_TRACING_ENABLED:-true}
 
-x-security-context:
-  &security-context # Security context - run as non-root, read-only root filesystem
-  read_only: true
-  tmpfs:
-    - /tmp
-    - /var/run
-    - /var/cache
-  # Note: Storage and other writable paths need to be mounted as volumes
-  user: "1000:1000" # appuser:appuser
-  # Drop all privileges and add only necessary ones
-  cap_drop:
-    - ALL
-  cap_add:
-    - CHOWN # For entrypoint scripts that might need to chown volumes
-    - SETGID
-    - SETUID
-  # Additional security - use security_opt for no-new-privileges
-  security_opt:
-    - no-new-privileges=true
-  # AppArmor and Seccomp profiles (if available)
-  # apparmor: docker-default
-  # seccomp: runtime/default
-
-x-resources-security: &resources-security
+x-base-service: &base-service
   deploy:
     resources:
       limits:
@@ -85,7 +62,7 @@ services:
     restart: unless-stopped
     environment:
       <<: *common-env
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://asus:8081}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
       REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
       # Override DATABASE_URL directly to use docker network hostnames
@@ -108,7 +85,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    <<: *resources-security
+    <<: *base-service
     healthcheck:
       test:
         [
@@ -144,6 +121,7 @@ services:
     environment:
       <<: *common-env
       WORKER_ID: ${HOSTNAME:-worker-1}
+      WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-8082}
       # Override DATABASE_URL directly to use docker network hostnames
       DATABASE_URL: postgresql+asyncpg://postgres:${DB_PASSWORD}@db:5432/ytprocessor
       # Override REDIS_URL to use docker network hostname
@@ -155,12 +133,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    <<: *resources-security
+    <<: *base-service
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          'python -c "import urllib.request, sys; urllib.request.urlopen(''http://localhost:8081/health'', timeout=5); sys.exit(0)" || exit 1',
+          'python -c "import urllib.request, sys; urllib.request.urlopen(''http://localhost:8082/health'', timeout=5); sys.exit(0)" || exit 1',
         ]
       interval: 30s
       timeout: 10s
@@ -335,7 +313,7 @@ services:
     container_name: swagger-ui
     restart: unless-stopped
     environment:
-      URL: http://localhost:8080/openapi.json
+      URL: http://api:8000/openapi.json
     ports:
       - "8081:8080"
     # swagger-ui doesn't need resource limits or security context restrictions
