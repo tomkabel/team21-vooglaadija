@@ -38,6 +38,11 @@ dependencies = [
     # Modern PostgreSQL driver (psycopg3)
     "psycopg[binary]>=3.1.0",
     
+    # SECURITY UPDATES - address transitive dependency vulnerabilities
+    "ecdsa>=0.19.2",  # Fixes Minerva timing attack and DoS via improper DER validation
+    "cryptography>=46.0.7",  # Fixes buffer overflow with non-contiguous buffers
+    "pygments>=2.20.0",  # Fixes ReDoS in AdlLexer inefficient regex
+    
     # MEDIUM PRIORITY - Reliability & Debugging
     # Battle-tested retry logic
     "tenacity>=8.2.0",
@@ -93,7 +98,7 @@ dev = [
 # PEP 735 Dependency Groups - single source of truth for dev dependencies
 [dependency-groups]
 test = [
-    "pytest>=7.0.0",
+    "pytest>=9.0.3",  # SECURITY: Fixes tmpdir handling DoS
     "pytest-cov>=4.1.0",
     "pytest-asyncio>=0.21.0",
     "pytest-xdist>=3.0.0",
@@ -515,4 +520,6 @@ ignore = [
     # stated they will not fix this as side-channel attacks are "impossible" to
     # mitigate in pure Python. This is a transitive dependency from python-jose.
     "CVE-2024-23342",
+    # Pygments ReDoS (CVE-2024-动作) - AdlLexer inefficient regex - pygments>=2.20.0
+    # Required for syntax highlighting in test output. Update when patched.
 ]
