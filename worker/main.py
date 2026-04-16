@@ -88,7 +88,7 @@ async def cleanup_expired_jobs() -> int:
                     await db.delete(job)
                     cleanup_count += 1
                 except Exception as db_err:
-                    logger.warning("Failed to delete DB row for job %s: %s", job.id, db_err)
+                    logger.warning("db_row_delete_failed", job_id=str(job.id), error=str(db_err))
 
         # Batch commit after processing all jobs
         await db.commit()
@@ -168,7 +168,7 @@ async def main() -> None:
                 lua_script, 2, "retry_queue", "download_queue", now_ts
             )
             if moved_count and moved_count > 0:
-                logger.info("Moved %d due retry jobs to download queue", moved_count)
+                logger.info("retry_jobs_moved", count=moved_count)
 
             # Use BRPOP with timeout for efficient blocking — no busy-waiting
             # Pass the job_id directly to process_next_job to avoid race condition

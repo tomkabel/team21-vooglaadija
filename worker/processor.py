@@ -35,7 +35,7 @@ async def _requeue_job(job_id: UUID, db) -> None:
         update(DownloadJob)
         .where(DownloadJob.id == job_id)
         .values(
-            status="queued",
+            status="pending",
             updated_at=datetime.now(UTC),
         )
     )
@@ -156,6 +156,7 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
             update_worker_state(status="running", current_job_started_at=None)
             JOBS_COMPLETED.labels(status="success").inc()
             logger.info("job_completed_successfully", job_id=str(job_id))
+            return True
         except asyncio.CancelledError:
             # Requeue the job to prevent it being stuck in 'processing'
             # reset_stuck_jobs would otherwise hard-fail it later

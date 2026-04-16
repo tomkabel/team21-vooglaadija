@@ -65,13 +65,13 @@ if settings.environment == "production" and os.environ.get("SENTRY_DSN"):
         traces_sample_rate=0.1,  # 10% of transactions for performance monitoring
         profiles_sample_rate=0.1,
         environment=settings.environment,
-        release="vooglaadija@1.0.0",
+        release="vooglaadija@0.1.0",
     )
     logger.info("sentry_initialized", dsn_masked="***")
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI, *args: Any, **kwargs: Any) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifespan context manager for startup/shutdown events."""
     logger.info(
         "application_starting",

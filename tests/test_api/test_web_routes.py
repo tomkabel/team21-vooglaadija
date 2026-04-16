@@ -23,7 +23,7 @@ async def do_register(client: AsyncClient, email: str, password: str) -> str:
     if csrf_token:
         headers["X-CSRF-Token"] = csrf_token
 
-    _ = await client.post(
+    await client.post(
         "/web/register",
         data={
             "email": email,

@@ -129,15 +129,16 @@ def configure_logging(log_level: str = "INFO") -> None:
         )
     else:
         # Development: Pretty console output with colors
-        shared_processors.append(
+        dev_processors = [
+            *shared_processors,
             structlog.dev.ConsoleRenderer(
                 colors=True,
                 exception_formatter=structlog.dev.plain_traceback,
-            )
-        )
+            ),
+        ]
 
         structlog.configure(
-            processors=shared_processors,
+            processors=dev_processors,
             wrapper_class=structlog.stdlib.BoundLogger,
             context_class=dict,
             logger_factory=structlog.stdlib.LoggerFactory(),

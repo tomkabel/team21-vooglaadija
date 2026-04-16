@@ -121,8 +121,8 @@ services:
     container_name: ytprocessor-certbot
     restart: unless-stopped
     volumes:
-      # SSL certificates (rw for renewal, but service runs read-only renewal checks)
-      - ./infra/ssl:/etc/letsencrypt:rw
+      # SSL certificates from lego (full directory structure for renewal)
+      - ./config/certificates:/etc/letsencrypt:rw
       # ACME challenge webroot
       - ./infra/certbot/data:/var/www/certbot:rw
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h; done;'"

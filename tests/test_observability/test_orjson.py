@@ -98,6 +98,7 @@ class TestORJSONEdgeCases:
 
     def test_orjson_raises_on_invalid_data(self):
         """Test that orjson.dumps raises on non-serializable data."""
+
         # Objects that can't be serialized
         class CustomObject:
             pass
