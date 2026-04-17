@@ -19,7 +19,6 @@ Transitions:
 import asyncio
 import os
 import time
-from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -141,6 +140,7 @@ class CircuitBreaker:
         async with self._lock:
             if self._state == CircuitState.HALF_OPEN:
                 self._success_count += 1
+                self._half_open_calls = max(0, self._half_open_calls - 1)
                 logger.info(
                     "circuit_breaker_success_in_half_open",
                     service=self.name,
@@ -185,7 +185,7 @@ class CircuitBreaker:
             )
 
             if self._state == CircuitState.HALF_OPEN:
-                # Any failure in half-open opens the circuit
+                self._half_open_calls = max(0, self._half_open_calls - 1)
                 logger.warning(
                     "circuit_breaker_opening_from_half_open",
                     service=self.name,
@@ -224,7 +224,7 @@ class CircuitBreaker:
             raise CircuitBreakerOpenError(self.name, self.reset_timeout)
 
         try:
-            if self._state == CircuitState.HALF_OPEN:
+            if self.state == CircuitState.HALF_OPEN:
                 async with self._lock:
                     self._half_open_calls += 1
 
