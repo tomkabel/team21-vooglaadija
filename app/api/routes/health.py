@@ -1,7 +1,5 @@
-from typing import Any, Union
 
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.database import get_async_session_factory
@@ -34,11 +32,20 @@ async def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
+class ReadinessResponse(BaseModel):
+    """Response model for readiness check."""
+
+    status: str
+    database: str
+    redis: str
+
+
 @router.get(
     "/ready",
     summary="Readiness check",
     description="Readiness probe checking database and Redis connectivity. "
     "Used by Kubernetes to determine if the service can receive traffic.",
+    response_model=ReadinessResponse,
     responses={
         200: success_response_doc(
             "Service is ready",
@@ -55,7 +62,7 @@ async def health_check() -> dict[str, str]:
         ),
     },
 )
-async def readiness_check() -> Union[JSONResponse, dict[str, Any]]:
+async def readiness_check() -> ReadinessResponse:
     """
     Readiness probe that checks all dependencies.
 
@@ -64,7 +71,6 @@ async def readiness_check() -> Union[JSONResponse, dict[str, Any]]:
     """
     db_status = "connected"
     redis_status = "connected"
-    errors: list[str] = []
 
     # Check database connectivity
     try:
@@ -75,29 +81,18 @@ async def readiness_check() -> Union[JSONResponse, dict[str, Any]]:
             await db.execute(text("SELECT 1"))
     except Exception as e:
         db_status = f"error: {str(e)[:100]}"
-        errors.append(f"database: {db_status}")
 
     # Check Redis connectivity
     try:
         await redis_client.ping()
     except Exception as e:
         redis_status = f"error: {str(e)[:100]}"
-        errors.append(f"redis: {redis_status}")
 
     # Determine overall status
     is_ready = db_status == "connected" and redis_status == "connected"
 
-    response_data: dict[str, Any] = {
-        "status": "ready" if is_ready else "not_ready",
-        "database": db_status,
-        "redis": redis_status,
-    }
-
-    if not is_ready:
-        response_data["error"] = {
-            "code": ErrorCode.SERVICE_UNAVAILABLE.value,
-            "message": f"Dependencies unavailable: {', '.join(errors)}",
-        }
-        return JSONResponse(status_code=503, content=response_data)
-
-    return response_data
+    return ReadinessResponse(
+        status="ready" if is_ready else "not_ready",
+        database=db_status,
+        redis=redis_status,
+    )

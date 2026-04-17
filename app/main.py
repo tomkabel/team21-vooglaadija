@@ -8,6 +8,7 @@ Features:
 """
 
 import os
+import signal
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -49,6 +50,25 @@ logger = get_logger(__name__)
 
 APP_VERSION = "0.1.0"
 
+# Track shutdown signal for diagnostics
+_shutdown_signal_received: int = 0
+
+
+def _sigterm_handler(signum: int, frame: Any) -> None:
+    """Handle SIGTERM/SIGINT for shutdown diagnostics."""
+    global _shutdown_signal_received  # noqa: PLW0603 - signal handlers require module-level state
+    _shutdown_signal_received = signum
+    signal_name = signal.Signals(signum).name if hasattr(signal, "Signals") else str(signum)
+    logger.warning(
+        "shutdown_signal_received",
+        signal=signal_name,
+        signal_number=signum,
+    )
+
+
+# Register signal handlers for graceful shutdown diagnostics
+signal.signal(signal.SIGTERM, _sigterm_handler)
+signal.signal(signal.SIGINT, _sigterm_handler)
 
 # Sentry initialization (production only)
 if settings.environment == "production" and os.environ.get("SENTRY_DSN"):
@@ -83,7 +103,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     init_metrics()
     yield
-    logger.info("application_shutting_down")
+    logger.info(
+        "application_shutting_down",
+        shutdown_signal=_shutdown_signal_received,
+    )
 
 
 app = FastAPI(
