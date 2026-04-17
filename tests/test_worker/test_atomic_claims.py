@@ -7,7 +7,7 @@ These tests verify the atomic guarded claim pattern where:
 """
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
@@ -55,8 +55,10 @@ class TestAtomicClaims:
         mock_shutdown = asyncio.Event()
 
         with (
-            patch("worker.processor.redis_client", mock_redis),
-            patch("worker.processor.extract_media_url", new_callable=AsyncMock) as mock_extract,
+            patch("worker.queue.redis_client", mock_redis),
+            patch(
+                "worker.processor.extract_media_with_circuit_breaker", new_callable=AsyncMock
+            ) as mock_extract,
             patch("worker.main.shutdown_event", mock_shutdown),
         ):
             mock_extract.return_value = ("/storage/test.mp4", "test.mp4")
@@ -309,8 +311,10 @@ class TestAtomicClaimsIntegration:
         mock_shutdown = asyncio.Event()
 
         with (
-            patch("worker.processor.redis_client", mock_redis),
-            patch("worker.processor.extract_media_url", new_callable=AsyncMock) as mock_extract,
+            patch("worker.queue.redis_client", mock_redis),
+            patch(
+                "worker.processor.extract_media_with_circuit_breaker", new_callable=AsyncMock
+            ) as mock_extract,
             patch("worker.main.shutdown_event", mock_shutdown),
         ):
             mock_extract.return_value = ("/storage/test.mp4", "test.mp4")

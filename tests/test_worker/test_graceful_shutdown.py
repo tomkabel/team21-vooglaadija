@@ -8,11 +8,9 @@ These tests verify:
 """
 
 import asyncio
-import os
 import signal
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
 
 import pytest
 
@@ -22,14 +20,18 @@ class TestGracefulShutdownConfiguration:
 
     @pytest.mark.unit
     def test_grace_period_default_value(self):
-        """Test that default grace period is 30 seconds."""
-        # Force reimport to get fresh values
+        """Test that default grace period is 25 seconds with 5s K8s runway.
+
+        Default is 25s to provide a 5-second runway before SIGKILL
+        (when K8s terminationGracePeriodSeconds=30).
+        """
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
 
-        assert worker.main.GRACE_PERIOD_SECONDS == 30
+        assert worker.main.GRACE_PERIOD_SECONDS == 25
 
     @pytest.mark.unit
     def test_grace_period_configurable_via_env(self, monkeypatch):
@@ -39,6 +41,7 @@ class TestGracefulShutdownConfiguration:
 
         # Force reimport
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -51,6 +54,7 @@ class TestGracefulShutdownConfiguration:
         monkeypatch.setenv("WORKER_GRACE_PERIOD_SECONDS", "0")
 
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -65,6 +69,7 @@ class TestGracefulShutdownTimestampTracking:
     def test_shutdown_requested_at_initially_none(self):
         """Test that shutdown_requested_at is None before shutdown."""
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -75,6 +80,7 @@ class TestGracefulShutdownTimestampTracking:
     def test_shutdown_event_initially_not_set(self):
         """Test that shutdown_event is not set initially."""
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -85,6 +91,7 @@ class TestGracefulShutdownTimestampTracking:
     def test_signal_handler_sets_event_and_timestamp(self):
         """Test that signal handler sets event and records timestamp."""
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -107,6 +114,7 @@ class TestGracefulShutdownTimestampTracking:
     def test_get_grace_period_remaining_before_shutdown(self):
         """Test that grace period remaining is None before shutdown."""
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -122,6 +130,7 @@ class TestGracefulShutdownTimestampTracking:
     def test_get_grace_period_remaining_after_shutdown(self):
         """Test that grace period remaining is calculated after shutdown."""
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -143,6 +152,7 @@ class TestGracefulShutdownTimestampTracking:
     def test_grace_period_expires(self):
         """Test that grace period returns 0 after expiration."""
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -165,6 +175,7 @@ class TestGracefulShutdownBehavior:
     async def test_graceful_shutdown_during_brpop(self):
         """Test graceful shutdown behavior when SIGTERM received during BRPOP."""
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -208,6 +219,7 @@ class TestGracefulShutdownBehavior:
     async def test_grace_period_timeout_enforced(self):
         """Test that worker enforces grace period timeout."""
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -244,6 +256,7 @@ class TestGracefulShutdownIntegration:
     async def test_main_registers_signal_handlers(self):
         """Test that main() registers SIGTERM and SIGINT handlers."""
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -257,12 +270,12 @@ class TestGracefulShutdownIntegration:
                 mock_loop.add_signal_handler.reset_mock()
                 # The handler is registered during import/cleanup
                 # This test verifies the pattern exists
-                pass
 
     @pytest.mark.unit
     async def test_shutdown_sequence(self):
         """Test the complete shutdown sequence."""
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -305,6 +318,7 @@ class TestGracefulShutdownEdgeCases:
     def test_double_signal_handler_call(self):
         """Test that calling signal handler twice doesn't reset timestamp."""
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -329,6 +343,7 @@ class TestGracefulShutdownEdgeCases:
     def test_grace_period_minimum_value(self):
         """Test grace period with minimum allowed value (0)."""
         import importlib
+
         import worker.main
 
         importlib.reload(worker.main)
@@ -346,4 +361,4 @@ class TestGracefulShutdownEdgeCases:
         assert remaining == 0
 
         # Reset for other tests
-        worker.main.GRACE_PERIOD_SECONDS = 30
+        worker.main.GRACE_PERIOD_SECONDS = 25

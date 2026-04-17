@@ -578,7 +578,9 @@ class TestFormatFallbackChain:
         assert "worstvideo*+bestaudio/best" in captured_script
         assert '"best"' in captured_script
         assert '"worst"' in captured_script
-        assert "res:1080,codec:h264" in captured_script
+        # yt_dlp uses separate array elements for format_sort, not comma-joined
+        assert '"res:1080"' in captured_script
+        assert '"codec:h264"' in captured_script
         assert "res:720" in captured_script
 
     @pytest.mark.asyncio

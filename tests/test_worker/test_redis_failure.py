@@ -8,7 +8,7 @@ These tests verify:
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 
@@ -74,16 +74,18 @@ class TestRedisFailureHandling:
 
         mock_redis = AsyncMock()
         mock_redis.rpop = AsyncMock(return_value=str(job_id))
+        mock_redis.zadd = AsyncMock(side_effect=Exception("Redis write failed"))
         mock_shutdown = asyncio.Event()
 
         with (
             patch("worker.processor.redis_client", mock_redis),
-            patch("worker.processor.extract_media_url", new_callable=AsyncMock) as mock_extract,
+            patch(
+                "worker.processor.extract_media_with_circuit_breaker", new_callable=AsyncMock
+            ) as mock_extract,
             patch("worker.main.shutdown_event", mock_shutdown),
         ):
             # Simulate download succeeding but Redis failing on zadd
             mock_extract.return_value = ("/storage/test.mp4", "test.mp4")
-            mock_redis.zadd = AsyncMock(side_effect=Exception("Redis write failed"))
 
             # Job should be marked completed (DB commit succeeds)
             # even if Redis enqueue fails
@@ -116,7 +118,9 @@ class TestRedisFailureHandling:
 
         with (
             patch("worker.processor.redis_client", mock_redis),
-            patch("worker.processor.extract_media_url", new_callable=AsyncMock) as mock_extract,
+            patch(
+                "worker.processor.extract_media_with_circuit_breaker", new_callable=AsyncMock
+            ) as mock_extract,
             patch("worker.main.shutdown_event", mock_shutdown),
         ):
             mock_extract.return_value = ("/storage/test.mp4", "test.mp4")
@@ -171,13 +175,12 @@ class TestRedisFailureDuringJobProcessing:
         """Test that BRPOP timeout returns None gracefully."""
         mock_redis = AsyncMock()
         mock_redis.brpop = AsyncMock(return_value=None)
+        mock_redis.rpop = AsyncMock(return_value=None)
 
         with patch("worker.processor.redis_client", mock_redis):
             from worker.processor import process_next_job
 
             # Empty queue - returns None from brpop
-            mock_redis.rpop = AsyncMock(return_value=None)
-
             result = await process_next_job()
             assert result is False
 
@@ -208,7 +211,9 @@ class TestRedisFailureDuringJobProcessing:
 
         with (
             patch("worker.processor.redis_client", mock_redis),
-            patch("worker.processor.extract_media_url", new_callable=AsyncMock) as mock_extract,
+            patch(
+                "worker.processor.extract_media_with_circuit_breaker", new_callable=AsyncMock
+            ) as mock_extract,
             patch("worker.main.shutdown_event", mock_shutdown),
         ):
             mock_extract.return_value = ("/storage/test.mp4", "test.mp4")
@@ -227,13 +232,11 @@ class TestRedisHealthChecks:
         """Test that /health returns ok even if Redis is down."""
         # This is the current behavior - /health doesn't check dependencies
         # /ready is the one that checks dependencies
-        pass
 
     @pytest.mark.unit
     async def test_ready_endpoint_fails_when_redis_down(self):
-        """Test that /ready returns 503 when Redis is down."""
-        from app.api.routes.health import readiness_check
-        from fastapi.responses import JSONResponse
+        """Test that /ready returns not_ready status when Redis is down."""
+        from app.api.routes.health import ReadinessResponse, readiness_check
 
         # Mock Redis to fail
         mock_redis = AsyncMock()
@@ -242,9 +245,10 @@ class TestRedisHealthChecks:
         with patch("app.api.routes.health.redis_client", mock_redis):
             result = await readiness_check()
 
-            # Should return 503
-            assert isinstance(result, JSONResponse)
-            assert result.status_code == 503
+            # Should return ReadinessResponse with not_ready status
+            assert isinstance(result, ReadinessResponse)
+            assert result.status == "not_ready"
+            assert result.redis.startswith("error:")
 
 
 class TestRedisConnectionPooling:
@@ -255,8 +259,9 @@ class TestRedisConnectionPooling:
         """Test handling when Redis connection pool is exhausted."""
         import redis.asyncio as redis
 
-        # Simulate pool exhaustion
+        # Simulate pool exhaustion - need to patch at worker.processor level
         mock_redis = AsyncMock()
+        mock_redis.rpop = AsyncMock(return_value=None)  # Empty queue returns None
         mock_redis.brpop = AsyncMock(side_effect=redis.ConnectionError("Pool exhausted"))
 
         with patch("worker.processor.redis_client", mock_redis):
@@ -268,10 +273,10 @@ class TestRedisConnectionPooling:
     @pytest.mark.unit
     async def test_timeout_handling(self):
         """Test handling of Redis timeouts."""
-        import asyncio
 
         mock_redis = AsyncMock()
-        mock_redis.brpop = AsyncMock(side_effect=asyncio.TimeoutError("Redis timeout"))
+        mock_redis.rpop = AsyncMock(return_value=None)  # Empty queue returns None
+        mock_redis.brpop = AsyncMock(side_effect=TimeoutError("Redis timeout"))
 
         with patch("worker.processor.redis_client", mock_redis):
             from worker.processor import process_next_job
