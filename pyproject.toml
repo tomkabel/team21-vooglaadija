@@ -255,9 +255,9 @@ dependency-groups = ["security"]
 
 [tool.hatch.envs.security.scripts]
 scan-bandit = "bandit -r app/ -f screen --confidence-level high --severity-level medium"
-scan-safety = "safety check --json --output=security-report.json || true"
+scan-safety = "safety scan --json --output=security-report.json || true"
 "bandit-report" = "bandit -r app/ -f html -o bandit_report.html"
-"safety-report" = "safety check --json --output=security-report.json || true"
+"safety-report" = "safety scan --json --output=security-report.json || true"
 
 # ============================================
 # MONITORING ENVIRONMENT (NetData, etc.)
