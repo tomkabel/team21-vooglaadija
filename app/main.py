@@ -47,6 +47,8 @@ from app.schemas.error import ErrorCode, error_response_dict
 configure_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = get_logger(__name__)
 
+APP_VERSION = "0.1.0"
+
 
 # Sentry initialization (production only)
 if settings.environment == "production" and os.environ.get("SENTRY_DSN"):
@@ -65,7 +67,7 @@ if settings.environment == "production" and os.environ.get("SENTRY_DSN"):
         traces_sample_rate=0.1,  # 10% of transactions for performance monitoring
         profiles_sample_rate=0.1,
         environment=settings.environment,
-        release="vooglaadija@0.1.0",
+        release=f"vooglaadija@{APP_VERSION}",
     )
     logger.info("sentry_initialized", dsn_masked="***")
 
@@ -75,7 +77,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifespan context manager for startup/shutdown events."""
     logger.info(
         "application_starting",
-        version="0.1.0",
+        version=APP_VERSION,
         environment=settings.environment,
         uvloop_available=UVLOOP_AVAILABLE,
     )
@@ -91,7 +93,7 @@ app = FastAPI(
         "REST API for user authentication, creating download jobs, tracking job status, "
         "and retrieving processed files. Authentication uses bearer JWT access tokens."
     ),
-    version="0.1.0",
+    version=APP_VERSION,
     # Use ORJSONResponse for faster JSON serialization
     default_response_class=ORJSONResponse,
     contact={
