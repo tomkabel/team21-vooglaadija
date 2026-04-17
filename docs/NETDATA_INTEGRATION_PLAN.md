@@ -407,7 +407,7 @@ def configure_logging() -> None:
             processors=shared_processors,
             wrapper_class=structlog.stdlib.BoundLogger,
             context_class=dict,
-            logger_factory=structlog.stdstdlibLoggerFactory(),
+            logger_factory=structlog.stdlib.LoggerFactory(),
             cache_logger_on_first_use=False,
         )
 
