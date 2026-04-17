@@ -89,10 +89,8 @@ services:
     healthcheck:
       test:
         [
-          "CMD",
-          "python",
-          "-c",
-          "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8000)); s.close()",
+          "CMD-SHELL",
+          "wget -q --spider http://localhost:8000/health/ready || exit 1",
         ]
       interval: 30s
       timeout: 10s

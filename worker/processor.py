@@ -15,7 +15,7 @@ from app.metrics import JOB_DURATION_SECONDS, JOBS_COMPLETED
 from app.models.download_job import DownloadJob
 from app.models.outbox import Outbox
 from app.services.retry_service import calculate_retry_with_jitter
-from app.services.yt_dlp_service import extract_media_url
+from app.services.circuit_breaker import CircuitBreakerOpenError, extract_media_with_circuit_breaker
 from worker.health import update_worker_state
 from worker.queue import redis_client
 
@@ -142,7 +142,9 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
                 update_worker_state(status="running", current_job_started_at=None)
                 return False
 
-            file_path, file_name = await extract_media_url(job.url, settings.storage_path)
+            file_path, file_name = await extract_media_with_circuit_breaker(
+                job.url, settings.storage_path
+            )
 
             # Check for cancellation after download (before marking complete)
             if shutdown_event.is_set():
@@ -179,6 +181,26 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
             await _requeue_job(job_id, db)
             update_worker_state(status="running", current_job_started_at=None)
             raise
+        except CircuitBreakerOpenError as cb_error:
+            # Circuit breaker is open - service is unhealthy, fail fast without retry
+            logger.warning(
+                "circuit_breaker_open_circuit_tripped",
+                job_id=str(job_id),
+                service=cb_error.service_name,
+                reset_timeout=cb_error.reset_timeout,
+            )
+            await db.execute(
+                update(DownloadJob)
+                .where(DownloadJob.id == job_id)
+                .values(
+                    status="failed",
+                    error=f"Service unavailable (circuit breaker open): {cb_error.service_name}",
+                    completed_at=datetime.now(UTC),
+                )
+            )
+            JOBS_COMPLETED.labels(status="failed").inc()
+            await db.commit()
+            return False
         except Exception as e:
             error_str = str(e)
             is_format_error = "format is not available" in error_str.lower()
