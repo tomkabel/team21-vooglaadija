@@ -82,10 +82,15 @@ COPY --from=frontend-builder /app/frontend/css/dist /app/static/css
 # Copy HTMX from node_modules (installed via pnpm with lockfile for supply-chain integrity)
 COPY --from=frontend-builder /app/frontend/node_modules/htmx.org/dist/htmx.min.js /app/static/js/htmx.min.js
 
-# Generate SBOM (best-effort; fallback to empty if CLI is incompatible)
-RUN pip install cyclonedx-bom 2>/dev/null; \
-    python -m cyclonedx_py environment -o /tmp/sbom.xml --output-format XML 2>/dev/null || echo "<bom/>" > /tmp/sbom.xml; \
-    python -m cyclonedx_py environment -o /tmp/sbom.json --output-format JSON 2>/dev/null || echo "{}" > /tmp/sbom.json
+# Generate SBOM from installed dependencies
+# Uses pip freeze to get exact versions, then generates CycloneDX SBOM
+# This is more reliable than 'environment' subcommand which may produce empty output
+RUN pip install cyclonedx-bom && \
+    pip freeze > /tmp/requirements.txt && \
+    cyclonedx-py -r -i /tmp/requirements.txt -o /tmp/sbom.xml --output-format XML || \
+    echo '<?xml version="1.0" encoding="utf-8"?><bom xmlns="http://cyclonedx.org/schema/bom/1.5" />' > /tmp/sbom.xml
+RUN cyclonedx-py -r -i /tmp/requirements.txt -o /tmp/sbom.json --output-format JSON || \
+    echo '{}' > /tmp/sbom.json
 
 # Generate SLSA provenance metadata (simplified for this example)
 # In production, use slsa-framework/github-actions-slsa-generator or similar
@@ -153,6 +158,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Expose port
 EXPOSE 8000
 
+# Build argument for git SHA
+ARG GIT_SHA
+
 # Metadata for observability and supply chain security
 LABEL org.opencontainers.image.source="https://github.com/team21/vooglaadija" \
       org.opencontainers.image.version="1.0.0" \
@@ -174,6 +182,8 @@ CMD ["/opt/venv/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0
 # Stage 7: Worker Service
 # ============================================
 FROM runtime-base AS worker
+# Build argument for git SHA
+ARG GIT_SHA
 # Set environment - WORKER_ID is set at runtime via docker-compose
 ENV PYTHONPATH=/app \
     PATH=/opt/venv/bin:$PATH \
@@ -191,6 +201,15 @@ RUN chmod +x ./entrypoint-worker.sh /app/migrate.sh && \
 
 # Run as non-root user (storage ownership is already set in the image)
 USER appuser
+
+# Metadata for observability and supply chain security
+LABEL org.opencontainers.image.source="https://github.com/team21/vooglaadija" \
+      org.opencontainers.image.version="1.0.0" \
+      org.opencontainers.image.description="YouTube Link Processor Worker" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.revision=${GIT_SHA:-unknown} \
+      io.buildkit.sbom="true" \
+      io.sigstore.cosign.signature="true"
 
 # Run worker via entrypoint script
 ENTRYPOINT ["./entrypoint-worker.sh"]
