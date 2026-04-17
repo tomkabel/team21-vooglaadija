@@ -14,6 +14,7 @@ from app.logging_config import get_logger
 from app.metrics import JOB_DURATION_SECONDS, JOBS_COMPLETED
 from app.models.download_job import DownloadJob
 from app.models.outbox import Outbox
+from app.services.retry_service import calculate_retry_with_jitter
 from app.services.yt_dlp_service import extract_media_url
 from worker.health import update_worker_state
 from worker.queue import redis_client
@@ -30,7 +31,21 @@ async def _heartbeat(db, job_id: UUID) -> None:
 
 
 async def _requeue_job(job_id: UUID, db) -> None:
-    """Requeue a job by setting its status back to 'queued'."""
+    """Requeue a job by setting its status back to 'pending' and pushing to download_queue."""
+    outbox_entry = Outbox(
+        id=uuid.uuid4(),
+        job_id=job_id,
+        event_type="retry_scheduled",
+        payload=json.dumps(
+            {
+                "retry_count": 0,
+                "next_retry_at": datetime.now(UTC).isoformat(),
+            }
+        ),
+        status="pending",
+    )
+    db.add(outbox_entry)
+
     await db.execute(
         update(DownloadJob)
         .where(DownloadJob.id == job_id)
@@ -210,7 +225,9 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
                     )
                 await db.commit()
             else:
-                next_retry = datetime.now(UTC) + timedelta(minutes=2**job.retry_count)
+                # Calculate next retry with exponential backoff + full jitter
+                # This prevents thundering herd problem per AWS Well-Architected Framework
+                next_retry = calculate_retry_with_jitter(job.retry_count)
 
                 # Create outbox entry for retry in same transaction as DB update
                 outbox_entry = Outbox(
@@ -254,6 +271,7 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
                         job_id=str(job_id),
                         retry_count=job.retry_count + 1,
                         max_retries=job.max_retries,
+                        next_retry_at=next_retry.isoformat(),
                     )
                 except Exception as enqueue_error:
                     # DB is already committed with pending status and outbox entry
