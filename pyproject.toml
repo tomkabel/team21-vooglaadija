@@ -520,6 +520,4 @@ ignore = [
     # stated they will not fix this as side-channel attacks are "impossible" to
     # mitigate in pure Python. This is a transitive dependency from python-jose.
     "CVE-2024-23342",
-    # Pygments ReDoS (CVE-2024-动作) - AdlLexer inefficient regex - pygments>=2.20.0
-    # Required for syntax highlighting in test output. Update when patched.
 ]

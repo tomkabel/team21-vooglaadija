@@ -60,10 +60,6 @@ services:
     volumes:
       - netdata-lib:/var/lib/netdata
       - netdata-cache:/var/cache/netdata
-      # Mount API container's namespaces for detailed monitoring
-      - /proc/1/ns/net:/host/ns/net:ro
-      - /proc/1/ns/pid:/host/ns/pid:ro
-      # Additional mounts for HTTP monitoring
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       <<: *netdata-env
@@ -82,8 +78,6 @@ services:
     volumes:
       - netdata-lib:/var/lib/netdata
       - netdata-cache:/var/cache/netdata
-      - /proc/1/ns/net:/host/ns/net:ro
-      - /proc/1/ns/pid:/host/ns/pid:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       <<: *netdata-env

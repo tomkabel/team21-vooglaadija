@@ -16,11 +16,6 @@
     "update-browserslist-db": "^1.2.3"
   },
   "dependencies": {
-    "htmx.org": "^1.9.12",
-    "pptxgenjs": "^4.0.1",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "sharp": "^0.34.5",
-    "slides-grab": "^1.2.2"
+    "htmx.org": "^1.9.12"
   }
 }
