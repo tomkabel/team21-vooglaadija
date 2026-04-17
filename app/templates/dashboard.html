@@ -380,13 +380,18 @@
                     Save
                 `;
         downloadBtn.style.display = "inline-flex";
-        // Append to the last .flex.items-center.gap-3 (actions column, not thumbnail)
+        // Insert before the delete button to match getRowHTML order
         const actionsContainers = row.querySelectorAll(
           ".flex.items-center.gap-3",
         );
-        actionsContainers[actionsContainers.length - 1].appendChild(
-          downloadBtn,
-        );
+        const actionsContainer =
+          actionsContainers[actionsContainers.length - 1];
+        const deleteBtn = actionsContainer.querySelector("button[hx-delete]");
+        if (deleteBtn) {
+          actionsContainer.insertBefore(downloadBtn, deleteBtn);
+        } else {
+          actionsContainer.appendChild(downloadBtn);
+        }
       } else {
         downloadBtn.style.display = "inline-flex";
       }
