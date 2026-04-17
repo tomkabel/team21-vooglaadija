@@ -15,11 +15,11 @@ logger = get_logger(__name__)
 YT_DLP_TIMEOUT = 300
 
 FORMAT_FALLBACK_CHAIN = [
-    {"format": "bestvideo*+bestaudio/best", "S": "res:1080,codec:h264"},
-    {"format": "bestvideo+bestaudio/best", "S": "res,codec"},
-    {"format": "worstvideo*+bestaudio/best", "S": "res:720"},
-    {"format": "best", "S": "quality"},
-    {"format": "worst", "S": "quality"},
+    {"format": "bestvideo*+bestaudio/best", "S": ["res:1080", "codec:h264"]},
+    {"format": "bestvideo+bestaudio/best", "S": ["res", "codec"]},
+    {"format": "worstvideo*+bestaudio/best", "S": ["res:720"]},
+    {"format": "best", "S": ["quality"]},
+    {"format": "worst", "S": ["quality"]},
 ]
 
 
@@ -88,7 +88,7 @@ last_error = None
 for i, format_spec in enumerate(fallback_chain):
     ydl_opts = {{
         "format": format_spec["format"],
-        "S": format_spec.get("S"),
+        "format_sort": format_spec.get("S", []),
         "outtmpl": output_template,
         "quiet": True,
         "no_warnings": True,
@@ -152,16 +152,17 @@ sys.exit(1)
 
         output = stdout.decode().strip()
 
-        json_start = output.find("{")
-        if json_start >= 0:
-            json_str = output[json_start:]
+        # Extract JSON from last non-empty line for reliability
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        if lines:
+            json_str = lines[-1]
             try:
                 result: dict[str, Any] = json.loads(json_str)
                 if "error" in result:
                     raise RuntimeError(f"yt-dlp extraction failed: {result['error']}")
                 return result
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                raise RuntimeError(f"yt-dlp produced malformed JSON: {json_str!r}") from e
 
         if process.returncode != 0:
             error_msg = stderr.decode().strip() if stderr else "Unknown error"
