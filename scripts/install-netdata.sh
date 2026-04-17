@@ -136,7 +136,7 @@ install_docker() {
     # Start monitoring services
     log_info "Starting NetData agents..."
     cd "$PROJECT_DIR"
-    docker-compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+    docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
     
     log_success "NetData Docker agents started!"
     echo ""
@@ -145,7 +145,7 @@ install_docker() {
     
     # Show status
     echo ""
-    docker-compose -f docker-compose.yml -f docker-compose.monitoring.yml ps netdata-api netdata-worker netdata-db netdata-redis
+    docker compose -f docker-compose.yml -f docker-compose.monitoring.yml ps netdata-api netdata-worker netdata-db netdata-redis
     
     echo ""
     log_success "NetData installation complete!"
