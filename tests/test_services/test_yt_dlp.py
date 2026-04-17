@@ -480,229 +480,124 @@ class TestExtractViaSubprocessTimeoutHandling:
             with pytest.raises(TimeoutError):
                 await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
 
-        @pytest.mark.asyncio
-        async def test_process_lookup_error_on_killpg_in_finally_block(self) -> None:
-            """When os.killpg raises ProcessLookupError in finally, it must be silently handled.
 
-            This covers the finally block cleanup when process is still running but
-            killpg fails because the process group already terminated.
-            """
-            from app.services.yt_dlp_service import _extract_via_subprocess
+@pytest.mark.asyncio
+async def test_process_lookup_error_on_killpg_in_finally_block() -> None:
+    """When os.killpg raises ProcessLookupError in finally, it must be silently handled.
 
-            mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(
-                return_value=(b'{"title": "T", "ext": "mp4"}', b"")
-            )
-            mock_process.returncode = None
-            mock_process.pid = 12345
-            mock_process.wait = AsyncMock(return_value=0)
+    This covers the finally block cleanup when process is still running but
+    killpg fails because the process group already terminated.
+    """
+    from app.services.yt_dlp_service import _extract_via_subprocess
 
-            async def mock_subprocess_exec(*args, **kwargs):
-                return mock_process
+    mock_process = AsyncMock()
+    mock_process.communicate = AsyncMock(return_value=(b'{"title": "T", "ext": "mp4"}', b""))
+    mock_process.returncode = None
+    mock_process.pid = 12345
+    mock_process.wait = AsyncMock(return_value=0)
 
-            async def mock_wait_for(coro, timeout=None):
-                return await coro
+    async def mock_subprocess_exec(*args, **kwargs):
+        return mock_process
 
-            def mock_killpg_raises(pgid, sig):
-                raise ProcessLookupError(f"Process group {pgid} not found")
+    async def mock_wait_for(coro, timeout=None):
+        return await coro
 
-            with (
-                patch(
-                    "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
-                    mock_subprocess_exec,
-                ),
-                patch("app.services.yt_dlp_service.asyncio.wait_for", mock_wait_for),
-                patch("app.services.yt_dlp_service.os.killpg", mock_killpg_raises),
-            ):
-                result = await _extract_via_subprocess(
-                    "https://www.youtube.com/watch?v=test", "/tmp/out"
-                )
-                assert result == {"title": "T", "ext": "mp4"}
+    def mock_killpg_raises(pgid, sig):
+        raise ProcessLookupError(f"Process group {pgid} not found")
 
-        @pytest.mark.asyncio
-        async def test_error_payload_in_stdout_raises_runtime_error(self) -> None:
-            """When yt-dlp returns JSON with 'error' key in stdout, raise RuntimeError."""
-            from app.services.yt_dlp_service import _extract_via_subprocess
+    with (
+        patch(
+            "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
+            mock_subprocess_exec,
+        ),
+        patch("app.services.yt_dlp_service.asyncio.wait_for", mock_wait_for),
+        patch("app.services.yt_dlp_service.os.killpg", mock_killpg_raises),
+    ):
+        result = await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
+        assert result == {"title": "T", "ext": "mp4"}
 
-            mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(
-                return_value=(b'{"error": "Video unavailable"}', b"")
-            )
-            mock_process.returncode = 1
-            mock_process.pid = 12345
-            mock_process.wait = AsyncMock(return_value=0)
 
-            async def mock_subprocess_exec_2(*args, **kwargs):
-                return mock_process
+@pytest.mark.asyncio
+async def test_error_payload_in_stdout_raises_runtime_error() -> None:
+    """When yt-dlp returns JSON with 'error' key in stdout, raise RuntimeError."""
+    from app.services.yt_dlp_service import _extract_via_subprocess
 
-            with (
-                patch(
-                    "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
-                    mock_subprocess_exec_2,
-                ),
-                patch("app.services.yt_dlp_service.os.killpg"),
-            ):
-                with pytest.raises(RuntimeError, match="yt-dlp extraction failed"):
-                    await _extract_via_subprocess(
-                        "https://www.youtube.com/watch?v=test", "/tmp/out"
-                    )
+    mock_process = AsyncMock()
+    mock_process.communicate = AsyncMock(return_value=(b'{"error": "Video unavailable"}', b""))
+    mock_process.returncode = 1
+    mock_process.pid = 12345
+    mock_process.wait = AsyncMock(return_value=0)
+
+    async def mock_subprocess_exec_2(*args, **kwargs):
+        return mock_process
+
+    with (
+        patch(
+            "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
+            mock_subprocess_exec_2,
+        ),
+        patch("app.services.yt_dlp_service.os.killpg"),
+    ):
+        with pytest.raises(RuntimeError, match="yt-dlp extraction failed"):
+            await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
 
 
 class TestFormatFallbackChain:
     """Tests for format fallback chain functionality in _extract_via_subprocess."""
 
+    @pytest.fixture
+    async def captured_script(self) -> str:
+        """Capture the generated script from _extract_via_subprocess."""
+        from app.services.yt_dlp_service import _extract_via_subprocess
+
+        captured_scripts: list[str] = []
+
+        async def capturing_subprocess_exec(*args, **kwargs):
+            captured_scripts.append(args[2])
+            mock_process = AsyncMock()
+            mock_process.communicate = AsyncMock(
+                return_value=(b'{"title": "T", "ext": "mp4"}', b"")
+            )
+            mock_process.returncode = 0
+            mock_process.pid = 12345
+            return mock_process
+
+        with patch(
+            "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
+            capturing_subprocess_exec,
+        ):
+            await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
+
+        return captured_scripts[0]
+
     @pytest.mark.asyncio
-    async def test_format_fallback_chain_in_script(self) -> None:
+    async def test_format_fallback_chain_in_script(self, captured_script: str) -> None:
         """Verify the generated script contains the fallback chain with all 5 format specs."""
-        from app.services.yt_dlp_service import _extract_via_subprocess
-
-        captured_scripts: list[str] = []
-
-        async def capturing_subprocess_exec(*args, **kwargs):
-            captured_scripts.append(args[2])
-            mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(
-                return_value=(b'{"title": "T", "ext": "mp4"}', b"")
-            )
-            mock_process.returncode = 0
-            mock_process.pid = 12345
-            return mock_process
-
-        with (
-            patch(
-                "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
-                capturing_subprocess_exec,
-            ),
-        ):
-            await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
-
-        assert len(captured_scripts) == 1
-        script = captured_scripts[0]
-        assert "bestvideo*+bestaudio/best" in script
-        assert "bestvideo+bestaudio/best" in script
-        assert "worstvideo*+bestaudio/best" in script
-        assert '"best"' in script
-        assert '"worst"' in script
-        assert "res:1080,codec:h264" in script
-        assert "res:720" in script
+        assert "bestvideo*+bestaudio/best" in captured_script
+        assert "bestvideo+bestaudio/best" in captured_script
+        assert "worstvideo*+bestaudio/best" in captured_script
+        assert '"best"' in captured_script
+        assert '"worst"' in captured_script
+        assert "res:1080,codec:h264" in captured_script
+        assert "res:720" in captured_script
 
     @pytest.mark.asyncio
-    async def test_prefer_free_formats_enabled(self) -> None:
+    async def test_prefer_free_formats_enabled(self, captured_script: str) -> None:
         """Verify prefer_free_formats is True in the yt-dlp options."""
-        from app.services.yt_dlp_service import _extract_via_subprocess
-
-        captured_scripts: list[str] = []
-
-        async def capturing_subprocess_exec(*args, **kwargs):
-            captured_scripts.append(args[2])
-            mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(
-                return_value=(b'{"title": "T", "ext": "mp4"}', b"")
-            )
-            mock_process.returncode = 0
-            mock_process.pid = 12345
-            return mock_process
-
-        with (
-            patch(
-                "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
-                capturing_subprocess_exec,
-            ),
-        ):
-            await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
-
-        assert len(captured_scripts) == 1
-        script = captured_scripts[0]
-        assert '"prefer_free_formats": True' in script
+        assert '"prefer_free_formats": True' in captured_script
 
     @pytest.mark.asyncio
-    async def test_check_formats_missable(self) -> None:
+    async def test_check_formats_missable(self, captured_script: str) -> None:
         """Verify check_formats is set to 'missable' in the yt-dlp options."""
-        from app.services.yt_dlp_service import _extract_via_subprocess
-
-        captured_scripts: list[str] = []
-
-        async def capturing_subprocess_exec(*args, **kwargs):
-            captured_scripts.append(args[2])
-            mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(
-                return_value=(b'{"title": "T", "ext": "mp4"}', b"")
-            )
-            mock_process.returncode = 0
-            mock_process.pid = 12345
-            return mock_process
-
-        with (
-            patch(
-                "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
-                capturing_subprocess_exec,
-            ),
-        ):
-            await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
-
-        assert len(captured_scripts) == 1
-        script = captured_scripts[0]
-        assert '"check_formats": "missable"' in script
+        assert '"check_formats": "missable"' in captured_script
 
     @pytest.mark.asyncio
-    async def test_extractor_args_player_clients(self) -> None:
+    async def test_extractor_args_player_clients(self, captured_script: str) -> None:
         """Verify all 4 player clients are included (tv, web, default, mobile)."""
-        from app.services.yt_dlp_service import _extract_via_subprocess
-
-        captured_scripts: list[str] = []
-
-        async def capturing_subprocess_exec(*args, **kwargs):
-            captured_scripts.append(args[2])
-            mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(
-                return_value=(b'{"title": "T", "ext": "mp4"}', b"")
-            )
-            mock_process.returncode = 0
-            mock_process.pid = 12345
-            return mock_process
-
-        with (
-            patch(
-                "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
-                capturing_subprocess_exec,
-            ),
-        ):
-            await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
-
-        assert len(captured_scripts) == 1
-        script = captured_scripts[0]
-        assert '"player_client": ["tv", "web", "default", "mobile"]' in script
+        assert '"player_client": ["tv", "web", "default", "mobile"]' in captured_script
 
     @pytest.mark.asyncio
-    async def test_format_unavailable_continues_to_next(self) -> None:
-        """Verify the script contains error handling that continues to next format on 'not available'.
-
-        The script should catch 'Requested format' + 'not available' errors and continue
-        to the next format in the fallback chain rather than failing immediately.
-        """
-        from app.services.yt_dlp_service import _extract_via_subprocess
-
-        captured_scripts: list[str] = []
-
-        async def capturing_subprocess_exec(*args, **kwargs):
-            captured_scripts.append(args[2])
-            mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(
-                return_value=(b'{"title": "T", "ext": "mp4"}', b"")
-            )
-            mock_process.returncode = 0
-            mock_process.pid = 12345
-            return mock_process
-
-        with (
-            patch(
-                "app.services.yt_dlp_service.asyncio.create_subprocess_exec",
-                capturing_subprocess_exec,
-            ),
-        ):
-            await _extract_via_subprocess("https://www.youtube.com/watch?v=test", "/tmp/out")
-
-        assert len(captured_scripts) == 1
-        script = captured_scripts[0]
-        assert '"Requested format" in err_str and "not available" in err_str' in script
-        assert "continue" in script
+    async def test_format_unavailable_continues_to_next(self, captured_script: str) -> None:
+        """Verify the script contains error handling that continues to next format on 'not available'."""
+        assert '"Requested format" in err_str and "not available" in err_str' in captured_script
+        assert "continue" in captured_script
