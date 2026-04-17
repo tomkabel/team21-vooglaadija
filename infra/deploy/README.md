@@ -132,7 +132,7 @@ infra/ssl/
 
 ## Service Architecture
 
-```
+```text
                     ┌─────────────────────────────────────────┐
                     │         nginx (port 80/443)             │
                     │   HTTPS + HTTP redirect + security       │
@@ -159,7 +159,7 @@ If you prefer manual control:
 
 ```bash
 # 1. System setup
-sudo apt update && sudo apt install -y docker.io docker-compose-plugin nginx certbot
+sudo apt update && sudo apt install -y docker.io docker-compose-plugin nginx certbot python3-certbot-nginx
 
 # 2. DNS verification
 dig +short youtube.tomabel.ee  # Should return 37.114.46.226

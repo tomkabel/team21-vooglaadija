@@ -290,8 +290,8 @@ server {
     add_header Strict-Transport-Security "max-age=63072000" always;
     add_header X-Frame-Options "DENY" always;
     add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';" always;
 
     ssl_stapling on;
     ssl_stapling_verify on;
@@ -311,7 +311,7 @@ server {
     client_max_body_size 500M;
 
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://api:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -322,11 +322,11 @@ server {
         proxy_set_header Connection "upgrade";
     }
 
-    # Health endpoint
     location /health {
+        proxy_pass http://api:8000;
+        proxy_set_header Host $host;
+        proxy_http_version 1.1;
         access_log off;
-        return 200 "nginx healthy\n";
-        add_header Content-Type text/plain;
     }
 }
 EOF
@@ -340,7 +340,12 @@ EOF
     ln -sf /etc/nginx/sites-available/"$DOMAIN" /etc/nginx/sites-enabled/"$DOMAIN"
 
     # Test and reload nginx
-    nginx -t && systemctl reload nginx
+    if nginx -t; then
+        systemctl reload nginx
+    else
+        log_error "Nginx configuration test failed"
+        return 1
+    fi
 
     log_info "Phase 5 complete - Nginx configured"
 }
@@ -457,7 +462,7 @@ phase7() {
     done
 
     log_info "Running database migrations..."
-    docker compose -f docker-compose.yml -f docker-compose.production.yml exec api python /app/migrate.sh || log_warn "Migration may have already been run"
+    docker compose -f docker-compose.yml -f docker-compose.production.yml run --rm api sh -c '/app/migrate.sh' || log_warn "Migration may have already been run"
 
     log_info "Starting all services..."
     docker compose -f docker-compose.yml -f docker-compose.production.yml up -d
