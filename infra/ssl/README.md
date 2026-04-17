@@ -44,8 +44,8 @@ ln -sf fullchain.pem cert.pem
 ln -sf privkey.pem key.pem
 
 # Set permissions:
-sudo chmod 644 fullchain.pem
-sudo chmod 600 privkey.pem
+sudo chmod 644 fullchain.pem cert.pem
+sudo chmod 600 privkey.pem key.pem
 ```
 
 ### Option 2: Existing Certificates
