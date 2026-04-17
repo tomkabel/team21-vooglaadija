@@ -33,10 +33,10 @@ x-base-service: &base-service
     resources:
       limits:
         cpus: "1.0"
-        memory: 512M
+        memory: 1G
       reservations:
         cpus: "0.25"
-        memory: 128M
+        memory: 256M
   read_only: true
   tmpfs:
     - /tmp
@@ -62,7 +62,7 @@ services:
     restart: unless-stopped
     environment:
       <<: *common-env
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://asus:8081}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:8081,http://127.0.0.1:8080,http://asus:8081}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
       REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
       # Override DATABASE_URL directly to use docker network hostnames
@@ -90,12 +90,12 @@ services:
       test:
         [
           "CMD-SHELL",
-          "wget -q --spider http://localhost:8000/health/ready || exit 1",
+          "curl -f http://localhost:8000/api/v1/health/ready || exit 1",
         ]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 15s
     logging:
       driver: "json-file"
       options:
@@ -311,7 +311,10 @@ services:
     container_name: swagger-ui
     restart: unless-stopped
     environment:
-      URL: http://api:8000/openapi.json
+      # Route OpenAPI spec fetch through nginx reverse proxy (host:8080 -> nginx:80)
+      # This keeps all external traffic through the established reverse proxy architecture.
+      # Browser (at swagger-ui host:8081) fetches from nginx (host:8080), which proxies to api:8000
+      URL: http://127.0.0.1:8080/openapi.json
     ports:
       - "8081:8080"
     # swagger-ui doesn't need resource limits or security context restrictions

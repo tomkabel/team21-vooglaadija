@@ -110,6 +110,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     redis-tools \
     gosu \
     nodejs \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python runtime from builder (with dependencies installed)
