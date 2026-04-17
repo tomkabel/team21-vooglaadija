@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from app.config import settings
 from app.database import get_async_session_factory
@@ -88,7 +88,11 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
     from worker.main import shutdown_event
 
     if job_id is None:
-        job_id_str = await redis_client.rpop("download_queue")
+        try:
+            job_id_str = await redis_client.rpop("download_queue")
+        except Exception as e:
+            logger.warning("redis_rpop_failed", error=str(e))
+            return False
         if not job_id_str:
             return False
         job_id = UUID(job_id_str)
@@ -372,8 +376,7 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
         if not entries:
             return 0
 
-        # Phase 2: Push to Redis and mark as enqueued (DB lock held)
-        now = datetime.now(UTC)
+        # Phase 2: Push to Redis and delete from outbox (DB lock held)
         for entry in entries:
             try:
                 if entry.event_type == "retry_scheduled":
@@ -394,12 +397,8 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
                     # Default: push to download_queue
                     await redis_client.lpush("download_queue", str(entry.job_id))
 
-                # Mark as enqueued
-                await db.execute(
-                    update(Outbox)
-                    .where(Outbox.id == entry.id)
-                    .values(status="enqueued", processed_at=now)
-                )
+                # Delete after successful Redis publish to keep outbox table empty
+                await db.execute(delete(Outbox).where(Outbox.id == entry.id))
                 synced += 1
             except Exception as e:
                 logger.error(

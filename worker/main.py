@@ -27,7 +27,7 @@ logger = get_logger(__name__)
 
 # Graceful shutdown configuration
 # Configurable grace period per 2026 Kubernetes best practices
-GRACE_PERIOD_SECONDS: int = int(os.environ.get("WORKER_GRACE_PERIOD_SECONDS", "30"))
+GRACE_PERIOD_SECONDS: int = int(os.environ.get("WORKER_GRACE_PERIOD_SECONDS", "25"))
 
 # Graceful shutdown event and timestamp tracking
 shutdown_event = asyncio.Event()

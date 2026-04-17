@@ -32,9 +32,10 @@ def _get_redis_client():
         pipe_mock.expire = MagicMock()
         client.pipeline.return_value = pipe_mock
         client.zrange = AsyncMock(return_value=[])
-        client.lpush = AsyncMock()
-        client.rpop = MagicMock(return_value=None)
-        client.brpop = MagicMock(return_value=None)
+        client.lpush = AsyncMock(return_value=1)
+        client.rpop = AsyncMock(return_value=None)
+        client.brpop = AsyncMock(return_value=None)
+        client.ping = AsyncMock(return_value=True)
         _redis_client = client
     else:
         import redis.asyncio as aioredis
