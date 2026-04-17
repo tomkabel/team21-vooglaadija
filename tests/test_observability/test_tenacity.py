@@ -49,7 +49,7 @@ class TestTenacityRetry:
         attempts = []
 
         @retry(
-            retry=retry_if_exception_type(PermanentError),
+            retry=retry_if_exception_type(TransientError),
             stop=stop_after_attempt(3),
             reraise=True,
         )
@@ -60,8 +60,7 @@ class TestTenacityRetry:
         with pytest.raises(PermanentError):
             permanent_failure()
 
-        # tenacity will retry 3 times on PermanentError since retry_if_exception_type matches it
-        assert len(attempts) == 3
+        assert len(attempts) == 1
 
 
 class TestTenacityAsyncRetry:
@@ -95,7 +94,7 @@ class TestTenacityAsyncRetry:
         attempts = []
 
         @retry(
-            retry=retry_if_exception_type(PermanentError),
+            retry=retry_if_exception_type(TransientError),
             stop=stop_after_attempt(3),
             reraise=True,
         )
@@ -107,8 +106,7 @@ class TestTenacityAsyncRetry:
         with pytest.raises(PermanentError):
             await async_permanent_failure()
 
-        # tenacity will retry 3 times on PermanentError since retry_if_exception_type matches it
-        assert len(attempts) == 3
+        assert len(attempts) == 1
 
 
 class TestTenacityWaitStrategies:

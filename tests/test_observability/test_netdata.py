@@ -18,7 +18,6 @@ import httpx
 class TestNetDataIntegration:
     """Test NetData agent and metrics collection."""
 
-    @pytest.mark.integration
     async def test_netdata_agent_accessible(self):
         """Verify NetData agent is accessible if running.
 
@@ -55,7 +54,6 @@ class TestNetDataIntegration:
         except (httpx.ConnectError, httpx.TimeoutException):
             pytest.skip("NetData agent not running at localhost:19999")
 
-    @pytest.mark.integration
     async def test_netdata_redis_collector_configured(self):
         """Verify Redis metrics collector is configured when Redis is available."""
         try:
@@ -76,7 +74,6 @@ class TestNetDataIntegration:
 class TestNetDataHealthAlerts:
     """Test NetData health alert configurations."""
 
-    @pytest.mark.integration
     async def test_netdata_health_alerts_loaded(self):
         """Verify custom health alerts are loaded by NetData."""
         try:

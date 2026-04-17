@@ -146,10 +146,13 @@ def configure_logging(log_level: str = "INFO") -> None:
         )
 
     # Configure standard library logging
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
         level=getattr(logging, log_level.upper(), logging.INFO),
+        force=True,
     )
 
     # Suppress noisy third-party loggers
