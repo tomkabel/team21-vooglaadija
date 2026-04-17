@@ -277,12 +277,10 @@ class TestValidateFilePath:
         with patch("app.api.routes.web.settings") as mock_settings:
             mock_settings.storage_path = str(tmp_path)
 
-            malicious_path = tmp_path / ".." / ".." / "etc" / "passwd"
-            malicious_path.parent.mkdir(parents=True, exist_ok=True)
-            malicious_path.write_text("test")
+            malicious_path = str(tmp_path / ".." / ".." / "etc" / "passwd")
 
             with pytest.raises(HTTPException) as exc_info:
-                _validate_file_path(str(malicious_path))
+                _validate_file_path(malicious_path)
 
             assert exc_info.value.status_code == 403
 
