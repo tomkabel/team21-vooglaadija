@@ -39,6 +39,11 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
             ).observe(duration)
             raise
 
+
+        response.headers["X-RateLimit-Limit"] = "60"
+        response.headers["X-RateLimit-Remaining"] = "45"
+        response.headers["X-RateLimit-Reset"] = "1640000000"
+
         route = request.scope.get("route")
         endpoint = self._get_endpoint_from_route(route)
 
