@@ -123,8 +123,8 @@ COPY --from=app-builder /app/worker ./worker
 COPY --from=app-builder /app/static/css ./app/static/css
 COPY --from=app-builder /app/static/js ./app/static/js
 # Copy Alembic configuration and migration files
-COPY alembic.ini ./alembic.ini
-COPY alembic ./alembic
+COPY --from=app-builder /app/alembic.ini /app/alembic.ini
+COPY --from=app-builder /app/alembic /app/alembic
 COPY --from=app-builder /tmp/sbom.xml ./sbom.xml
 COPY --from=app-builder /tmp/sbom.json ./sbom.json
 COPY --from=app-builder /tmp/slsa-provenance.json ./slsa-provenance.json
