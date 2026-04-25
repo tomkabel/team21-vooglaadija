@@ -18,8 +18,11 @@
         d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"
       />
     </svg>
-    <span class="font-body">{{ current_user.email }}</span>
+    <span class="font-body">{{ current_user.username | default(current_user.email, true) }}</span>
   </div>
+  <a href="/web/settings" class="btn-secondary text-sm">
+    Settings
+  </a>
   <form method="POST" action="/web/logout" class="inline">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <button type="submit" class="btn-secondary text-sm">Sign out</button>
@@ -33,7 +36,7 @@
       class="text-3xl sm:text-4xl font-display font-bold text-white tracking-tight"
     >
       Welcome back,
-      <span class="text-gradient">{{ current_user.email.split('@')[0] }}</span>
+      <span class="text-gradient">{{ current_user.username | default(current_user.email.split('@')[0], true) }}</span>
     </h1>
     <p class="mt-2 text-gray-500 font-body text-lg">
       Manage your YouTube downloads
