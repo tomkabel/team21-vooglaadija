@@ -80,8 +80,16 @@
                                    class="form-input"
                                    placeholder="At least 8 characters">
                         </div>
+                        <div class="mt-3 password-strength" aria-live="polite">
+                            <div class="password-strength-meter" role="presentation" aria-hidden="true">
+                                <div id="password-strength-fill" class="password-strength-fill"></div>
+                            </div>
+                            <p id="password-strength-text" class="password-strength-text">
+                                Start typing to check password strength
+                            </p>
+                        </div>
                         <p class="mt-2 text-xs text-gray-600 font-body">
-                            Minimum 8 characters
+                            Minimum 8 characters. Include at least one number and a special character to get a strong password.
                         </p>
                     </div>
 
@@ -127,4 +135,68 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script nonce="{{ nonce }}">
+    (function () {
+        const passwordInput = document.getElementById("password");
+        const strengthFill = document.getElementById("password-strength-fill");
+        const strengthText = document.getElementById("password-strength-text");
+
+        if (!passwordInput || !strengthFill || !strengthText) {
+            return;
+        }
+
+        function evaluatePasswordStrength(password) {
+            const hasMinimumLength = password.length >= 8;
+            const hasNumber = /\d/.test(password);
+            const hasSpecialCharacter = /[^A-Za-z0-9]/.test(password);
+            const checksPassed = [hasMinimumLength, hasNumber, hasSpecialCharacter].filter(Boolean).length;
+
+            if (password.length === 0) {
+                return {
+                    levelClass: "",
+                    label: "Start typing to check password strength"
+                };
+            }
+
+            if (!hasMinimumLength) {
+                return {
+                    levelClass: "is-weak",
+                    label: "Weak password"
+                };
+            }
+
+            if (checksPassed === 3) {
+                return {
+                    levelClass: "is-strong",
+                    label: "Strong password"
+                };
+            }
+
+            if (checksPassed === 2) {
+                return {
+                    levelClass: "is-medium",
+                    label: "Medium strength password"
+                };
+            }
+
+            return {
+                levelClass: "is-weak",
+                label: "Weak password"
+            };
+        }
+
+        function updatePasswordStrength() {
+            const strength = evaluatePasswordStrength(passwordInput.value);
+            strengthFill.className = "password-strength-fill " + strength.levelClass;
+            strengthText.className = "password-strength-text " + strength.levelClass;
+            strengthText.textContent = strength.label;
+        }
+
+        passwordInput.addEventListener("input", updatePasswordStrength);
+        updatePasswordStrength();
+    })();
+</script>
 {% endblock %}
