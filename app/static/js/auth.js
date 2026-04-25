@@ -45,6 +45,12 @@
             window.showToast('Your session has expired. Please log in again.', 'info');
             window.history.replaceState({}, '', window.location.pathname);
         }
+
+        // Check for deleted account message
+        if (urlParams.get('account_deleted') === '1') {
+            window.showToast('Your account has been deleted.', 'info');
+            window.history.replaceState({}, '', window.location.pathname);
+        }
         
         // Check if we're on a public page (no auth needed) - AFTER query param handling
         if (PUBLIC_PAGES.includes(window.location.pathname)) return;

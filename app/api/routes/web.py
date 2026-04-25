@@ -1,3 +1,4 @@
+import html
 import logging
 import os
 import uuid
@@ -25,6 +26,7 @@ from app.models.outbox import Outbox
 from app.models.user import User
 from app.services.auth_service import hash_password, verify_password
 from app.services.outbox_service import write_job_to_outbox
+from app.utils.username import default_username_from_email as _default_username_from_email
 from app.utils.validators import is_youtube_url
 from worker.queue import enqueue_job
 
@@ -159,7 +161,15 @@ def _error_html(message: str) -> str:
     """Render a standardized error HTML fragment."""
     return (
         f"<div class='error bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded'>"
-        f"{message}</div>"
+        f"{html.escape(message)}</div>"
+    )
+
+
+def _success_html(message: str) -> str:
+    """Render a standardized success HTML fragment."""
+    return (
+        f"<div class='success bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded'>"
+        f"{html.escape(message)}</div>"
     )
 
 
@@ -335,6 +345,7 @@ async def register_form(
 
     user = User(
         id=uuid.uuid4(),
+        username=_default_username_from_email(email),
         email=email,
         password_hash=hash_password(password),
     )
@@ -400,6 +411,206 @@ async def dashboard_page(
     )
     set_csrf_token_cookie(response, token)
     return response
+
+
+@router.get("/settings")
+async def settings_page(
+    request: Request,
+    current_user: CurrentUserFromCookie,
+):
+    """Render settings page for the current user."""
+    token = get_csrf_token(request)
+    username = current_user.username or _default_username_from_email(current_user.email)
+    response = templates.TemplateResponse(
+        request,
+        "settings.html",
+        get_template_context(
+            request,
+            csrf_token=token,
+            current_user=current_user,
+            username=username,
+        ),
+    )
+    set_csrf_token_cookie(response, token)
+    return response
+
+
+@router.post("/settings/username")
+@limiter.limit("10/minute")
+async def update_username(
+    request: Request,
+    username: Annotated[str, Form(max_length=64)],
+    current_user: CurrentUserFromCookie,
+    db: DbSession,
+):
+    """Update current user's username."""
+    if not await validate_csrf_token(request):
+        return _htmx_or_redirect(
+            request, 403, _error_html("Invalid CSRF token"), "/web/settings?error=csrf"
+        )
+
+    clean_username = username.strip()
+    if len(clean_username) < 3:
+        return _htmx_or_redirect(
+            request,
+            400,
+            _error_html("Username must be at least 3 characters"),
+            "/web/settings?error=username_too_short",
+        )
+
+    current_user.username = clean_username
+    await db.commit()
+
+    return _htmx_or_redirect(
+        request,
+        200,
+        _success_html("Username updated successfully"),
+        "/web/settings?updated=username",
+    )
+
+
+@router.post("/settings/password")
+@limiter.limit("10/minute")
+async def change_password(
+    request: Request,
+    current_password: Annotated[str, Form(max_length=255)],
+    new_password: Annotated[str, Form(max_length=255)],
+    new_password_confirm: Annotated[str, Form(max_length=255)],
+    current_user: CurrentUserFromCookie,
+    db: DbSession,
+):
+    """Change current user's password."""
+    if not await validate_csrf_token(request):
+        return _htmx_or_redirect(
+            request, 403, _error_html("Invalid CSRF token"), "/web/settings?error=csrf"
+        )
+
+    if not verify_password(current_password, current_user.password_hash):
+        return _htmx_or_redirect(
+            request,
+            401,
+            _error_html("Current password is incorrect"),
+            "/web/settings?error=bad_password",
+        )
+
+    if new_password != new_password_confirm:
+        return _htmx_or_redirect(
+            request,
+            400,
+            _error_html("New passwords do not match"),
+            "/web/settings?error=password_mismatch",
+        )
+
+    if len(new_password) < 8:
+        return _htmx_or_redirect(
+            request,
+            400,
+            _error_html("New password must be at least 8 characters"),
+            "/web/settings?error=password_too_short",
+        )
+
+    current_user.password_hash = hash_password(new_password)
+    await db.commit()
+
+    return _htmx_or_redirect(
+        request,
+        200,
+        _success_html("Password changed successfully"),
+        "/web/settings?updated=password",
+    )
+
+
+@router.post("/settings/delete-account")
+@limiter.limit("3/minute")
+async def delete_account(
+    request: Request,
+    password: Annotated[str, Form(max_length=255)],
+    confirm_text: Annotated[str, Form(max_length=16)],
+    current_user: CurrentUserFromCookie,
+    db: DbSession,
+):
+    """Delete current user's account and associated downloads."""
+    if not await validate_csrf_token(request):
+        return _htmx_or_redirect(
+            request, 403, _error_html("Invalid CSRF token"), "/web/settings?error=csrf"
+        )
+
+    if confirm_text.strip().upper() != "DELETE":
+        return _htmx_or_redirect(
+            request,
+            400,
+            _error_html("Please type DELETE to confirm account deletion"),
+            "/web/settings?error=delete_confirmation",
+        )
+
+    if not verify_password(password, current_user.password_hash):
+        return _htmx_or_redirect(
+            request,
+            401,
+            _error_html("Password is incorrect"),
+            "/web/settings?error=bad_password",
+        )
+
+    result = await db.execute(select(DownloadJob).where(DownloadJob.user_id == current_user.id))
+    jobs = result.scalars().all()
+
+    file_cleanup_failures: list[str] = []
+    for job in jobs:
+        if not job.file_path:
+            continue
+        try:
+            safe_path = _validate_file_path(job.file_path)
+            if os.path.isfile(safe_path):
+                os.remove(safe_path)
+        except HTTPException:
+            logger.warning(
+                "Account deletion aborted: invalid download file path for job %s: %s",
+                job.id,
+                job.file_path,
+            )
+            file_cleanup_failures.append(job.file_path)
+        except OSError as e:
+            logger.warning(
+                "Account deletion aborted: failed to remove file for job %s (%s): %s",
+                job.id,
+                job.file_path,
+                e,
+            )
+            file_cleanup_failures.append(job.file_path)
+        except Exception:
+            logger.exception(
+                "Account deletion aborted: unexpected error cleaning file for job %s (%s)",
+                job.id,
+                job.file_path,
+            )
+            file_cleanup_failures.append(job.file_path)
+
+    if file_cleanup_failures:
+        return _htmx_or_redirect(
+            request,
+            500,
+            _error_html(
+                "Could not remove all downloaded files. Your account was not deleted. "
+                "Please try again or contact support."
+            ),
+            "/web/settings?error=file_cleanup",
+        )
+
+    for job in jobs:
+        await db.delete(job)
+
+    await db.delete(current_user)
+    await db.commit()
+
+    if is_htmx_request(request):
+        resp = HTMLResponse(status_code=200, content="")
+        resp.headers["HX-Redirect"] = "/web/login?account_deleted=1"
+        clear_token_cookies(resp)
+        return resp
+
+    redirect = RedirectResponse(url="/web/login?account_deleted=1", status_code=303)
+    clear_token_cookies(redirect)
+    return redirect
 
 
 @router.post("/downloads")
