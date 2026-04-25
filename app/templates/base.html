@@ -35,12 +35,13 @@
         htmx.config.allowEval = false;
         htmx.config.allowScriptTags = false;
         // CSRF: token injected by Jinja2 into meta tag, read by JS
-        const csrfMeta = document.querySelector('meta[name="csrf-token"]');
-        if (csrfMeta) {
-            htmx.config.headers = {
-                "X-CSRF-Token": csrfMeta.getAttribute('content')
-            };
-        }
+        // CSRF: add token on every HTMX request (more reliable than static config.headers)
+        document.addEventListener("htmx:configRequest", function (evt) {
+            const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+            if (csrfMeta) {
+                evt.detail.headers["X-CSRF-Token"] = csrfMeta.getAttribute('content');
+            }
+        });
     </script>
 
     <!-- Auth & Error Handling -->

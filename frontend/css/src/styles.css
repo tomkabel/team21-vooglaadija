@@ -140,6 +140,46 @@
         @apply absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none;
     }
 
+    .password-strength {
+        @apply space-y-2;
+    }
+
+    .password-strength-meter {
+        @apply h-1.5 rounded-full bg-white/[0.08] overflow-hidden;
+    }
+
+    .password-strength-fill {
+        @apply h-full rounded-full transition-all duration-300 w-0 bg-coral-400;
+    }
+
+    .password-strength-fill.is-weak {
+        @apply w-1/3 bg-coral-400;
+    }
+
+    .password-strength-fill.is-medium {
+        @apply w-2/3 bg-amber-400;
+    }
+
+    .password-strength-fill.is-strong {
+        @apply w-full bg-jade-400;
+    }
+
+    .password-strength-text {
+        @apply text-xs font-body text-gray-500 transition-colors duration-300;
+    }
+
+    .password-strength-text.is-weak {
+        @apply text-coral-400;
+    }
+
+    .password-strength-text.is-medium {
+        @apply text-amber-400;
+    }
+
+    .password-strength-text.is-strong {
+        @apply text-jade-400;
+    }
+
     /* === Status & Indicator Components === */
     .status-badge {
         @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-display font-semibold tracking-wider uppercase;
