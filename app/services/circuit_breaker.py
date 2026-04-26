@@ -146,9 +146,12 @@ class CircuitBreaker:
             if current_state == CircuitState.OPEN:
                 return False
 
-            # HALF_OPEN: allow limited concurrent calls
+            # HALF_OPEN: allow limited concurrent calls and reserve a slot
             if current_state == CircuitState.HALF_OPEN:
-                return self._half_open_calls < self.half_open_max_calls
+                if self._half_open_calls < self.half_open_max_calls:
+                    self._half_open_calls += 1
+                    return True
+                return False
 
             return False
 
@@ -241,12 +244,6 @@ class CircuitBreaker:
             raise CircuitBreakerOpenError(self.name, self.reset_timeout)
 
         try:
-            async with self._lock:
-                # Re-check state inside lock for accurate half_open_calls tracking
-                actual_state = self._check_and_transition_to_half_open()
-                if actual_state == CircuitState.HALF_OPEN:
-                    self._half_open_calls += 1
-
             result = await func(*args, **kwargs)
             await self.record_success()
             return result
