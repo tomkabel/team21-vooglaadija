@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from typing import TypedDict
@@ -10,6 +11,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.schemas.error import ErrorCode, error_response_doc, success_response_doc
 from worker.queue import redis_client
+
+
+logger = logging.getLogger(__name__)
 
 
 class HealthDependencies(TypedDict):
@@ -137,13 +141,15 @@ async def readiness_check() -> ReadinessResponse | Response:
             finally:
                 await engine.dispose()
     except Exception as e:
-        db_status = f"error: {str(e)[:100]}"
+        logger.exception("Database readiness check failed")
+        db_status = "error: unavailable"
 
     # Check Redis connectivity
     try:
         await redis_client.ping()
     except Exception as e:
-        redis_status = f"error: {str(e)[:100]}"
+        logger.exception("Redis readiness check failed")
+        redis_status = "error: unavailable"
 
     # Determine overall status
     is_ready = db_status == "connected" and redis_status == "connected"
