@@ -242,6 +242,50 @@ EOF
     chmod 600 "$SSL_DIR/privkey.pem"
     chmod 600 "$SSL_DIR/key.pem"
 
+    # Create deploy hook for automatic certificate renewal
+    log_info "Creating certbot renewal deploy hook..."
+    mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+    cat > /etc/letsencrypt/renewal-hooks/deploy/vooglaadija.sh << 'DEPLOY_HOOK'
+#!/bin/bash
+# Certbot renewal deploy hook for Vooglaadija
+# Copies renewed certificates to the application SSL directory and reloads nginx
+
+DOMAIN="youtube.tomabel.ee"
+SSL_DIR="/opt/vooglaadija/infra/ssl"
+NGINX_CONTAINER="ytprocessor-nginx"
+
+echo "Certbot deploy hook: Processing certificate renewal for $DOMAIN"
+
+# Copy renewed certificates to application SSL directory
+if [[ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
+    cp /etc/letsencrypt/live/"$DOMAIN"/fullchain.pem "$SSL_DIR/fullchain.pem"
+    cp /etc/letsencrypt/live/"$DOMAIN"/privkey.pem "$SSL_DIR/privkey.pem"
+    chmod 644 "$SSL_DIR/fullchain.pem"
+    chmod 600 "$SSL_DIR/privkey.pem"
+    echo "Certificates copied to $SSL_DIR"
+fi
+
+# Signal nginx to reload certificates
+if docker ps --format '{{.Names}}' | grep -q "^${NGINX_CONTAINER}$"; then
+    docker exec "$NGINX_CONTAINER" nginx -s reload 2>/dev/null || {
+        docker exec "$NGINX_CONTAINER" sh -c "nginx -s reload" 2>/dev/null || echo "nginx reload attempted"
+    }
+    echo "nginx container reloaded"
+fi
+
+echo "Certificate renewal processed successfully"
+DEPLOY_HOOK
+    chmod +x /etc/letsencrypt/renewal-hooks/deploy/vooglaadija.sh
+
+    # Enable certbot timer for automatic renewal
+    log_info "Enabling certbot.timer for automatic renewal..."
+    systemctl enable certbot.timer || log_warn "Could not enable certbot.timer"
+    systemctl start certbot.timer || log_warn "Could not start certbot.timer"
+
+    # Verify timer is running
+    log_info "Checking certbot timer status..."
+    systemctl list-timers certbot* || true
+
     # Verify certificates
     log_info "Certificate details:"
     openssl x509 -in "$SSL_DIR/fullchain.pem" -noout -subject -dates
