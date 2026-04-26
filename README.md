@@ -65,7 +65,7 @@ Vooglaadija is a tool. Examples of legitimate uses include:
 
 Vooglaadija is open-source software provided under GPLv3. The operators of this service do not endorse or encourage copyright infringement. This tool has substantial non-infringing uses and is designed for lawful purposes only. Users should consult qualified legal counsel if unsure about the legality of their use case.
 
-See the [Terms of Service](/terms) for full details.
+See the [Terms of Service](/web/terms) for full details.
 
 ---
 

@@ -423,7 +423,7 @@ async def terms_page(request: Request):
     response = templates.TemplateResponse(
         request,
         "terms.html",
-        get_template_context(request, csrf_token=token),
+        get_template_context(request, csrf_token=token, last_updated="April 26, 2026"),
     )
     set_csrf_token_cookie(response, token)
     return response
