@@ -33,7 +33,6 @@ class TestNetDataIntegration:
         except (httpx.ConnectError, httpx.TimeoutException):
             pytest.skip("NetData agent not running at localhost:19999")
 
-    @pytest.mark.integration
     async def test_netdata_docker_collector_configured(self):
         """Verify Docker container metrics collector is configured.
 
@@ -60,7 +59,7 @@ class TestNetDataIntegration:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(
                     "http://localhost:19999/api/v1/allmetrics",
-                    params={"format": "json", "chart": "redis.connected_clients"},
+                    params={"format": "json", "chart": "redis.clients"},
                 )
                 # If Redis collector is not enabled or Redis not running
                 if response.status_code == 404:
@@ -89,7 +88,6 @@ class TestNetDataHealthAlerts:
         except (httpx.ConnectError, httpx.TimeoutException):
             pytest.skip("NetData agent not running at localhost:19999")
 
-    @pytest.mark.integration
     async def test_netdata_cpu_health_check(self):
         """Verify system CPU metrics are being collected."""
         try:

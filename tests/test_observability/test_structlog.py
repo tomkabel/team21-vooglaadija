@@ -98,7 +98,7 @@ class TestStructlogPerformance:
 
     def test_rapid_log_calls(self):
         """Test that rapid log calls don't cause issues."""
-        configure_logging(log_level="INFO")  # INFO level to emit logger.info calls
+        configure_logging(log_level="INFO")  # Use INFO so logger.info calls emit
         logger = get_logger(__name__)
 
         # Should handle rapid calls efficiently

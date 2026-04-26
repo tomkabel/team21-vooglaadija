@@ -10,6 +10,11 @@ pytestmark = pytest.mark.skipif(
     reason="uvloop is not available on Windows",
 )
 
+# Install uvloop at module level before any async tests run
+import uvloop  # noqa: E402
+
+uvloop.install()
+
 
 class TestUvloopAvailability:
     """Test uvloop availability and configuration."""
@@ -42,10 +47,6 @@ class TestUvloopAsyncPerformance:
     @pytest.mark.asyncio
     async def test_rapid_async_tasks(self):
         """Test handling many rapid async tasks."""
-        import uvloop
-
-        uvloop.install()
-
         tasks = []
         for _ in range(100):
             tasks.append(asyncio.create_task(asyncio.sleep(0.001)))
@@ -55,10 +56,6 @@ class TestUvloopAsyncPerformance:
     @pytest.mark.asyncio
     async def test_async_queue_throughput(self):
         """Test async queue throughput with uvloop."""
-        import uvloop
-
-        uvloop.install()
-
         queue = asyncio.Queue()
 
         async def producer():
