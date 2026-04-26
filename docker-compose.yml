@@ -292,8 +292,8 @@ services:
         ["CMD-SHELL", "wget -q --spider http://127.0.0.1:80/health || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 5s
+      retries: 5
+      start_period: 30s
     logging:
       driver: "json-file"
       options:
