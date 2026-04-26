@@ -45,7 +45,7 @@
     <!-- CSRF Header Configuration using htmx:beforeSend event for reliability -->
     <script nonce="{{ nonce }}">
       // Set CSRF header dynamically on every HTMX request to ensure it's always sent
-      document.body.addEventListener("htmx:beforeSend", function (evt) {
+      document.body.addEventListener("htmx:configRequest", function (evt) {
         const csrfMeta = document.querySelector('meta[name="csrf-token"]');
         if (csrfMeta && csrfMeta.getAttribute("content")) {
           evt.detail.headers["X-CSRF-Token"] = csrfMeta.getAttribute("content");

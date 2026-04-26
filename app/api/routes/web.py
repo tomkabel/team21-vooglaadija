@@ -1,5 +1,4 @@
 import html
-import logging
 import os
 import posixpath
 import uuid
@@ -25,7 +24,7 @@ from app.config import settings
 from app.logging_config import get_logger
 from app.models.download_job import DownloadJob
 from app.models.outbox import Outbox
-from app.models.user import User
+from app.models.user import User, not_deleted
 from app.services.auth_service import hash_password, verify_password
 from app.services.outbox_service import write_job_to_outbox
 from app.utils.username import default_username_from_email as _default_username_from_email
@@ -93,14 +92,21 @@ def get_csrf_token(request: Request) -> str:
 
 
 def set_csrf_token_cookie(response: Response, token: str) -> None:
-    """Set CSRF token in response cookie."""
+    """Set CSRF token in response cookie with security hardening.
+
+    httponly=True prevents JavaScript access (XSS theft protection).
+    secure=True ensures cookie only sent over HTTPS.
+    samesite="Strict" prevents CSRF attacks via cross-site requests.
+    max_age=86400 sets 24-hour expiry matching session lifetime.
+    """
     response.set_cookie(
         key="csrf_token",
         value=token,
-        httponly=False,  # Needs to be readable by JavaScript
+        httponly=True,
         secure=settings.cookie_secure,
-        samesite="lax",  # Lax allows top-level navigation while still preventing CSRF
+        samesite="strict",
         path="/",
+        max_age=86400,  # 24 hours in seconds
     )
 
 
@@ -290,7 +296,7 @@ async def login_form(
             request, 403, _error_html("Invalid CSRF token"), "/web/login?error=csrf"
         )
 
-    result = await db.execute(select(User).where(User.email == email))
+    result = await db.execute(select(User).where(User.email == email, not_deleted()))
     user = result.scalar_one_or_none()
 
     if user is None or not verify_password(password, user.password_hash):
@@ -355,7 +361,7 @@ async def register_form(
             "/web/register?error=password_too_short",
         )
 
-    result = await db.execute(select(User).where(User.email == email))
+    result = await db.execute(select(User).where(User.email == email, not_deleted()))
     existing = result.scalar_one_or_none()
     if existing:
         return _htmx_or_redirect(
@@ -542,6 +548,41 @@ async def change_password(
     )
 
 
+def _cleanup_job_files(jobs: list, logger) -> tuple[bool, list[str]]:
+    """Clean up files for a list of download jobs. Returns (all_cleaned, failures)."""
+    file_cleanup_failures: list[str] = []
+    for job in jobs:
+        if not job.file_path:
+            continue
+        try:
+            safe_path = _validate_file_path(job.file_path)
+            if os.path.isfile(safe_path):
+                os.remove(safe_path)
+        except HTTPException:
+            logger.warning(
+                "Account deletion aborted: invalid download file path for job %s: %s",
+                job.id,
+                job.file_path,
+            )
+            file_cleanup_failures.append(job.file_path)
+        except OSError as e:
+            logger.warning(
+                "Account deletion aborted: failed to remove file for job %s (%s): %s",
+                job.id,
+                job.file_path,
+                e,
+            )
+            file_cleanup_failures.append(job.file_path)
+        except Exception:
+            logger.exception(
+                "Account deletion aborted: unexpected error cleaning file for job %s (%s)",
+                job.id,
+                job.file_path,
+            )
+            file_cleanup_failures.append(job.file_path)
+    return (not file_cleanup_failures, file_cleanup_failures)
+
+
 @router.post("/settings/delete-account")
 @limiter.limit("3/minute")
 async def delete_account(
@@ -576,38 +617,9 @@ async def delete_account(
     result = await db.execute(select(DownloadJob).where(DownloadJob.user_id == current_user.id))
     jobs = result.scalars().all()
 
-    file_cleanup_failures: list[str] = []
-    for job in jobs:
-        if not job.file_path:
-            continue
-        try:
-            safe_path = _validate_file_path(job.file_path)
-            if os.path.isfile(safe_path):
-                os.remove(safe_path)
-        except HTTPException:
-            logger.warning(
-                "Account deletion aborted: invalid download file path for job %s: %s",
-                job.id,
-                job.file_path,
-            )
-            file_cleanup_failures.append(job.file_path)
-        except OSError as e:
-            logger.warning(
-                "Account deletion aborted: failed to remove file for job %s (%s): %s",
-                job.id,
-                job.file_path,
-                e,
-            )
-            file_cleanup_failures.append(job.file_path)
-        except Exception:
-            logger.exception(
-                "Account deletion aborted: unexpected error cleaning file for job %s (%s)",
-                job.id,
-                job.file_path,
-            )
-            file_cleanup_failures.append(job.file_path)
+    all_cleaned, _file_cleanup_failures = _cleanup_job_files(list(jobs), logger)
 
-    if file_cleanup_failures:
+    if not all_cleaned:
         return _htmx_or_redirect(
             request,
             500,

@@ -17,7 +17,7 @@ from app.auth import (
     verify_token,
 )
 from app.config import settings
-from app.models.user import User
+from app.models.user import User, not_deleted
 from app.schemas.error import ErrorCode, error_response_doc, success_response_doc
 from app.schemas.token import Token, TokenRefresh
 from app.schemas.user import UserCreate, UserResponse
@@ -135,7 +135,7 @@ async def login(
     user_data: UserCreate,
     db: DbSession,
 ) -> Token:
-    result = await db.execute(select(User).where(User.email == user_data.email))
+    result = await db.execute(select(User).where(User.email == user_data.email, not_deleted()))
     user = result.scalar_one_or_none()
 
     if user is None or not verify_password(user_data.password, user.password_hash):
@@ -255,7 +255,7 @@ async def refresh(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    result = await db.execute(select(User).where(User.id == user_uuid))
+    result = await db.execute(select(User).where(User.id == user_uuid, not_deleted()))
     user = result.scalar_one_or_none()
 
     if user is None or not user.is_active:
