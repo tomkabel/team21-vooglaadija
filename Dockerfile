@@ -195,9 +195,9 @@ ENV PYTHONPATH=/app \
     PATH=/opt/venv/bin:$PATH \
     STORAGE_PATH=/app/storage
 
-# Health check - HTTP check using worker's health endpoint on port 8081
+# Health check - HTTP check using worker's health endpoint on port 8082
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=5)"]
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=5)"]
 
 # Copy worker entrypoint
 COPY --from=app-builder /app/worker/entrypoint-worker.sh ./entrypoint-worker.sh
