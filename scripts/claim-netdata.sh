@@ -72,7 +72,7 @@ EOF
 
 # Parse arguments
 CLAIM_TOKEN=""
-CLAIM_URL="https://app.netdata.cloud/api/v1/node/claim"
+CLAIM_URL="https://app.netdata.cloud"
 CLAIM_ROOMS=""
 CLAIM_ALL=true
 CLAIM_API=false
