@@ -138,19 +138,40 @@ if $CLEAN_VOLUMES; then
 fi
 
 if $CLEAN_BUILD_CACHE; then
-    PRUNE_CMD="$PRUNE_CMD --all"
+    BUILDER_PRUNE_CMD="docker builder prune${CLEAN_IMAGES:+ --all}"
+fi
+
+if $CLEAN_IMAGES; then
+    PRUNE_CMD="$PRUNE_CMD -a"
+fi
+
+if $CLEAN_VOLUMES; then
+    PRUNE_CMD="$PRUNE_CMD --volumes"
 fi
 
 # Add force flag for non-interactive mode
 if $DRY_RUN; then
     log_info "Would execute: $PRUNE_CMD -f"
+    if [[ -n "${BUILDER_PRUNE_CMD:-}" ]]; then
+        log_info "Would also execute: $BUILDER_PRUNE_CMD -f"
+    fi
     echo ""
     log_warn "Dry run complete - no changes made"
 else
-    log_info "Executing: $PRUNE_CMD"
+    log_info "Executing: $PRUNE_CMD -f"
     echo ""
-    eval $PRUNE_CMD
+    # Build command as array for safe execution (no eval, proper word-splitting)
+    PRUNE_CMD_ARR=($PRUNE_CMD "-f")
+    "${PRUNE_CMD_ARR[@]}"
     echo ""
+    # Also clean build cache if requested
+    if [[ -n "${BUILDER_PRUNE_CMD:-}" ]]; then
+        log_info "Executing: $BUILDER_PRUNE_CMD -f"
+        echo ""
+        BUILDER_PRUNE_CMD_ARR=($BUILDER_PRUNE_CMD "-f")
+        "${BUILDER_PRUNE_CMD_ARR[@]}"
+        echo ""
+    fi
     log_info "Cleanup complete!"
     echo ""
     show_disk_usage

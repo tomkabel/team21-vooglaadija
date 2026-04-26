@@ -143,7 +143,7 @@ fi
 # Build rooms argument
 ROOMS_ARG=""
 if [[ -n "$CLAIM_ROOMS" ]]; then
-    ROOMS_ARG="${NETDATA_CLAIM_ROOMS:-$CLAIM_ROOMS}"
+    ROOMS_ARG="$CLAIM_ROOMS"
 elif [[ -n "${NETDATA_CLAIM_ROOMS:-}" ]]; then
     ROOMS_ARG="$NETDATA_CLAIM_ROOMS"
 fi
@@ -152,19 +152,19 @@ fi
 claim_container() {
     local container_name=$1
     local hostname=$2
-    
+
     echo ""
     log_info "Claiming $container_name (hostname: $hostname)..."
-    
-    local cmd="docker exec $container_name netdata-claim.sh -token=$CLAIM_TOKEN -url=$CLAIM_URL"
+
+    local -a cmd=("docker" "exec" "$container_name" "netdata-claim.sh" "-token=$CLAIM_TOKEN" "-url=$CLAIM_URL")
     if [[ -n "$ROOMS_ARG" ]]; then
-        cmd="$cmd -rooms=$ROOMS_ARG"
+        cmd+=("-rooms=$ROOMS_ARG")
     fi
-    
+
     if $DRY_RUN; then
-        log_warn "DRY RUN: $cmd"
+        log_warn "DRY RUN: ${cmd[*]}"
     else
-        if eval $cmd; then
+        if "${cmd[@]}"; then
             log_info "Successfully claimed $container_name"
         else
             log_error "Failed to claim $container_name"

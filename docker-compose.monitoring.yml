@@ -20,8 +20,6 @@ x-netdata-common: &netdata-common
   security_opt:
     - apparmor:unconfined
   volumes:
-    - netdata-lib:/var/lib/netdata
-    - netdata-cache:/var/cache/netdata
     - /etc/passwd:/host/etc/passwd:ro
     - /etc/group:/host/etc/group:ro
     - /etc/localtime:/host/etc/localtime:ro
@@ -58,8 +56,8 @@ services:
     ports:
       - "19999:19999" # Expose NetData dashboard on localhost:19999
     volumes:
-      - netdata-lib:/var/lib/netdata
-      - netdata-cache:/var/cache/netdata
+      - netdata-api-lib:/var/lib/netdata
+      - netdata-api-cache:/var/cache/netdata
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       <<: *netdata-env
@@ -76,8 +74,8 @@ services:
     container_name: ytprocessor-netdata-worker
     hostname: vooglaadija-worker
     volumes:
-      - netdata-lib:/var/lib/netdata
-      - netdata-cache:/var/cache/netdata
+      - netdata-worker-lib:/var/lib/netdata
+      - netdata-worker-cache:/var/cache/netdata
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       <<: *netdata-env
@@ -93,8 +91,8 @@ services:
     container_name: ytprocessor-netdata-db
     hostname: vooglaadija-db
     volumes:
-      - netdata-lib:/var/lib/netdata
-      - netdata-cache:/var/cache/netdata
+      - netdata-db-lib:/var/lib/netdata
+      - netdata-db-cache:/var/cache/netdata
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       <<: *netdata-env
@@ -110,8 +108,8 @@ services:
     container_name: ytprocessor-netdata-redis
     hostname: vooglaadija-redis
     volumes:
-      - netdata-lib:/var/lib/netdata
-      - netdata-cache:/var/cache/netdata
+      - netdata-redis-lib:/var/lib/netdata
+      - netdata-redis-cache:/var/cache/netdata
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       <<: *netdata-env
@@ -185,10 +183,22 @@ services:
 
 # NetData volumes for persistent configuration and data
 volumes:
-  netdata-lib:
-    name: ytprocessor-netdata-lib
-  netdata-cache:
-    name: ytprocessor-netdata-cache
+  netdata-api-lib:
+    name: ytprocessor-netdata-api-lib
+  netdata-api-cache:
+    name: ytprocessor-netdata-api-cache
+  netdata-worker-lib:
+    name: ytprocessor-netdata-worker-lib
+  netdata-worker-cache:
+    name: ytprocessor-netdata-worker-cache
+  netdata-db-lib:
+    name: ytprocessor-netdata-db-lib
+  netdata-db-cache:
+    name: ytprocessor-netdata-db-cache
+  netdata-redis-lib:
+    name: ytprocessor-netdata-redis-lib
+  netdata-redis-cache:
+    name: ytprocessor-netdata-redis-cache
 
 # Shared network - uncomment if standalone NetData Parent is enabled
 # networks:

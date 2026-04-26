@@ -79,7 +79,7 @@ EXAMPLES:
 ENVIRONMENT VARIABLES:
     NETDATA_CLAIM_TOKEN    Claim token from app.netdata.cloud
     NETDATA_CLAIM_URL      Claim URL (default: https://app.netdata.cloud)
-    NETDATA_CLAIM_ROOM     Room ID for organizing nodes
+    NETDATA_CLAIM_ROOMS    Room ID(s) for organizing nodes
 
 EOF
 }
@@ -119,9 +119,11 @@ install_docker() {
         read -rp "Enter your NetData Claim Token: " claim_token
         
         if [[ -n "$claim_token" ]]; then
-            # Add to .env file
+            # Add to .env file using portable method (atomic write with temp file)
             if grep -q "NETDATA_CLAIM_TOKEN" "$PROJECT_DIR/.env" 2>/dev/null; then
-                sed -i "s/NETDATA_CLAIM_TOKEN=.*/NETDATA_CLAIM_TOKEN=$claim_token/" "$PROJECT_DIR/.env"
+                # Create temp file, edit, and atomically move back
+                cp "$PROJECT_DIR/.env" "$PROJECT_DIR/.env.bak"
+                sed 's/NETDATA_CLAIM_TOKEN=.*/NETDATA_CLAIM_TOKEN='"$claim_token"'/' "$PROJECT_DIR/.env" > "$PROJECT_DIR/.env.tmp" && mv "$PROJECT_DIR/.env.tmp" "$PROJECT_DIR/.env" && rm -f "$PROJECT_DIR/.env.bak"
             else
                 echo "NETDATA_CLAIM_TOKEN=$claim_token" >> "$PROJECT_DIR/.env"
             fi
@@ -137,12 +139,12 @@ install_docker() {
     log_info "Starting NetData agents..."
     cd "$PROJECT_DIR"
     docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
-    
+
     log_success "NetData Docker agents started!"
     echo ""
     log_info "Waiting for NetData to initialize..."
     sleep 5
-    
+
     # Show status
     echo ""
     docker compose -f docker-compose.yml -f docker-compose.monitoring.yml ps netdata-api netdata-worker netdata-db netdata-redis
@@ -244,7 +246,7 @@ claim_nodes() {
     # Claim token
     TOKEN="$NETDATA_CLAIM_TOKEN"
     URL="${NETDATA_CLAIM_URL:-https://app.netdata.cloud}"
-    ROOM="${NETDATA_CLAIM_ROOM:-}"
+    ROOM="${NETDATA_CLAIM_ROOMS:-}"
     
     # Get list of NetData containers
     containers=$(docker ps --format '{{.Names}}' | grep netdata || true)
@@ -286,8 +288,11 @@ check_status() {
         echo "=== Host NetData ==="
         systemctl status netdata --no-pager || true
         echo ""
-        curl -s http://localhost:19999/api/v1/info | jq -r '.version' 2>/dev/null && \
-            log_success "NetData is running" || log_warning "NetData not responding"
+        if curl -s http://localhost:19999/api/v1/info | jq -r '.version' >/dev/null 2>&1; then
+            log_success "NetData is running"
+        else
+            log_warning "NetData not responding"
+        fi
     fi
     
     # Check if cloud-connected
