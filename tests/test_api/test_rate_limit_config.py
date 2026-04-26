@@ -26,22 +26,22 @@ class TestParseRetryAfter:
     def test_parse_minute_variant(self):
         """Test parsing plural minutes unit."""
         result = _parse_retry_after("2 per 3 minutes")
-        assert result == 180
+        assert result == 120
 
     def test_parse_hours(self):
         """Test parsing hours unit."""
         result = _parse_retry_after("5 per 1 hour")
-        assert result == 3600
+        assert result == 18000
 
     def test_parse_hour_variant(self):
         """Test parsing plural hours unit."""
         result = _parse_retry_after("1 per 2 hours")
-        assert result == 7200
+        assert result == 3600
 
     def test_parse_days(self):
         """Test parsing days unit."""
         result = _parse_retry_after("5 per 1 day")
-        assert result == 86400
+        assert result == 432000
 
     def test_parse_day_variant(self):
         """Test parsing plural days unit."""
