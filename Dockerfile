@@ -75,8 +75,10 @@ COPY alembic ./alembic
 # Install the package (production deps only)
 RUN pip install .
 
-# Copy built frontend assets directly into the app package so they are included
-# in the wheel and available both from source and installed package paths.
+# Copy built frontend assets to the app static directory.
+# Note: These files are placed at /app/app/static/ in the container filesystem
+# but are NOT packaged into the installed wheel - they exist only on the
+# filesystem at the specified path after this COPY command runs.
 COPY --from=frontend-builder /app/frontend/css/dist/styles.css /app/app/static/css/styles.css
 COPY --from=frontend-builder /app/frontend/node_modules/htmx.org/dist/htmx.min.js /app/app/static/js/htmx.min.js
 
