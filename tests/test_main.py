@@ -23,14 +23,12 @@ class TestShutdownState:
 
     def test_shutdown_state_initially_zero(self):
         """Test that shutdown state is initially zero."""
-        from app.main import _ShutdownState
 
         state = _ShutdownState()
         assert state.received == 0
 
     def test_shutdown_state_set_updates_value(self):
         """Test that set() updates the received value."""
-        from app.main import _ShutdownState
 
         state = _ShutdownState()
         state.set(signal.SIGTERM)
@@ -38,7 +36,6 @@ class TestShutdownState:
 
     def test_shutdown_state_thread_safety(self):
         """Spawn threads, call set(), assert final value is one of the set values."""
-        from app.main import _ShutdownState
 
         state = _ShutdownState()
         results = []
@@ -101,13 +98,11 @@ class TestAppSignals:
 
     def test_sigterm_handler_exists(self):
         """Test that _sigterm_handler is defined and callable."""
-        from app.main import _sigterm_handler
 
         assert callable(_sigterm_handler)
 
     def test_sigterm_handler_sets_shutdown_state(self):
         """Test that _sigterm_handler updates _shutdown_state."""
-        from app.main import _ShutdownState, _sigterm_handler
 
         state = _ShutdownState()
         with patch("app.main._shutdown_state", state):
@@ -148,7 +143,6 @@ class TestHttpExceptionHandler:
     @pytest.mark.asyncio
     async def test_http_exception_handler_401(self):
         """Test that 401 returns UNAUTHORIZED error code."""
-        from app.schemas.error import ErrorCode
 
         request = MagicMock()
         request.state.request_id = "test-request-id"
@@ -165,7 +159,6 @@ class TestHttpExceptionHandler:
     @pytest.mark.asyncio
     async def test_http_exception_handler_404(self):
         """Test that 404 returns NOT_FOUND error code."""
-        from app.schemas.error import ErrorCode
 
         request = MagicMock()
         request.state.request_id = "test-request-id"

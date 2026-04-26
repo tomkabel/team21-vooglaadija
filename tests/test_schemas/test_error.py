@@ -1,7 +1,5 @@
 """Tests for error schemas."""
 
-import pytest
-
 from app.schemas.error import (
     ErrorCode,
     ErrorResponse,

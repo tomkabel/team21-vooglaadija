@@ -48,9 +48,7 @@ async def test_write_job_to_outbox_idempotent_skips_duplicate(db_session):
 
     await db_session.commit()
 
-    count_result = await db_session.execute(
-        select(Outbox).where(Outbox.job_id == job_id)
-    )
+    count_result = await db_session.execute(select(Outbox).where(Outbox.job_id == job_id))
     entries = count_result.scalars().all()
     assert len(entries) == 1
 
@@ -73,9 +71,7 @@ async def test_write_job_to_outbox_allows_after_processed(db_session):
 
     await db_session.commit()
 
-    count_result = await db_session.execute(
-        select(Outbox).where(Outbox.job_id == job_id)
-    )
+    count_result = await db_session.execute(select(Outbox).where(Outbox.job_id == job_id))
     entries = count_result.scalars().all()
     assert len(entries) == 2
 
