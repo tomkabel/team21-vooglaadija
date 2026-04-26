@@ -252,24 +252,9 @@ class TestGracefulShutdownBehavior:
 class TestGracefulShutdownIntegration:
     """Integration tests for full graceful shutdown flow."""
 
-    @pytest.mark.integration
-    async def test_main_registers_signal_handlers(self):
-        """Test that main() registers SIGTERM and SIGINT handlers."""
-        import importlib
-
-        import worker.main
-
-        importlib.reload(worker.main)
-
-        mock_loop = MagicMock()
-        mock_loop.add_signal_handler = MagicMock()
-
-        with patch("asyncio.get_running_loop", return_value=mock_loop):
-            # Just verify the signal handler registration works
-            for _sig in (signal.SIGTERM, signal.SIGINT):
-                mock_loop.add_signal_handler.reset_mock()
-                # The handler is registered during import/cleanup
-                # This test verifies the pattern exists
+    # Note: Signal handler registration in main() requires the full asyncio event loop
+    # setup and is tested via integration tests. The _signal_handler function itself
+    # is tested in TestGracefulShutdownTimestampTracking.
 
     @pytest.mark.unit
     async def test_shutdown_sequence(self):
