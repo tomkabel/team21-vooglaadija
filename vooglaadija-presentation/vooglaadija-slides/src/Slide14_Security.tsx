@@ -3,10 +3,10 @@ import { motion } from "framer-motion";
 const securityFeatures = [
   { name: "Password Hashing", impl: "bcrypt (cost factor 12)", icon: "🔐" },
   { name: "JWT Access Token", impl: "HS256, 15 min expiry", icon: "🎫" },
-  { name: "JWT Refresh Token", impl: "7 days, rotation enabled", icon: "🔄" },
+  { name: "JWT Refresh Token", impl: "7 days, new pair issued on refresh", icon: "🔄" },
   { name: "IDOR Protection", impl: "User ID in WHERE clause", icon: "🛡️" },
   { name: "CSRF Protection", impl: "Double-submit cookie", icon: "⚔️" },
-  { name: "Rate Limiting", impl: "60 req/min per IP", icon: "🚦" },
+  { name: "Rate Limiting", impl: "per-endpoint limits applied", icon: "🚦" },
 ];
 
 export default function Slide14_Security() {
