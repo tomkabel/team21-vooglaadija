@@ -3,6 +3,7 @@ import os
 import posixpath
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlparse
 
@@ -34,7 +35,11 @@ from worker.queue import enqueue_job
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/web", tags=["web"])
-templates = Jinja2Templates(directory="app/templates")
+
+# Resolve templates relative to this file so it works regardless of CWD.
+# web.py -> app/api/routes/web.py, so parent^3 = app/
+_TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
+templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
 
 # Allowed redirect targets — only internal paths
 _ALLOWED_REDIRECT_HOSTS: tuple[str, ...] = ("/web/",)
