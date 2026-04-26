@@ -49,7 +49,7 @@ from app.schemas.error import ErrorCode, error_response_dict
 configure_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = get_logger(__name__)
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "1.0.0"
 
 
 class _ShutdownState:
@@ -194,8 +194,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="YouTube Link Processor API",
-    summary="Asynchronous API for authenticated YouTube download jobs.",
+    title="Vooglaadija API",
+    summary="Asynchronous API for authenticated video download jobs.",
     description=(
         "REST API for user authentication, creating download jobs, tracking job status, "
         "and retrieving processed files. Authentication uses bearer JWT access tokens."
