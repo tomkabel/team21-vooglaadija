@@ -32,7 +32,7 @@ This plan outlines the integration of **NetData** for real-time observability al
 
 ### 1.1 Architecture Decision
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Vooglaadija Stack                          │
 ├─────────────────────────────────────────────────────────────────┤
@@ -62,7 +62,7 @@ This plan outlines the integration of **NetData** for real-time observability al
 
 ### 1.2 NetData Deployment Options
 
-| Option                    | Description                        | Best For                            |
+|text Option                    | Description                        | Best For                            |
 | ------------------------- | ---------------------------------- | ----------------------------------- |
 | **NetData Cloud (SaaS)**  | Free tier, 1-day retention         | Development, small deployments      |
 | **NetData Cloud On-Prem** | Self-hosted, full data sovereignty | Production, compliance requirements |
@@ -94,9 +94,9 @@ x-netdata-config: &netdata-config
   security_opt:
     - apparmor:unconfined
   environment:
-    - NETDATA_CLAIM_TOKEN=${NETDATA_CLAIM_TOKEN:-}
-    - NETDATA_CLAIM_URL=${NETDATA_CLAIM_URL:-https://app.netdata.cloud}
-    - NETDATA_CLAIM_ROOM=${NETDATA_CLAIM_ROOM:-}
+    NETDATA_CLAIM_TOKEN: "${NETDATA_CLAIM_TOKEN:-}"
+    NETDATA_CLAIM_URL: "${NETDATA_CLAIM_URL:-https://app.netdata.cloud}"
+    NETDATA_CLAIM_ROOMS: "${NETDATA_CLAIM_ROOMS:-}"
   volumes:
     - netdata-config:/etc/netdata
     - netdata-lib:/var/lib/netdata
@@ -127,7 +127,7 @@ services:
     container_name: ytprocessor-netdata-api
     environment:
       <<: *netdata-config
-      - NETDATA_CLAIM_TOKEN=${NETDATA_CLAIM_TOKEN:-}
+      NETDATA_CLAIM_TOKEN: "${NETDATA_CLAIM_TOKEN:-}"
     hostname: vooglaadija-api
 
   # NetData agent for Worker container monitoring
@@ -136,7 +136,7 @@ services:
     container_name: ytprocessor-netdata-worker
     environment:
       <<: *netdata-config
-      - NETDATA_CLAIM_TOKEN=${NETDATA_CLAIM_TOKEN:-}
+      NETDATA_CLAIM_TOKEN: "${NETDATA_CLAIM_TOKEN:-}"
     hostname: vooglaadija-worker
 
   # NetData parent for standalone (no cloud)

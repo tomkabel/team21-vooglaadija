@@ -29,12 +29,12 @@
 
 ### **Priority Labels**
 
-- **priority-critical**: Blocks release (→ P0)
-- **priority-high**: Important (→ P1)
+- **priority-critical**: Critical priority - blocks release (maps to P0)
+- **priority-high**: High priority - important items (maps to P1)
 - **priority-medium**: Normal priority
 - **priority-low**: Nice to have
-- **P0**: Critical Priority (maps to priority-critical)
-- **P1**: High Priority (maps to priority-high)
+
+> Note: Use priority-* labels as the canonical scheme. P0/P1 are deprecated aliases.
 
 ### **Status & Workflow Labels**
 
@@ -48,14 +48,14 @@
 
 ### **Context & Domain Labels**
 
-- **auth**: Authentication-related
+- **auth**: Authentication-related issues and PRs
 - **dependencies**: Pull requests that update a dependency file
 - **downloads**: Download-related issues
-- **frontend**: Frontend-related
+- **frontend**: Frontend-related issues and PRs
 - **javascript**: Pull requests that update JavaScript code
 - **python:uv**: Pull requests that update python:uv code
-- **real-time**: Real-time features
-- **security**: Security-related
+- **real-time**: Real-time features and functionality
+- **security**: Security-related issues and PRs
 
 ### **Sprint Labels**
 

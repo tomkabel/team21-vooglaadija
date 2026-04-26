@@ -51,7 +51,7 @@ docker-compose -f docker-compose.yml -f docker-compose.production.yml ps
 
 ## Service Architecture
 
-```
+```text
 Internet → Nginx (443) → API (8000) → PostgreSQL (5432)
                               ↓
                            Redis (6379)

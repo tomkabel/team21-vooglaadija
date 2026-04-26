@@ -11,10 +11,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Basic logging
-logger.info("User logged in", user_id=123)
-logger.warning("High memory usage", memory_percent=85)
-logger.error("Database connection failed", error="timeout")
+# Basic logging - use extra parameter for structured data
+logger.info("User logged in", extra={"user_id": 123})
+logger.warning("High memory usage", extra={"memory_percent": 85})
+logger.error("Database connection failed", extra={"error": "timeout"})
 
 # With exception
 try:
@@ -120,8 +120,8 @@ async def process_download(job_id: UUID):
 
 ```python
 # Good
-logger.info("user_registration_complete", user_id=123)
-logger.warning("queue_depth_high", depth=500)
+logger.info("user-registration-complete", user_id=123)
+logger.warning("queue-depth-high", depth=500)
 
 # Avoid
 logger.info("UserRegistrationComplete")
