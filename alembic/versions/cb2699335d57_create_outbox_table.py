@@ -34,7 +34,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_outbox_status'), 'outbox', ['status'], unique=False)
     op.create_index('ix_outbox_status_created_at', 'outbox', ['status', 'created_at'], unique=False)
     op.add_column('download_jobs', sa.Column('retry_count', sa.Integer(), nullable=False, server_default=sa.text('0')))
-    op.add_column('download_jobs', sa.Column('max_retries', sa.Integer(), nullable=False, server_default=sa.text('0')))
+    op.add_column('download_jobs', sa.Column('max_retries', sa.Integer(), nullable=False, server_default=sa.text('3')))
     op.add_column('download_jobs', sa.Column('next_retry_at', sa.DateTime(timezone=True), nullable=True))
     op.add_column('download_jobs', sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False))
 
