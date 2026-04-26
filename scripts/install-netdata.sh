@@ -119,11 +119,24 @@ install_docker() {
         read -rp "Enter your NetData Claim Token: " claim_token
         
         if [[ -n "$claim_token" ]]; then
-            # Add to .env file using portable method (atomic write with temp file)
+            # Add to .env file using safe parsing (atomic write with temp file)
+            # Use ASCII unit separator (0x1F) as sed delimiter to avoid conflicts with token content
             if grep -q "NETDATA_CLAIM_TOKEN" "$PROJECT_DIR/.env" 2>/dev/null; then
-                # Create temp file, edit, and atomically move back
+                # Create backup first
                 cp "$PROJECT_DIR/.env" "$PROJECT_DIR/.env.bak"
-                sed 's/NETDATA_CLAIM_TOKEN=.*/NETDATA_CLAIM_TOKEN='"$claim_token"'/' "$PROJECT_DIR/.env" > "$PROJECT_DIR/.env.tmp" && mv "$PROJECT_DIR/.env.tmp" "$PROJECT_DIR/.env" && rm -f "$PROJECT_DIR/.env.bak"
+                # Escape special characters in token for sed replacement
+                # Use $'\x1F' (ASCII unit separator) as delimiter instead of /
+                safe_token="$(printf '%s' "$claim_token" | sed 's/[&/\]/\\&/g')"
+                # Use 0x1F as field separator for sed to avoid delimiter conflicts
+                sed $'s\\\x1FNETDATA_CLAIM_TOKEN=.*\\\x1FNETDATA_CLAIM_TOKEN='"$safe_token"$'\\\x1F' "$PROJECT_DIR/.env" > "$PROJECT_DIR/.env.tmp"
+                if mv "$PROJECT_DIR/.env.tmp" "$PROJECT_DIR/.env"; then
+                    rm -f "$PROJECT_DIR/.env.bak"
+                else
+                    # Restore from backup if mv fails
+                    mv "$PROJECT_DIR/.env.bak" "$PROJECT_DIR/.env" 2>/dev/null || true
+                    log_error "Failed to update .env file"
+                    exit 1
+                fi
             else
                 echo "NETDATA_CLAIM_TOKEN=$claim_token" >> "$PROJECT_DIR/.env"
             fi
@@ -231,9 +244,13 @@ claim_nodes() {
     
     # Check for claim token
     if [[ -z "${NETDATA_CLAIM_TOKEN:-}" ]]; then
-        # Try to load from .env
+        # Safely read NETDATA_CLAIM_TOKEN from .env without executing the file
         if [[ -f "$PROJECT_DIR/.env" ]]; then
-            source "$PROJECT_DIR/.env"
+            # Read only NETDATA_CLAIM_TOKEN, NETDATA_CLAIM_URL, NETDATA_CLAIM_ROOMS keys
+            # Use grep/awk to extract value-only, ignoring comments and blank lines
+            NETDATA_CLAIM_TOKEN="$(grep -E "^NETDATA_CLAIM_TOKEN=" "$PROJECT_DIR/.env" 2>/dev/null | head -1 | sed 's/^NETDATA_CLAIM_TOKEN=[      ]*//' | sed 's/^["'"'"']//;s/["'"'"']$//' | awk '{print $1}')"
+            NETDATA_CLAIM_URL="$(grep -E "^NETDATA_CLAIM_URL=" "$PROJECT_DIR/.env" 2>/dev/null | head -1 | sed 's/^NETDATA_CLAIM_URL=[      ]*//' | sed 's/^["'"'"']//;s/["'"'"']$//' | awk '{print $1}')"
+            NETDATA_CLAIM_ROOMS="$(grep -E "^NETDATA_CLAIM_ROOMS=" "$PROJECT_DIR/.env" 2>/dev/null | head -1 | sed 's/^NETDATA_CLAIM_ROOMS=[      ]*//' | sed 's/^["'"'"']//;s/["'"'"']$//' | awk '{print $1}')"
         fi
     fi
     
