@@ -137,3 +137,8 @@ comments.md
 labels.md
 video-transcript-voice-guide.md
 
+# Presentation files (managed separately)
+vooglaadija-presentation/
+bundle.html
+vooglaadija-slides/
+
