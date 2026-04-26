@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.schemas.error import ErrorCode, error_response_doc, success_response_doc
 from worker.queue import redis_client
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -140,14 +139,14 @@ async def readiness_check() -> ReadinessResponse | Response:
                     await conn.execute(text("SELECT 1"))
             finally:
                 await engine.dispose()
-    except Exception as e:
+    except Exception:
         logger.exception("Database readiness check failed")
         db_status = "error: unavailable"
 
     # Check Redis connectivity
     try:
         await redis_client.ping()
-    except Exception as e:
+    except Exception:
         logger.exception("Redis readiness check failed")
         redis_status = "error: unavailable"
 
