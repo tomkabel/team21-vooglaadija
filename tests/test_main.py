@@ -74,7 +74,7 @@ class TestAppConfiguration:
         """Test that APP_VERSION is defined."""
         from app.main import APP_VERSION
 
-        assert APP_VERSION == "0.1.0"
+        assert APP_VERSION == "1.0.0"
 
 
 class TestShutdownDiagnosticsInstallation:
