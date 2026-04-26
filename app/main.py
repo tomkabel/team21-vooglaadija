@@ -159,6 +159,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     init_metrics()
 
+    # Validate critical assets exist at startup to fail fast with clear errors
+    _template_dir = Path(__file__).resolve().parent / "templates"
+    _static_dir = Path(__file__).resolve().parent / "static"
+    if not _template_dir.exists():
+        logger.error("templates_directory_missing", path=str(_template_dir))
+    else:
+        required_templates = ["base.html", "login.html", "register.html", "dashboard.html"]
+        missing = [t for t in required_templates if not (_template_dir / t).exists()]
+        if missing:
+            logger.error("missing_templates", templates=missing, path=str(_template_dir))
+        else:
+            logger.info("templates_verified", count=len(required_templates), path=str(_template_dir))
+    if not _static_dir.exists():
+        logger.error("static_directory_missing", path=str(_static_dir))
+    else:
+        logger.info("static_directory_verified", path=str(_static_dir))
+
     # Install shutdown diagnostics after Uvicorn handlers are in place
     # This must happen after uvicorn imports the module but before handling requests
     _install_shutdown_diagnostics()
