@@ -42,7 +42,7 @@
       htmx.config.allowScriptTags = false;
     </script>
 
-    <!-- CSRF Header Configuration using htmx:beforeSend event for reliability -->
+    <!-- CSRF Header Configuration using htmx:configRequest event for reliability -->
     <script nonce="{{ nonce }}">
       // Set CSRF header dynamically on every HTMX request to ensure it's always sent
       document.body.addEventListener("htmx:configRequest", function (evt) {
