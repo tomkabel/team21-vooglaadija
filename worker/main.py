@@ -110,7 +110,7 @@ async def cleanup_expired_jobs() -> int:
                     await db.delete(job)
                     cleanup_count += 1
                 except Exception as db_err:
-                    logger.warning("db_row_delete_failed", job_id=str(job.id), error=str(db_err))
+                    logger.warning("failed_to_delete_db_row", job_id=job.id, error=str(db_err), exc_info=True)
 
         # Batch commit after processing all jobs
         try:
@@ -202,7 +202,7 @@ async def main() -> None:
                 lua_script, 2, "retry_queue", "download_queue", now_ts
             )
             if moved_count and moved_count > 0:
-                logger.info("retry_jobs_moved", count=moved_count)
+                logger.info("retry_jobs_moved", moved_count=moved_count)
 
             # Calculate remaining time for dynamic BRPOP timeout
             # Don't block longer than grace period remaining
