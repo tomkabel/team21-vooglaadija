@@ -1450,3 +1450,289 @@ class TestDeleteDownloadForm:
             )
 
         assert response.status_code == 403
+
+
+class TestValidateCsrfTokenStrategy2:
+    """Tests for CSRF Strategy 2: Cookie present, header missing, form matches cookie."""
+
+    @pytest.mark.asyncio
+    async def test_csrf_cookie_present_header_missing_form_matches(self):
+        """Mock request.form() returning csrf_token matching cookie, assert True."""
+        from unittest.mock import MagicMock
+
+        from fastapi import Request
+        from starlette.datastructures import MultiDict
+
+        from app.api.routes.web import validate_csrf_token
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.method = "POST"
+        mock_request.cookies = {"csrf_token": "cookie_token_value"}
+        mock_request.headers = {}
+        mock_request.form = AsyncMock(
+            return_value=MultiDict([("csrf_token", "cookie_token_value")])
+        )
+
+        result = await validate_csrf_token(mock_request)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_csrf_cookie_present_header_missing_form_mismatch(self):
+        """Assert False when form token doesn't match cookie token."""
+        from unittest.mock import MagicMock
+
+        from fastapi import Request
+        from starlette.datastructures import MultiDict
+
+        from app.api.routes.web import validate_csrf_token
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.method = "POST"
+        mock_request.cookies = {"csrf_token": "cookie_token_value"}
+        mock_request.headers = {}
+        mock_request.form = AsyncMock(return_value=MultiDict([("csrf_token", "different_token")]))
+
+        result = await validate_csrf_token(mock_request)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_csrf_cookie_present_header_missing_form_exception(self):
+        """Assert False when request.form() raises an exception."""
+        from unittest.mock import MagicMock
+
+        from fastapi import Request
+
+        from app.api.routes.web import validate_csrf_token
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.method = "POST"
+        mock_request.cookies = {"csrf_token": "cookie_token_value"}
+        mock_request.headers = {}
+        mock_request.form = AsyncMock(side_effect=Exception("Form parse error"))
+
+        result = await validate_csrf_token(mock_request)
+        assert result is False
+
+
+class TestValidateCsrfTokenStrategy3:
+    """Tests for CSRF Strategy 3: No cookie, header present, form matches header."""
+
+    @pytest.mark.asyncio
+    async def test_csrf_no_cookie_header_present_form_matches(self):
+        """Assert True when header and form tokens match and no cookie present."""
+        from unittest.mock import MagicMock
+
+        from fastapi import Request
+        from starlette.datastructures import MultiDict
+
+        from app.api.routes.web import validate_csrf_token
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.method = "POST"
+        mock_request.cookies = {}
+        mock_request.headers = {"X-CSRF-Token": "header_token_value"}
+        mock_request.form = AsyncMock(
+            return_value=MultiDict([("csrf_token", "header_token_value")])
+        )
+
+        result = await validate_csrf_token(mock_request)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_csrf_no_cookie_header_present_form_mismatch(self):
+        """Assert False when form token doesn't match header token."""
+        from unittest.mock import MagicMock
+
+        from fastapi import Request
+        from starlette.datastructures import MultiDict
+
+        from app.api.routes.web import validate_csrf_token
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.method = "POST"
+        mock_request.cookies = {}
+        mock_request.headers = {"X-CSRF-Token": "header_token_value"}
+        mock_request.form = AsyncMock(return_value=MultiDict([("csrf_token", "different_token")]))
+
+        result = await validate_csrf_token(mock_request)
+        assert result is False
+
+
+class TestValidateRedirectUrlNormalization:
+    """Tests for redirect URL path normalization."""
+
+    def test_validate_redirect_url_normalizes_double_dots(self):
+        """URL /web/../login should be normalized and rejected (doesn't start with /web/)."""
+        from app.api.routes.web import _validate_redirect_url
+
+        result = _validate_redirect_url("/web/../login", "/web/downloads")
+        assert result == "/web/downloads"
+
+    def test_validate_redirect_url_preserves_trailing_slash(self):
+        """URL /web/downloads/ should preserve trailing slash after normalization."""
+        from app.api.routes.web import _validate_redirect_url
+
+        result = _validate_redirect_url("/web/downloads/", "/web/login")
+        assert result == "/web/downloads/"
+
+    def test_validate_redirect_url_normalizes_double_dots_in_middle(self):
+        """URL /web/../web/login should normalize to /web/login."""
+        from app.api.routes.web import _validate_redirect_url
+
+        result = _validate_redirect_url("/web/../web/login", "/web/downloads")
+        assert result == "/web/login"
+
+    def test_validate_redirect_url_strips_backslashes(self):
+        """URL with backslashes should be normalized and rejected."""
+        from app.api.routes.web import _validate_redirect_url
+
+        result = _validate_redirect_url("\\web\\downloads", "/web/downloads")
+        assert result == "/web/downloads"
+
+
+class TestCleanupJobFiles:
+    """Tests for _cleanup_job_files helper."""
+
+    def test_cleanup_job_files_removes_valid_files(self, tmp_path):
+        """Create temp files, assert (True, [])."""
+        from unittest.mock import MagicMock
+
+        from app.api.routes.web import _cleanup_job_files
+
+        downloads_dir = tmp_path / "downloads"
+        downloads_dir.mkdir()
+        file1 = downloads_dir / "file1.mp3"
+        file1.write_text("test content")
+        file2 = downloads_dir / "file2.mp3"
+        file2.write_text("test content")
+
+        mock_job1 = MagicMock()
+        mock_job1.file_path = str(file1)
+        mock_job1.id = uuid.uuid4()
+        mock_job2 = MagicMock()
+        mock_job2.file_path = str(file2)
+        mock_job2.id = uuid.uuid4()
+
+        mock_logger = MagicMock()
+
+        with patch("app.api.routes.web.settings") as mock_settings:
+            mock_settings.storage_path = str(tmp_path)
+            all_cleaned, failures = _cleanup_job_files([mock_job1, mock_job2], mock_logger)
+
+        assert all_cleaned is True
+        assert failures == []
+        assert not file1.exists()
+        assert not file2.exists()
+
+    def test_cleanup_job_files_skips_missing_file_path(self, tmp_path):
+        """Job with file_path=None should be skipped."""
+        from unittest.mock import MagicMock
+
+        from app.api.routes.web import _cleanup_job_files
+
+        mock_job = MagicMock()
+        mock_job.file_path = None
+        mock_job.id = uuid.uuid4()
+
+        mock_logger = MagicMock()
+
+        all_cleaned, failures = _cleanup_job_files([mock_job], mock_logger)
+
+        assert all_cleaned is True
+        assert failures == []
+
+    def test_cleanup_job_files_skips_nonexistent_file(self, tmp_path):
+        """Job with non-existent file should be handled gracefully."""
+        from unittest.mock import MagicMock
+
+        from app.api.routes.web import _cleanup_job_files
+
+        downloads_dir = tmp_path / "downloads"
+        downloads_dir.mkdir()
+
+        mock_job = MagicMock()
+        mock_job.file_path = str(downloads_dir / "nonexistent.mp3")
+        mock_job.id = uuid.uuid4()
+
+        mock_logger = MagicMock()
+
+        with patch("app.api.routes.web.settings") as mock_settings:
+            mock_settings.storage_path = str(tmp_path)
+            all_cleaned, failures = _cleanup_job_files([mock_job], mock_logger)
+
+        assert all_cleaned is True
+        assert failures == []
+
+    def test_cleanup_job_files_handles_path_traversal(self, tmp_path):
+        """Assert (False, [bad_path]) and HTTPException caught."""
+        from unittest.mock import MagicMock
+
+        from app.api.routes.web import _cleanup_job_files
+
+        downloads_dir = tmp_path / "downloads"
+        downloads_dir.mkdir()
+
+        mock_job = MagicMock()
+        mock_job.file_path = str(tmp_path / ".." / "etc" / "passwd")
+        mock_job.id = uuid.uuid4()
+
+        mock_logger = MagicMock()
+
+        with patch("app.api.routes.web.settings") as mock_settings:
+            mock_settings.storage_path = str(tmp_path)
+            all_cleaned, failures = _cleanup_job_files([mock_job], mock_logger)
+
+        assert all_cleaned is False
+        assert len(failures) == 1
+
+    def test_cleanup_job_files_handles_os_error(self, tmp_path):
+        """Mock os.remove raising OSError, assert (False, [path])."""
+        from unittest.mock import MagicMock
+
+        from app.api.routes.web import _cleanup_job_files
+
+        downloads_dir = tmp_path / "downloads"
+        downloads_dir.mkdir()
+        file1 = downloads_dir / "file1.mp3"
+        file1.write_text("test content")
+
+        mock_job = MagicMock()
+        mock_job.file_path = str(file1)
+        mock_job.id = uuid.uuid4()
+
+        mock_logger = MagicMock()
+
+        with patch("app.api.routes.web.settings") as mock_settings:
+            mock_settings.storage_path = str(tmp_path)
+            with patch("app.api.routes.web.os.remove", side_effect=OSError("Permission denied")):
+                all_cleaned, failures = _cleanup_job_files([mock_job], mock_logger)
+
+        assert all_cleaned is False
+        assert len(failures) == 1
+
+    def test_cleanup_job_files_handles_generic_exception(self, tmp_path):
+        """Mock os.remove raising unexpected exception, assert (False, [path])."""
+        from unittest.mock import MagicMock
+
+        from app.api.routes.web import _cleanup_job_files
+
+        downloads_dir = tmp_path / "downloads"
+        downloads_dir.mkdir()
+        file1 = downloads_dir / "file1.mp3"
+        file1.write_text("test content")
+
+        mock_job = MagicMock()
+        mock_job.file_path = str(file1)
+        mock_job.id = uuid.uuid4()
+
+        mock_logger = MagicMock()
+
+        with patch("app.api.routes.web.settings") as mock_settings:
+            mock_settings.storage_path = str(tmp_path)
+            with patch(
+                "app.api.routes.web.os.remove", side_effect=RuntimeError("Unexpected error")
+            ):
+                all_cleaned, failures = _cleanup_job_files([mock_job], mock_logger)
+
+        assert all_cleaned is False
+        assert len(failures) == 1
