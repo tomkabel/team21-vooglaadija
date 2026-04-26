@@ -419,14 +419,11 @@ async def logout(request: Request):
 @router.get("/terms")
 async def terms_page(request: Request):
     """Render terms of service page with copyright disclaimers and lawful-use requirements."""
-    token = get_csrf_token(request)
-    response = templates.TemplateResponse(
+    return templates.TemplateResponse(
         request,
         "terms.html",
-        get_template_context(request, csrf_token=token),
+        get_template_context(request),
     )
-    set_csrf_token_cookie(response, token)
-    return response
 
 
 # ========================
