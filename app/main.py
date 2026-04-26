@@ -101,10 +101,10 @@ def _install_shutdown_diagnostics() -> None:
             signal=signal_name,
             signal_number=signum,
         )
-        previous_handler = signal.getsignal(signal.SIGTERM)
-        if callable(previous_handler) and previous_handler is not _chained_sigterm_handler:
+        prev_handler = prev_term_handler if signum == signal.SIGTERM else prev_int_handler
+        if callable(prev_handler) and prev_handler is not _chained_sigterm_handler:
             try:
-                previous_handler(signum, frame)
+                prev_handler(signum, frame)
             except Exception:
                 pass
 
@@ -115,11 +115,15 @@ def _install_shutdown_diagnostics() -> None:
             current_handler = signal.getsignal(signal.SIGTERM)
             # Only install if not already our chained handler
             if current_handler is not _chained_sigterm_handler:
-                signal.signal(signal.SIGTERM, _chained_sigterm_handler)
+                prev_term_handler = signal.signal(signal.SIGTERM, _chained_sigterm_handler)
+            else:
+                prev_term_handler = current_handler
             # Also register SIGINT
             current_int_handler = signal.getsignal(signal.SIGINT)
             if current_int_handler is not _chained_sigterm_handler:
-                signal.signal(signal.SIGINT, _chained_sigterm_handler)
+                prev_int_handler = signal.signal(signal.SIGINT, _chained_sigterm_handler)
+            else:
+                prev_int_handler = current_int_handler
             logger.info("shutdown_diagnostics_installed")
     except ValueError:
         # Not running in main thread, skip signal handler installation
