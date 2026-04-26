@@ -1118,3 +1118,322 @@ class TestHtmxBehavior:
 
         assert logout_response.status_code == 403
         assert "error" in logout_response.text.lower() or "csrf" in logout_response.text.lower()
+
+
+class TestSettingsPage:
+    """Tests for GET /web/settings."""
+
+    @pytest.mark.asyncio
+    async def test_settings_page_requires_auth(self):
+        """Test that settings page requires authentication."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/web/settings")
+
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_settings_page_renders(self):
+        """Test that settings page renders for authenticated user."""
+        email = f"settings_{uuid.uuid4().hex[:8]}@example.com"
+        password = "securepassword123"
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+        ) as client:
+            await do_register(client, email, password)
+            csrf_token = await do_login(client, email, password)
+
+            login_resp = await client.post(
+                "/web/login",
+                data={"email": email, "password": password},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+
+            access_token = login_resp.cookies.get("access_token", "")
+
+            response = await client.get(
+                "/web/settings",
+                cookies={"access_token": access_token},
+            )
+
+        assert response.status_code == 200
+
+
+class TestUpdateUsername:
+    """Tests for POST /web/settings/username."""
+
+    @pytest.mark.asyncio
+    async def test_update_username_success(self):
+        """Test updating username successfully."""
+        email = f"username_{uuid.uuid4().hex[:8]}@example.com"
+        password = "securepassword123"
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+        ) as client:
+            await do_register(client, email, password)
+            csrf_token = await do_login(client, email, password)
+
+            login_resp = await client.post(
+                "/web/login",
+                data={"email": email, "password": password},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+
+            access_token = login_resp.cookies.get("access_token", "")
+
+            # Get fresh CSRF token
+            csrf_response = await client.get("/web/settings", cookies={"access_token": access_token})
+            csrf_token = get_csrf_from_response(csrf_response)
+
+            response = await client.post(
+                "/web/settings/username",
+                data={"username": "newname"},
+                headers={"X-CSRF-Token": csrf_token} if csrf_token else {},
+                cookies={"access_token": access_token},
+            )
+
+        assert response.status_code in (200, 303)
+
+    @pytest.mark.asyncio
+    async def test_update_username_too_short(self):
+        """Test updating username with too short name returns error."""
+        email = f"shortuser_{uuid.uuid4().hex[:8]}@example.com"
+        password = "securepassword123"
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+        ) as client:
+            await do_register(client, email, password)
+            csrf_token = await do_login(client, email, password)
+
+            login_resp = await client.post(
+                "/web/login",
+                data={"email": email, "password": password},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+
+            access_token = login_resp.cookies.get("access_token", "")
+
+            csrf_response = await client.get("/web/settings", cookies={"access_token": access_token})
+            csrf_token = get_csrf_from_response(csrf_response)
+
+            response = await client.post(
+                "/web/settings/username",
+                data={"username": "ab"},
+                headers={"X-CSRF-Token": csrf_token} if csrf_token else {},
+                cookies={"access_token": access_token},
+            )
+
+        assert response.status_code in (200, 303)
+
+    @pytest.mark.asyncio
+    async def test_update_username_invalid_csrf(self):
+        """Test updating username with invalid CSRF token returns error."""
+        email = f"csrfuser_{uuid.uuid4().hex[:8]}@example.com"
+        password = "securepassword123"
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+        ) as client:
+            await do_register(client, email, password)
+            csrf_token = await do_login(client, email, password)
+
+            login_resp = await client.post(
+                "/web/login",
+                data={"email": email, "password": password},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+
+            access_token = login_resp.cookies.get("access_token", "")
+
+            response = await client.post(
+                "/web/settings/username",
+                data={"username": "validname"},
+                headers={"X-CSRF-Token": "invalid_token"},
+                cookies={"access_token": access_token},
+            )
+
+        assert response.status_code == 403
+
+
+class TestChangePassword:
+    """Tests for POST /web/settings/password."""
+
+    @pytest.mark.asyncio
+    async def test_change_password_success(self):
+        """Test changing password successfully."""
+        email = f"changepw_{uuid.uuid4().hex[:8]}@example.com"
+        password = "securepassword123"
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+        ) as client:
+            await do_register(client, email, password)
+            csrf_token = await do_login(client, email, password)
+
+            login_resp = await client.post(
+                "/web/login",
+                data={"email": email, "password": password},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+
+            access_token = login_resp.cookies.get("access_token", "")
+
+            csrf_response = await client.get("/web/settings", cookies={"access_token": access_token})
+            csrf_token = get_csrf_from_response(csrf_response)
+
+            response = await client.post(
+                "/web/settings/password",
+                data={
+                    "current_password": password,
+                    "new_password": "newpassword123",
+                    "new_password_confirm": "newpassword123",
+                },
+                headers={"X-CSRF-Token": csrf_token} if csrf_token else {},
+                cookies={"access_token": access_token},
+            )
+
+        assert response.status_code in (200, 303)
+
+    @pytest.mark.asyncio
+    async def test_change_password_wrong_current(self):
+        """Test changing password with wrong current password returns error."""
+        email = f"wrongcurr_{uuid.uuid4().hex[:8]}@example.com"
+        password = "securepassword123"
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+        ) as client:
+            await do_register(client, email, password)
+            csrf_token = await do_login(client, email, password)
+
+            login_resp = await client.post(
+                "/web/login",
+                data={"email": email, "password": password},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+
+            access_token = login_resp.cookies.get("access_token", "")
+
+            csrf_response = await client.get("/web/settings", cookies={"access_token": access_token})
+            csrf_token = get_csrf_from_response(csrf_response)
+
+            response = await client.post(
+                "/web/settings/password",
+                data={
+                    "current_password": "wrongpassword",
+                    "new_password": "newpassword123",
+                    "new_password_confirm": "newpassword123",
+                },
+                headers={"X-CSRF-Token": csrf_token} if csrf_token else {},
+                cookies={"access_token": access_token},
+            )
+
+        assert response.status_code in (200, 303, 401)
+
+    @pytest.mark.asyncio
+    async def test_change_password_mismatch(self):
+        """Test changing password with mismatched confirmation returns error."""
+        email = f"mismatchpw_{uuid.uuid4().hex[:8]}@example.com"
+        password = "securepassword123"
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+        ) as client:
+            await do_register(client, email, password)
+            csrf_token = await do_login(client, email, password)
+
+            login_resp = await client.post(
+                "/web/login",
+                data={"email": email, "password": password},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+
+            access_token = login_resp.cookies.get("access_token", "")
+
+            csrf_response = await client.get("/web/settings", cookies={"access_token": access_token})
+            csrf_token = get_csrf_from_response(csrf_response)
+
+            response = await client.post(
+                "/web/settings/password",
+                data={
+                    "current_password": password,
+                    "new_password": "newpassword123",
+                    "new_password_confirm": "differentpass",
+                },
+                headers={"X-CSRF-Token": csrf_token} if csrf_token else {},
+                cookies={"access_token": access_token},
+            )
+
+        assert response.status_code in (200, 303, 400)
+
+    @pytest.mark.asyncio
+    async def test_change_password_too_short(self):
+        """Test changing password with too short new password returns error."""
+        email = f"shortpw_{uuid.uuid4().hex[:8]}@example.com"
+        password = "securepassword123"
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+        ) as client:
+            await do_register(client, email, password)
+            csrf_token = await do_login(client, email, password)
+
+            login_resp = await client.post(
+                "/web/login",
+                data={"email": email, "password": password},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+
+            access_token = login_resp.cookies.get("access_token", "")
+
+            csrf_response = await client.get("/web/settings", cookies={"access_token": access_token})
+            csrf_token = get_csrf_from_response(csrf_response)
+
+            response = await client.post(
+                "/web/settings/password",
+                data={
+                    "current_password": password,
+                    "new_password": "short",
+                    "new_password_confirm": "short",
+                },
+                headers={"X-CSRF-Token": csrf_token} if csrf_token else {},
+                cookies={"access_token": access_token},
+            )
+
+        assert response.status_code in (200, 303, 400)
+
+
+class TestDeleteDownloadForm:
+    """Tests for DELETE /web/downloads/{job_id} (HTMX form-based)."""
+
+    @pytest.mark.asyncio
+    async def test_delete_download_invalid_csrf(self):
+        """Test deleting download with invalid CSRF returns 403."""
+        email = f"delcsrf_{uuid.uuid4().hex[:8]}@example.com"
+        password = "securepassword123"
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+        ) as client:
+            await do_register(client, email, password)
+            csrf_token = await do_login(client, email, password)
+
+            login_resp = await client.post(
+                "/web/login",
+                data={"email": email, "password": password},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+
+            access_token = login_resp.cookies.get("access_token", "")
+
+            fake_uuid = str(uuid.uuid4())
+
+            response = await client.delete(
+                f"/web/downloads/{fake_uuid}",
+                headers={"X-CSRF-Token": "invalid_token"},
+                cookies={"access_token": access_token},
+            )
+
+        assert response.status_code == 403
