@@ -174,7 +174,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if missing:
             logger.error("missing_templates", templates=missing, path=str(_template_dir))
         else:
-            logger.info("templates_verified", count=len(required_templates), path=str(_template_dir))
+            logger.info(
+                "templates_verified", count=len(required_templates), path=str(_template_dir)
+            )
     if not _static_dir.exists():
         logger.error("static_directory_missing", path=str(_static_dir))
     else:
