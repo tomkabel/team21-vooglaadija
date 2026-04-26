@@ -67,7 +67,6 @@ phase1() {
     apt install -y \
         docker.io \
         docker-compose-plugin \
-        nginx \
         certbot \
         python3-certbot-nginx \
         ufw \
@@ -254,100 +253,12 @@ EOF
 # PHASE 5: Nginx Configuration
 # ===========================================
 phase5() {
-    log_step "=== Phase 5: Nginx Configuration ==="
+    log_step "=== Phase 5: Nginx Configuration (SKIPPED) ==="
 
-    # Deploy production nginx config
-    log_info "Deploying production nginx configuration..."
-
-    # Create production site config
-    cat > /etc/nginx/sites-available/"$DOMAIN" << 'EOF'
-# HTTP to HTTPS redirect
-server {
-    listen 80;
-    server_name DOMAIN_PLACEHOLDER;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-
-    location / {
-        return 301 https://$host$request_uri;
-    }
-}
-
-# HTTPS server
-server {
-    listen 443 ssl http2;
-    server_name DOMAIN_PLACEHOLDER;
-
-    ssl_certificate /PATH_TO_SSL/fullchain.pem;
-    ssl_certificate_key /PATH_TO_SSL/privkey.pem;
-
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers off;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
-
-    add_header Strict-Transport-Security "max-age=63072000" always;
-    add_header X-Frame-Options "DENY" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';" always;
-
-    ssl_stapling on;
-    ssl_stapling_verify on;
-    resolver 8.8.8.8 8.8.4.4 valid=300s;
-    resolver_timeout 5s;
-
-    proxy_connect_timeout 60s;
-    proxy_send_timeout 300s;
-    proxy_read_timeout 300s;
-    proxy_buffering off;
-    proxy_request_buffering off;
-
-    gzip on;
-    gzip_types application/json text/plain application/octet-stream;
-    gzip_min_length 1000;
-
-    client_max_body_size 500M;
-
-    location / {
-        proxy_pass http://api:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-
-    location /health {
-        proxy_pass http://api:8000;
-        proxy_set_header Host $host;
-        proxy_http_version 1.1;
-        access_log off;
-    }
-}
-EOF
-
-    # Replace placeholders
-    sed -i "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" /etc/nginx/sites-available/"$DOMAIN"
-    sed -i "s|PATH_TO_SSL|$SSL_DIR|g" /etc/nginx/sites-available/"$DOMAIN"
-
-    # Enable site
-    rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-    ln -sf /etc/nginx/sites-available/"$DOMAIN" /etc/nginx/sites-enabled/"$DOMAIN"
-
-    # Test and reload nginx
-    if nginx -t; then
-        systemctl reload nginx
-    else
-        log_error "Nginx configuration test failed"
-        return 1
-    fi
-
-    log_info "Phase 5 complete - Nginx configured"
+    # Host nginx is NOT used - the docker-compose nginx container handles TLS
+    # All SSL/TLS termination happens in the nginx container with Let's Encrypt certs
+    # See docker-compose.production.yml for the production nginx configuration
+    log_info "Phase 5 skipped - nginx container handles TLS (no host nginx needed)"
 }
 
 # ===========================================

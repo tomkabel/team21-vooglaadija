@@ -83,9 +83,9 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      # SSL certificates from local infra/ssl directory
-      # Expected files: fullchain.pem, privkey.pem (with symlinks cert.pem → fullchain.pem, key.pem → privkey.pem)
-      - ./infra/ssl:/etc/nginx/ssl:ro
+      # SSL certificates from Let's Encrypt live symlinks
+      # This reads the live symlinked certs directly so renewed certs are picked up
+      - ./infra/letsencrypt/live/youtube.tomabel.ee:/etc/nginx/ssl:ro
       # Production nginx configuration with HTTPS, HTTP/2, secure headers
       - ./infra/nginx/nginx.production.conf:/etc/nginx/conf.d/default.conf:ro
       # Certbot ACME challenge path for Let's Encrypt
@@ -120,11 +120,25 @@ services:
     container_name: ytprocessor-certbot
     restart: unless-stopped
     volumes:
-      # SSL certificates - mount host letsencrypt for certbot renewal compatibility
-      - /etc/letsencrypt:/etc/letsencrypt:rw
+      # SSL certificates - mount host letsencrypt directory for certbot renewal compatibility
+      # This preserves the full LetsEncrypt layout (live/, archive/, renewal/)
+      - ./infra/letsencrypt:/etc/letsencrypt:rw
       # ACME challenge webroot
       - ./infra/certbot/data:/var/www/certbot:rw
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h; done;'"
+    entrypoint: |
+      /bin/sh -c '
+        # Deploy hook to reload nginx after successful renewal
+        # Copies renewed certs and signals nginx to reopen fds
+        deploy_hook() {
+          echo "Deploy hook: reloading nginx after cert renewal..."
+          nginx -s reload 2>/dev/null || echo "nginx reload attempted"
+        }
+        trap exit TERM;
+        while :; do
+          certbot renew --deploy-hook "bash -c 'deploy_hook'" || true;
+          sleep 12h;
+        done;
+      '
     profiles: [] # Always run in production
     # Only run after nginx is up to ensure port 80 is available
     depends_on:
@@ -135,13 +149,13 @@ services:
   # Disable Non-Essential Services
   # ==========================================
   swagger-ui:
-    profiles: ["dev-only"]
+    profiles: ["nonprod"]
     restart: "no"
     deploy:
       replicas: 0
 
   otel-collector:
-    profiles: ["dev-only"]
+    profiles: ["nonprod"]
     restart: "no"
     deploy:
       replicas: 0
