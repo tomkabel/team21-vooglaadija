@@ -83,7 +83,7 @@ node_modules/
 # =============================================
 # Test/Coverage artifacts
 # =============================================
-.coverage.cachy.pid*
+.coverage.*
 .hypothesis/
 coverage/
 *.prof
