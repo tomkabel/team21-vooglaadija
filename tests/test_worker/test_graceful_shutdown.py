@@ -207,7 +207,7 @@ class TestGracefulShutdownBehavior:
 
             # Simulate main loop iteration
             try:
-                result = await mock_redis.brpop("download_queue", timeout=2)
+                await mock_redis.brpop("download_queue", timeout=2)
             except asyncio.CancelledError:
                 # This is expected - worker was cancelled
                 pass
@@ -266,7 +266,7 @@ class TestGracefulShutdownIntegration:
 
         with patch("asyncio.get_running_loop", return_value=mock_loop):
             # Just verify the signal handler registration works
-            for sig in (signal.SIGTERM, signal.SIGINT):
+            for _sig in (signal.SIGTERM, signal.SIGINT):
                 mock_loop.add_signal_handler.reset_mock()
                 # The handler is registered during import/cleanup
                 # This test verifies the pattern exists

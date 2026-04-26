@@ -7,10 +7,12 @@ These tests verify:
 """
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
+from starlette.responses import Response
 
 from app.models.download_job import DownloadJob
 
@@ -89,7 +91,7 @@ class TestRedisFailureHandling:
 
             # Job should be marked completed (DB commit succeeds)
             # even if Redis enqueue fails
-            result = await process_next_job(job_id)
+            await process_next_job(job_id)
 
             # The job is still completed because DB commit succeeded
             # The outbox entry ensures recovery
@@ -127,7 +129,7 @@ class TestRedisFailureHandling:
 
             # Process job (will complete DB transaction)
             # but Redis operations will fail
-            result = await process_next_job(job_id)
+            await process_next_job(job_id)
 
         # After Redis comes back, sync_outbox should recover
         # This tests the reliability guarantee
@@ -219,7 +221,7 @@ class TestRedisFailureDuringJobProcessing:
             mock_extract.return_value = ("/storage/test.mp4", "test.mp4")
 
             # Should handle gracefully
-            result = await process_next_job(job_id)
+            await process_next_job(job_id)
 
             # Job is requeued via outbox, so result depends on implementation
 
@@ -245,10 +247,16 @@ class TestRedisHealthChecks:
         with patch("app.api.routes.health.redis_client", mock_redis):
             result = await readiness_check()
 
-            # Should return ReadinessResponse with not_ready status
-            assert isinstance(result, ReadinessResponse)
-            assert result.status == "not_ready"
-            assert result.redis.startswith("error:")
+            # When Redis is down, readiness_check returns a Response with 503
+            assert isinstance(result, (ReadinessResponse, Response))
+            if isinstance(result, Response):
+                assert result.status_code == 503
+                data = json.loads(result.body)
+                assert data["status"] == "not_ready"
+                assert data["redis"].startswith("error:")
+            else:
+                assert result.status == "not_ready"
+                assert result.redis.startswith("error:")
 
 
 class TestRedisConnectionPooling:

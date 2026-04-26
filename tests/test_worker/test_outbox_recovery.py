@@ -15,7 +15,6 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
-import worker.queue
 from app.models.download_job import DownloadJob
 from app.models.outbox import Outbox
 
@@ -87,7 +86,7 @@ class TestOutboxRecovery:
         mock_redis = AsyncMock()
         mock_redis.lpush = AsyncMock(return_value=1)
 
-        with patch.object(worker.queue, "_redis_client", mock_redis):
+        with patch("worker.processor.redis_client", mock_redis):
             from worker.processor import sync_outbox_to_queue
 
             synced = await sync_outbox_to_queue(batch_size=10)
@@ -134,7 +133,7 @@ class TestOutboxRecovery:
         mock_redis.zadd = AsyncMock(return_value=1)
         mock_redis.lpush = AsyncMock(return_value=1)
 
-        with patch.object(worker.queue, "_redis_client", mock_redis):
+        with patch("worker.processor.redis_client", mock_redis):
             from worker.processor import sync_outbox_to_queue
 
             synced = await sync_outbox_to_queue(batch_size=10)
@@ -168,7 +167,7 @@ class TestOutboxRecovery:
 
         mock_redis = AsyncMock()
 
-        with patch.object(worker.queue, "_redis_client", mock_redis):
+        with patch("worker.processor.redis_client", mock_redis):
             from worker.processor import sync_outbox_to_queue
 
             synced = await sync_outbox_to_queue(batch_size=10)
@@ -200,7 +199,7 @@ class TestOutboxRecovery:
         mock_redis = AsyncMock()
         mock_redis.lpush = AsyncMock(side_effect=Exception("Redis connection failed"))
 
-        with patch.object(worker.queue, "_redis_client", mock_redis):
+        with patch("worker.processor.redis_client", mock_redis):
             from worker.processor import sync_outbox_to_queue
 
             synced = await sync_outbox_to_queue(batch_size=10)
@@ -240,7 +239,7 @@ class TestOutboxRecovery:
         mock_redis = AsyncMock()
         mock_redis.lpush = AsyncMock(return_value=1)
 
-        with patch.object(worker.queue, "_redis_client", mock_redis):
+        with patch("worker.processor.redis_client", mock_redis):
             synced = await sync_outbox_to_queue(batch_size=10)
             assert synced == 3
 
@@ -321,7 +320,7 @@ class TestOutboxBatchProcessing:
         mock_redis = AsyncMock()
         mock_redis.lpush = AsyncMock(return_value=1)
 
-        with patch("worker.queue.redis_client", mock_redis):
+        with patch("worker.processor.redis_client", mock_redis):
             from worker.processor import sync_outbox_to_queue
 
             synced = await sync_outbox_to_queue(batch_size=2)
@@ -361,7 +360,7 @@ class TestOutboxCrashRecoveryScenarios:
         mock_redis = AsyncMock()
         mock_redis.lpush = AsyncMock(return_value=1)
 
-        with patch.object(worker.queue, "_redis_client", mock_redis):
+        with patch("worker.processor.redis_client", mock_redis):
             from worker.processor import sync_outbox_to_queue
 
             synced = await sync_outbox_to_queue(batch_size=10)
@@ -399,7 +398,7 @@ class TestOutboxCrashRecoveryScenarios:
         mock_redis = AsyncMock()
         mock_redis.lpush = AsyncMock(return_value=1)
 
-        with patch.object(worker.queue, "_redis_client", mock_redis):
+        with patch("worker.processor.redis_client", mock_redis):
             from worker.processor import sync_outbox_to_queue
 
             synced1 = await sync_outbox_to_queue(batch_size=10)

@@ -101,7 +101,7 @@ class TestRequeueStuckJobs:
         self, db_session, stuck_processing_job
     ):
         """Test that stuck jobs in processing status are found."""
-        stuck_job_id = stuck_processing_job.id
+        _stuck_job_id = stuck_processing_job.id
 
         mock_redis = AsyncMock()
         mock_redis.lpush = AsyncMock(return_value=1)
