@@ -75,12 +75,10 @@ COPY alembic ./alembic
 # Install the package (production deps only)
 RUN pip install .
 
-# Copy built frontend assets - ensure destination directory exists
-RUN mkdir -p /app/static/css /app/static/js
-COPY --from=frontend-builder /app/frontend/css/dist /app/static/css
-
-# Copy HTMX from node_modules (installed via pnpm with lockfile for supply-chain integrity)
-COPY --from=frontend-builder /app/frontend/node_modules/htmx.org/dist/htmx.min.js /app/static/js/htmx.min.js
+# Copy built frontend assets directly into the app package so they are included
+# in the wheel and available both from source and installed package paths.
+COPY --from=frontend-builder /app/frontend/css/dist/styles.css /app/app/static/css/styles.css
+COPY --from=frontend-builder /app/frontend/node_modules/htmx.org/dist/htmx.min.js /app/app/static/js/htmx.min.js
 
 # Generate SBOM from installed dependencies
 # Uses pip freeze to get exact versions, then generates CycloneDX SBOM
@@ -99,6 +97,7 @@ RUN echo '{"buildType": "https://slsa-framework.fr.dev/build-types/1.0", "invoca
 # ============================================
 # Use python:slim as base for runtime (distroless lacks ffmpeg dependencies)
 FROM python:3.12-slim AS runtime-base
+ENV PYTHONDONTWRITEBYTECODE=1
 
 # Install ffmpeg for yt-dlp media merging, redis-tools for migrate.sh, and gosu for privilege dropping
 # Also install redis-tools for migrate.sh's redis-cli commands
@@ -124,8 +123,6 @@ COPY --from=app-builder /opt/venv /opt/venv
 COPY --from=app-builder /app/app ./app
 COPY --from=app-builder /app/pyproject.toml ./pyproject.toml
 COPY --from=app-builder /app/worker ./worker
-COPY --from=app-builder /app/static/css ./app/static/css
-COPY --from=app-builder /app/static/js ./app/static/js
 # Copy Alembic configuration and migration files
 COPY --from=app-builder /app/alembic.ini /app/alembic.ini
 COPY --from=app-builder /app/alembic /app/alembic
@@ -145,6 +142,8 @@ RUN mkdir -p /app/storage && \
 # Stage 6: API Service
 # ============================================
 FROM runtime-base AS api
+# Set working directory so Alembic and other tools find config files correctly
+WORKDIR /app
 # Set environment
 ENV PYTHONPATH=/app \
     PATH=/opt/venv/bin:$PATH \
@@ -187,6 +186,8 @@ CMD ["/opt/venv/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0
 # Stage 7: Worker Service
 # ============================================
 FROM runtime-base AS worker
+# Set working directory for consistency with API stage
+WORKDIR /app
 # Build argument for git SHA
 ARG GIT_SHA
 # Set environment - WORKER_ID is set at runtime via docker-compose
