@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 import os
 import re
 import signal
@@ -8,14 +7,46 @@ import sys
 import uuid
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 # Timeout for yt-dlp operations in seconds (5 minutes)
 YT_DLP_TIMEOUT = 300
 
+FORMAT_FALLBACK_CHAIN = [
+    {"format": "bestvideo*+bestaudio/best", "S": ["res:1080", "codec:h264"]},
+    {"format": "bestvideo+bestaudio/best", "S": ["res", "codec"]},
+    {"format": "worstvideo*+bestaudio/best", "S": ["res:720"]},
+    {"format": "best", "S": ["quality"]},
+    {"format": "worst", "S": ["quality"]},
+]
+
 
 class StorageError(Exception):
     """Raised when storage operations fail."""
+
+
+async def _kill_process_group(process: asyncio.subprocess.Process) -> None:
+    """Kill a process group and wait for it to terminate."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except TimeoutError:
+            # Process is stuck, but we've already sent SIGKILL, so just continue
+            pass
+    except (ProcessLookupError, OSError):
+        pass  # Process already terminated
+
+
+def _extract_error_message(error_msg: str, fallback: str) -> str:
+    """Extract the most relevant error line from error output."""
+    for error_line in error_msg.split("\n"):
+        stripped = error_line.strip()
+        if "ERROR" in stripped or "error" in stripped.lower():
+            return stripped
+    return fallback if fallback else error_msg
 
 
 def _sanitize_title(title: str) -> str:
@@ -35,40 +66,68 @@ async def _extract_via_subprocess(url: str, output_template: str) -> dict:
 
     This runs yt-dlp as a separate OS process so that on TimeoutError,
     process.kill() can terminate it immediately rather than leaving a thread running.
+
+    Uses a format fallback chain to handle "Requested format is not available" errors
+    that occur when YouTube doesn't have the exact formats needed for merging.
     """
-    # Create a temporary Python script that runs yt-dlp extraction
-    # We write it to a temp file to avoid command-line quoting issues with the URL
+    url_json = json.dumps(url)
+    output_template_json = json.dumps(output_template)
+    fallback_chain_json = json.dumps(FORMAT_FALLBACK_CHAIN)
+
     extract_script = f"""
 import sys
 import json
 import yt_dlp
 
-url = {json.dumps(url)}
-output_template = {json.dumps(output_template)}
+url = {url_json}
+output_template = {output_template_json}
+fallback_chain = {fallback_chain_json}
 
-ydl_opts = {{
-    "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-    "outtmpl": output_template,
-    "quiet": True,
-    "no_warnings": True,
-    "socket_timeout": 60,
-    "retries": 3,
-    "extractor_args": {{"youtube": {{"player_client": ["web", "ios"]}}}},
-}}
+last_error = None
 
-try:
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        sanitized_info = ydl.sanitize_info(info)
-        print(json.dumps(sanitized_info))
-except Exception as e:
-    print(json.dumps({{"error": str(e)}}))
-    sys.exit(1)
+for i, format_spec in enumerate(fallback_chain):
+    ydl_opts = {{
+        "format": format_spec["format"],
+        "format_sort": format_spec.get("format_sort", []),
+        "outtmpl": output_template,
+        "quiet": True,
+        "no_warnings": True,
+        "socket_timeout": 60,
+        "retries": 3,
+        "prefer_free_formats": True,
+        "check_formats": "missable",
+        "extractor_args": {{
+            "youtube": {{
+                "player_client": ["tv", "web", "default", "mobile"],
+            }},
+        }},
+    }}
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if info is None:
+                last_error = "No video info returned"
+                continue
+            sanitized_info = ydl.sanitize_info(info)
+            print(json.dumps(sanitized_info))
+            sys.exit(0)
+    except Exception as e:
+        err_str = str(e)
+        if "Requested format" in err_str and "not available" in err_str:
+            last_error = err_str
+            continue
+        print(json.dumps({{"error": err_str}}))
+        sys.exit(1)
+
+attempted_formats = [spec["format"] for spec in fallback_chain]
+print(json.dumps({{
+    "error": f"All formats failed. Last error: {{last_error}}. Attempted formats: {{attempted_formats}}"
+}}))
+sys.exit(1)
 """
     process = None
     try:
-        # Use asyncio.create_subprocess_exec to run the extraction
-        # start_new_session=True so killpg kills all descendants (e.g., ffmpeg)
         process = await asyncio.create_subprocess_exec(
             sys.executable,
             "-c",
@@ -81,47 +140,42 @@ except Exception as e:
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=YT_DLP_TIMEOUT)
         except TimeoutError as e:
-            # Kill the entire process group to ensure all descendants (e.g., ffmpeg) are terminated
             try:
                 os.killpg(process.pid, signal.SIGTERM)
                 try:
                     await asyncio.wait_for(process.wait(), timeout=5)
                 except TimeoutError:
-                    # Escalate to SIGKILL if SIGTERM didn't work within 5 seconds
-                    os.killpg(process.pid, signal.SIGKILL)
-                    await asyncio.wait_for(process.wait(), timeout=5)
+                    await _kill_process_group(process)
             except (ProcessLookupError, OSError):
-                pass  # Process already terminated
+                pass
             raise TimeoutError(f"yt-dlp extraction timed out after {YT_DLP_TIMEOUT}s") from e
 
-        if process.returncode != 0:
-            # Try to parse stdout first for extractor error payloads
+        output = stdout.decode().strip()
+
+        # Extract JSON from last non-empty line for reliability
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        if lines:
+            json_str = lines[-1]
             try:
-                error_result: dict[str, Any] = json.loads(stdout.decode())
-                if "error" in error_result:
-                    raise RuntimeError(f"yt-dlp extraction failed: {error_result['error']}")
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
-            # Fall back to stderr if stdout is empty or unparseable
-            error_msg = stderr.decode() if stderr else "Unknown error"
+                result: dict[str, Any] = json.loads(json_str)
+                if "error" in result:
+                    raise RuntimeError(f"yt-dlp extraction failed: {result['error']}")
+                return result
+            except json.JSONDecodeError as e:
+                raise RuntimeError(f"yt-dlp produced malformed JSON: {json_str!r}") from e
+
+        if process.returncode != 0:
+            error_msg = stderr.decode().strip() if stderr else "Unknown error"
+            error_msg = _extract_error_message(error_msg, output if output else "")
+            if not error_msg:
+                error_msg = "Unknown error"
             raise RuntimeError(f"yt-dlp failed: {error_msg}")
 
-        success_result: dict[str, Any] = json.loads(stdout.decode())
-        return success_result
+        raise RuntimeError("yt-dlp extraction completed but produced no usable output")
 
     finally:
-        # Ensure process is fully cleaned up using process group kill
-        # process.pid is the group ID since start_new_session=True
         if process and process.returncode is None:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=5)
-                except TimeoutError:
-                    # Process is stuck, but we've already sent SIGKILL, so just continue
-                    pass
-            except (ProcessLookupError, OSError):
-                pass  # Process already terminated
+            await _kill_process_group(process)
 
 
 def _validate_path_within(base_path: str, target_path: str) -> str:
@@ -158,7 +212,7 @@ async def extract_media_url(url: str, storage_path: str) -> tuple[str, str]:
     try:
         os.makedirs(download_dir, exist_ok=True)
     except OSError as e:
-        logger.error("Failed to create download directory %s: %s", download_dir, e)
+        logger.error("failed_to_create_download_directory", directory=download_dir, error=str(e))
         raise StorageError(f"Failed to create download directory: {e}") from e
 
     file_id = str(uuid.uuid4())

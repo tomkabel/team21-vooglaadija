@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "009_add_username_to_users"
-down_revision: str | None = "008_change_ids_to_native_uuid"
+down_revision: str | None = "cb2699335d57"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

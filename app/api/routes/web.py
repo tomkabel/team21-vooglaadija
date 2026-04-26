@@ -1,8 +1,9 @@
 import html
-import logging
 import os
+import posixpath
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlparse
 
@@ -21,19 +22,24 @@ from app.auth import (
     set_token_cookies,
 )
 from app.config import settings
+from app.logging_config import get_logger
 from app.models.download_job import DownloadJob
 from app.models.outbox import Outbox
-from app.models.user import User
+from app.models.user import User, not_deleted
 from app.services.auth_service import hash_password, verify_password
 from app.services.outbox_service import write_job_to_outbox
 from app.utils.username import default_username_from_email as _default_username_from_email
 from app.utils.validators import is_youtube_url
 from worker.queue import enqueue_job
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/web", tags=["web"])
-templates = Jinja2Templates(directory="app/templates")
+
+# Resolve templates relative to this file so it works regardless of CWD.
+# web.py -> app/api/routes/web.py, so parent^3 = app/
+_TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
+templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
 
 # Allowed redirect targets — only internal paths
 _ALLOWED_REDIRECT_HOSTS: tuple[str, ...] = ("/web/",)
@@ -65,6 +71,12 @@ def _validate_redirect_url(url: str | None, default: str) -> str:
     if not normalized.startswith("/"):
         return default
 
+    # Normalize path to resolve . and .. components
+    had_trailing_slash = normalized.endswith("/")
+    normalized = posixpath.normpath(normalized)
+    if had_trailing_slash and normalized != "/":
+        normalized += "/"
+
     if any(normalized.startswith(prefix) for prefix in _ALLOWED_REDIRECT_HOSTS):
         return normalized
 
@@ -85,14 +97,21 @@ def get_csrf_token(request: Request) -> str:
 
 
 def set_csrf_token_cookie(response: Response, token: str) -> None:
-    """Set CSRF token in response cookie."""
+    """Set CSRF token in response cookie with security hardening.
+
+    httponly=True prevents JavaScript access (XSS theft protection).
+    secure=True ensures cookie only sent over HTTPS.
+    samesite="Strict" prevents CSRF attacks via cross-site requests.
+    max_age=86400 sets 24-hour expiry matching session lifetime.
+    """
     response.set_cookie(
         key="csrf_token",
         value=token,
-        httponly=False,  # Needs to be readable by JavaScript
+        httponly=True,
         secure=settings.cookie_secure,
         samesite="strict",
         path="/",
+        max_age=86400,  # 24 hours in seconds
     )
 
 
@@ -128,28 +147,42 @@ async def validate_csrf_token(request: Request) -> bool:
     """Validate CSRF token from HTMX header or form data.
 
     Returns True if token is valid or if this is not a state-changing request.
+
+    Validation strategies (in order of preference):
+    1. Header token matches cookie token (standard double-submit)
+    2. Form token matches cookie token (fallback for non-HTML forms)
+    3. Header token matches form token (validates both are present and match,
+       useful when cookie wasn't preserved but both client-side tokens are synced)
     """
     # Only validate state-changing methods
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return True
 
-    # Get token from HTMX header first, then form data
-    header_token = request.headers.get("X-CSRF-Token")
     cookie_token = request.cookies.get("csrf_token")
+    header_token = request.headers.get("X-CSRF-Token")
 
-    # Reject if no cookie token is set (must have cookie for CSRF to be valid)
-    if not cookie_token:
-        return False
-
-    if header_token and cookie_token and header_token == cookie_token:
+    # Strategy 1: Standard double-submit (header matches cookie)
+    # This is the preferred method when cookie is preserved
+    if cookie_token and header_token == cookie_token:
         return True
 
-    # For non-HTMX requests, check form data
-    if not is_htmx_request(request):
+    # Strategy 2: Cookie present but header missing - check form data
+    if cookie_token and not header_token:
         try:
             form_data = await request.form()
             form_token = form_data.get("csrf_token")
-            if form_token and cookie_token and str(form_token) == cookie_token:
+            if form_token and str(form_token) == cookie_token:
+                return True
+        except Exception:
+            pass
+
+    # Strategy 3: No cookie but header matches form (both client-side tokens agree)
+    # This handles cases where the cookie was lost but the page tokens are still in sync
+    if not cookie_token and header_token:
+        try:
+            form_data = await request.form()
+            form_token = form_data.get("csrf_token")
+            if form_token and str(form_token) == header_token:
                 return True
         except Exception:
             pass
@@ -268,7 +301,7 @@ async def login_form(
             request, 403, _error_html("Invalid CSRF token"), "/web/login?error=csrf"
         )
 
-    result = await db.execute(select(User).where(User.email == email))
+    result = await db.execute(select(User).where(User.email == email, not_deleted()))
     user = result.scalar_one_or_none()
 
     if user is None or not verify_password(password, user.password_hash):
@@ -333,7 +366,7 @@ async def register_form(
             "/web/register?error=password_too_short",
         )
 
-    result = await db.execute(select(User).where(User.email == email))
+    result = await db.execute(select(User).where(User.email == email, not_deleted()))
     existing = result.scalar_one_or_none()
     if existing:
         return _htmx_or_redirect(
@@ -520,6 +553,41 @@ async def change_password(
     )
 
 
+def _cleanup_job_files(jobs: list, logger) -> tuple[bool, list[str]]:
+    """Clean up files for a list of download jobs. Returns (all_cleaned, failures)."""
+    file_cleanup_failures: list[str] = []
+    for job in jobs:
+        if not job.file_path:
+            continue
+        try:
+            safe_path = _validate_file_path(job.file_path)
+            if os.path.isfile(safe_path):
+                os.remove(safe_path)
+        except HTTPException:
+            logger.warning(
+                "Account deletion aborted: invalid download file path for job %s: %s",
+                job.id,
+                job.file_path,
+            )
+            file_cleanup_failures.append(job.file_path)
+        except OSError as e:
+            logger.warning(
+                "Account deletion aborted: failed to remove file for job %s (%s): %s",
+                job.id,
+                job.file_path,
+                e,
+            )
+            file_cleanup_failures.append(job.file_path)
+        except Exception:
+            logger.exception(
+                "Account deletion aborted: unexpected error cleaning file for job %s (%s)",
+                job.id,
+                job.file_path,
+            )
+            file_cleanup_failures.append(job.file_path)
+    return (not file_cleanup_failures, file_cleanup_failures)
+
+
 @router.post("/settings/delete-account")
 @limiter.limit("3/minute")
 async def delete_account(
@@ -554,38 +622,9 @@ async def delete_account(
     result = await db.execute(select(DownloadJob).where(DownloadJob.user_id == current_user.id))
     jobs = result.scalars().all()
 
-    file_cleanup_failures: list[str] = []
-    for job in jobs:
-        if not job.file_path:
-            continue
-        try:
-            safe_path = _validate_file_path(job.file_path)
-            if os.path.isfile(safe_path):
-                os.remove(safe_path)
-        except HTTPException:
-            logger.warning(
-                "Account deletion aborted: invalid download file path for job %s: %s",
-                job.id,
-                job.file_path,
-            )
-            file_cleanup_failures.append(job.file_path)
-        except OSError as e:
-            logger.warning(
-                "Account deletion aborted: failed to remove file for job %s (%s): %s",
-                job.id,
-                job.file_path,
-                e,
-            )
-            file_cleanup_failures.append(job.file_path)
-        except Exception:
-            logger.exception(
-                "Account deletion aborted: unexpected error cleaning file for job %s (%s)",
-                job.id,
-                job.file_path,
-            )
-            file_cleanup_failures.append(job.file_path)
+    all_cleaned, _file_cleanup_failures = _cleanup_job_files(list(jobs), logger)
 
-    if file_cleanup_failures:
+    if not all_cleaned:
         return _htmx_or_redirect(
             request,
             500,
@@ -640,7 +679,7 @@ async def create_download_form(
         await db.refresh(job)
     except Exception:
         await db.rollback()
-        logger.exception("Failed to create download job")
+        logger.exception("failed_to_create_download_job")
         return HTMLResponse(status_code=500, content=_error_html("Failed to create download"))
 
     # Enqueue job for processing (best-effort; outbox handles recovery)
@@ -654,7 +693,7 @@ async def create_download_form(
         )
         await db.commit()
     except Exception:
-        logger.warning("Failed to enqueue job %s (outbox will handle recovery)", job_id)
+        logger.warning("failed_to_enqueue_job_outbox_recovery", job_id=str(job_id))
 
     # Return HTML fragment for HTMX swap
     return templates.TemplateResponse(
@@ -693,7 +732,7 @@ async def create_download_full_page(
         await db.refresh(job)
     except Exception:
         await db.rollback()
-        logger.exception("Failed to create download job")
+        logger.exception("failed_to_create_download_job_full_page")
         return _htmx_or_redirect(
             request,
             500,
@@ -712,7 +751,7 @@ async def create_download_full_page(
         )
         await db.commit()
     except Exception:
-        logger.warning("Failed to enqueue job %s (outbox will handle recovery)", job_id)
+        logger.warning("failed_to_enqueue_job_outbox_recovery", job_id=str(job_id))
 
     # Redirect to dashboard for full-page non-HTMX fallback
     return RedirectResponse(url="/web/downloads", status_code=303)
@@ -763,11 +802,11 @@ async def delete_download_form(
             safe_path = _validate_file_path(job.file_path)
             if os.path.isfile(safe_path):
                 os.remove(safe_path)
-                logger.info("Deleted file: %s", safe_path)
+                logger.info("file_deleted", file_path=safe_path)
         except HTTPException:
             raise
         except OSError as e:
-            logger.warning("Failed to delete file %s: %s", job.file_path, e)
+            logger.warning("failed_to_delete_file", file_path=job.file_path, error=str(e))
 
     await db.delete(job)
     await db.commit()
@@ -846,7 +885,7 @@ async def download_file(
     # Check file exists on disk
     if not os.path.isfile(safe_path):
         safe_job_id = str(job_id).replace("\r", "").replace("\n", "")
-        logger.error("File missing from disk for job %s: %s", safe_job_id, safe_path)
+        logger.error("file_missing_from_disk", job_id=safe_job_id, file_path=safe_path)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found on disk",

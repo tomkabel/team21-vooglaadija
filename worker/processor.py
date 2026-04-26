@@ -1,23 +1,25 @@
 import asyncio
 import json
-import logging
+import os
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from app.config import settings
 from app.database import get_async_session_factory
+from app.logging_config import get_logger
 from app.metrics import JOB_DURATION_SECONDS, JOBS_COMPLETED
 from app.models.download_job import DownloadJob
 from app.models.outbox import Outbox
-from app.services.yt_dlp_service import extract_media_url
+from app.services.retry_service import calculate_retry_with_jitter
+from app.services.circuit_breaker import CircuitBreakerOpenError, extract_media_with_circuit_breaker
 from worker.health import update_worker_state
 from worker.queue import redis_client
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def _heartbeat(db, job_id: UUID) -> None:
@@ -28,7 +30,45 @@ async def _heartbeat(db, job_id: UUID) -> None:
     await db.commit()
 
 
-async def process_next_job(job_id: UUID | str | None = None) -> None:
+async def _requeue_job(job_id: UUID, db) -> None:
+    """Requeue a job by setting its status back to 'pending' and pushing to download_queue."""
+    outbox_entry = Outbox(
+        id=uuid.uuid4(),
+        job_id=job_id,
+        event_type="retry_scheduled",
+        payload=json.dumps(
+            {
+                "retry_count": 0,
+                "next_retry_at": datetime.now(UTC).isoformat(),
+            }
+        ),
+        status="pending",
+    )
+    db.add(outbox_entry)
+
+    await db.execute(
+        update(DownloadJob)
+        .where(DownloadJob.id == job_id)
+        .values(
+            status="pending",
+            updated_at=datetime.now(UTC),
+        )
+    )
+    await db.commit()
+
+
+def _cleanup_downloaded_file(file_path: str | None) -> None:
+    """Clean up a downloaded file if it exists."""
+    if file_path:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info("Cleaned up partial download: %s", file_path)
+        except OSError as e:
+            logger.warning("Failed to clean up partial download %s: %s", file_path, e)
+
+
+async def process_next_job(job_id: UUID | str | None = None) -> bool:
     """Process the next job in the queue.
 
     If job_id is provided, process that specific job (avoids race condition
@@ -41,11 +81,20 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
     reset_stuck_jobs() can detect and recover from crashes.
 
     Implements retry logic with exponential backoff for transient failures.
+
+    Returns True if job completed successfully, False if cancelled or skipped.
     """
+    # Import here to avoid circular import and get reference to shutdown event
+    from worker.main import shutdown_event
+
     if job_id is None:
-        job_id_str = await redis_client.rpop("download_queue")
+        try:
+            job_id_str = await redis_client.rpop("download_queue")
+        except Exception as e:
+            logger.warning("redis_rpop_failed", error=str(e))
+            return False
         if not job_id_str:
-            return
+            return False
         job_id = UUID(job_id_str)
     elif isinstance(job_id, str):
         job_id = UUID(job_id)
@@ -71,8 +120,8 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
 
         if not claimed:
             # Job was already claimed by another worker or is not pending
-            logger.info("Job %s was not claimed (possibly by another worker)", job_id)
-            return
+            logger.info("job_not_claimed", job_id=str(job_id))
+            return False
 
         # Job claimed successfully - mark as running in health state
         update_worker_state(status="running", current_job_started_at=datetime.now(UTC).isoformat())
@@ -83,14 +132,32 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
             job = result.scalar_one_or_none()
 
             if not job:
-                logger.warning("Job %s not found after claim", job_id)
+                logger.warning("job_not_found_after_claim", job_id=str(job_id))
                 update_worker_state(status="running", current_job_started_at=None)
-                return
+                return False
 
             # Initial heartbeat after claiming
             await _heartbeat(db, job_id)
 
-            file_path, file_name = await extract_media_url(job.url, settings.storage_path)
+            # Check for cancellation before starting download
+            if shutdown_event.is_set():
+                logger.info("Shutdown requested, requeueing job %s", job_id)
+                await _requeue_job(job_id, db)
+                update_worker_state(status="running", current_job_started_at=None)
+                return False
+
+            file_path, file_name = await extract_media_with_circuit_breaker(
+                job.url, settings.storage_path
+            )
+
+            # Check for cancellation after download (before marking complete)
+            if shutdown_event.is_set():
+                logger.info("Shutdown requested after download, requeueing job %s", job_id)
+                await _requeue_job(job_id, db)
+                # Clean up the downloaded file since job is being requeued
+                _cleanup_downloaded_file(file_path)
+                update_worker_state(status="running", current_job_started_at=None)
+                return False
 
             # Heartbeat after extract_media_url completes
             await _heartbeat(db, job_id)
@@ -109,43 +176,57 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
             await db.commit()
             update_worker_state(status="running", current_job_started_at=None)
             JOBS_COMPLETED.labels(status="success").inc()
-            logger.info("Job %s completed successfully", job_id)
+            logger.info("job_completed_successfully", job_id=str(job_id))
+            return True
         except asyncio.CancelledError:
             # Requeue the job to prevent it being stuck in 'processing'
             # reset_stuck_jobs would otherwise hard-fail it later
+            logger.info("Job %s cancelled, requeueing...", job_id)
+            await _requeue_job(job_id, db)
+            update_worker_state(status="running", current_job_started_at=None)
+            raise
+        except CircuitBreakerOpenError as cb_error:
+            # Circuit breaker is open - service is unhealthy, fail fast without retry
+            logger.warning(
+                "circuit_breaker_open_circuit_tripped",
+                job_id=str(job_id),
+                service=cb_error.service_name,
+                reset_timeout=cb_error.reset_timeout,
+            )
             await db.execute(
                 update(DownloadJob)
                 .where(DownloadJob.id == job_id)
                 .values(
-                    status="queued",
-                    updated_at=datetime.now(UTC),
+                    status="failed",
+                    error=f"Service unavailable (circuit breaker open): {cb_error.service_name}",
+                    completed_at=datetime.now(UTC),
                 )
             )
+            JOBS_COMPLETED.labels(status="failed").inc()
             await db.commit()
-            update_worker_state(status="running", current_job_started_at=None)
-            raise
+            return False
         except Exception as e:
             error_str = str(e)
             is_format_error = "format is not available" in error_str.lower()
 
             if is_format_error:
                 logger.error(
-                    "Job %s failed — video format unavailable (DASH/WebM only, no MP4/M4A): %s",
-                    job_id,
-                    error_str,
+                    "job_failed_format_unavailable",
+                    job_id=str(job_id),
+                    error=error_str,
                 )
             else:
-                logger.error("Job %s failed: %s", job_id, error_str)
+                logger.error("job_failed", job_id=str(job_id), error=error_str)
 
             update_worker_state(status="running", current_job_started_at=None)
 
-            # Fetch job for retry/error handling
+            # Re-fetch job for error handling (job may be stale after long operations)
             result = await db.execute(select(DownloadJob).where(DownloadJob.id == job_id))
             job = result.scalar_one_or_none()
 
             if not job:
-                logger.error("Job %s not found during error handling", job_id)
-                return
+                logger.error("job_not_found_during_error_handling", job_id=str(job_id))
+                return False
 
             # Format errors are non-retryable — YouTube's available formats won't change
             if is_format_error or job.retry_count >= job.max_retries:
@@ -160,14 +241,19 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
                         completed_at=datetime.now(UTC),
                     )
                 )
+                JOBS_COMPLETED.labels(status="failed").inc()
                 if not is_format_error:
                     logger.warning(
-                        "Job %s failed permanently after %d retries", job_id, job.max_retries
+                        "job_failed_permanently_max_retries",
+                        job_id=str(job_id),
+                        retry_count=job.retry_count,
+                        max_retries=job.max_retries,
                     )
-                JOBS_COMPLETED.labels(status="failed").inc()
                 await db.commit()
             else:
-                next_retry = datetime.now(UTC) + timedelta(minutes=2**job.retry_count)
+                # Calculate next retry with exponential backoff + full jitter
+                # This prevents thundering herd problem per AWS Well-Architected Framework
+                next_retry = calculate_retry_with_jitter(job.retry_count)
 
                 # Create outbox entry for retry in same transaction as DB update
                 outbox_entry = Outbox(
@@ -207,18 +293,26 @@ async def process_next_job(job_id: UUID | str | None = None) -> None:
                     outbox_entry.processed_at = datetime.now(UTC)
                     await db.commit()
                     logger.info(
-                        "Job %s scheduled for retry %d/%d",
-                        job_id,
-                        job.retry_count + 1,
-                        job.max_retries,
+                        "job_scheduled_for_retry",
+                        job_id=str(job_id),
+                        retry_count=job.retry_count + 1,
+                        max_retries=job.max_retries,
+                        next_retry_at=next_retry.isoformat(),
                     )
                 except Exception as enqueue_error:
                     # DB is already committed with pending status and outbox entry
                     # This is recoverable - sync_outbox will eventually enqueue it
-                    logger.error("Job %s failed to enqueue for retry: %s", job_id, enqueue_error)
+                    logger.error(
+                        "job_failed_to_enqueue_for_retry",
+                        job_id=str(job_id),
+                        error=str(enqueue_error),
+                    )
 
         finally:
             JOB_DURATION_SECONDS.observe(time.time() - start_time)
+
+    # Fallback return for paths that don't explicitly return
+    return False
 
 
 async def reset_stuck_jobs(timeout_minutes: int = 10) -> int:
@@ -243,9 +337,9 @@ async def reset_stuck_jobs(timeout_minutes: int = 10) -> int:
         count = result.rowcount  # type: ignore[attr-defined]
         if count > 0:
             logger.warning(
-                "Reset %d stuck jobs that exceeded %d minute timeout",
-                count,
-                timeout_minutes,
+                "reset_stuck_jobs",
+                count=count,
+                timeout_minutes=timeout_minutes,
             )
 
         return count
@@ -282,8 +376,7 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
         if not entries:
             return 0
 
-        # Phase 2: Push to Redis and mark as enqueued (DB lock held)
-        now = datetime.now(UTC)
+        # Phase 2: Push to Redis and delete from outbox (DB lock held)
         for entry in entries:
             try:
                 if entry.event_type == "retry_scheduled":
@@ -296,28 +389,26 @@ async def sync_outbox_to_queue(batch_size: int = 100) -> int:
                         await redis_client.zadd("retry_queue", {str(entry.job_id): retry_timestamp})
                     else:
                         logger.error(
-                            "Missing next_retry_at in retry_scheduled payload for job %s",
-                            entry.job_id,
+                            "missing_next_retry_at_in_payload",
+                            job_id=str(entry.job_id),
                         )
                         continue
                 else:
                     # Default: push to download_queue
                     await redis_client.lpush("download_queue", str(entry.job_id))
 
-                # Mark as enqueued
-                await db.execute(
-                    update(Outbox)
-                    .where(Outbox.id == entry.id)
-                    .values(status="enqueued", processed_at=now)
-                )
+                # Delete after successful Redis publish to keep outbox table empty
+                await db.execute(delete(Outbox).where(Outbox.id == entry.id))
                 synced += 1
             except Exception as e:
-                logger.error("Failed to enqueue job %s from outbox: %s", entry.job_id, e)
+                logger.error(
+                    "failed_to_enqueue_job_from_outbox", job_id=str(entry.job_id), error=str(e)
+                )
                 # Don't change status - entry stays "pending" for next sync cycle
 
         await db.commit()
 
     if synced > 0:
-        logger.info("Synced %d outbox entries to Redis queue", synced)
+        logger.info("synced_outbox_entries_to_queue", count=synced)
 
     return synced

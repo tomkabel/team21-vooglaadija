@@ -1,7 +1,5 @@
 """Tests for the username utility function."""
 
-import pytest
-
 from app.utils.username import default_username_from_email
 
 

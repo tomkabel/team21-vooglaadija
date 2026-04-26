@@ -83,10 +83,16 @@ node_modules/
 # =============================================
 # Test/Coverage artifacts
 # =============================================
-.coverage.cachy.pid*
+.coverage.*
 .hypothesis/
 coverage/
 *.prof
+
+# =============================================
+# Security & CI Artifacts
+# =============================================
+security-report.json
+security-report*.json
 
 # =============================================
 # Docker
@@ -106,3 +112,33 @@ tmp/
 temp/
 *.tmp
 coverage.xml
+
+# Personal notes and course materials (do not commit)
+Junior_To_Senior_Course*.md
+awesome-python*.md
+video-plan*.md
+gemini/
+minimax/
+
+# =============================================
+# Project-specific files
+# =============================================
+.agents/skills/slides-grab*/
+ANALYSIS.md
+DOCKER_ANALYSIS_REPORT*.md
+VIDEO_REQUIREMENTS.md
+create-presentation.js
+raw_lecture/
+slides-grab/
+vooglaadija-presentation.pptx
+vooglaadija-visual-presentation.html
+vooglaadija-visual-presentation.pptx
+comments.md
+labels.md
+video-transcript-voice-guide.md
+
+# Presentation files (managed separately)
+vooglaadija-presentation/
+bundle.html
+vooglaadija-slides/
+

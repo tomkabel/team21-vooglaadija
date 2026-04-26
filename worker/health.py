@@ -1,13 +1,14 @@
 """Worker health monitoring via Redis heartbeat and HTTP health endpoint."""
 
 import json
-import logging
 import os
 import threading
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-logger = logging.getLogger(__name__)
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 # Module-level lock for thread-safe access to _worker_state
 _state_lock = threading.Lock()
@@ -90,10 +91,10 @@ def write_health_sync() -> bool:
         r.setex(f"worker:health:{worker_id}", 30, json.dumps(health_data))
         return True
     except (redis.exceptions.TimeoutError, redis.exceptions.ConnectionError) as e:
-        logger.error("Failed to write sync health (timeout/connection): %s", e)
+        logger.error("failed_to_write_sync_health_timeout", error=str(e))
         return False
     except Exception as e:
-        logger.error("Failed to write sync health: %s", e)
+        logger.error("failed_to_write_sync_health", error=str(e))
         return False
     finally:
         r.close()
@@ -130,10 +131,10 @@ async def write_health_async() -> bool:
         await client.setex(f"worker:health:{worker_id}", 30, json.dumps(health_data))
         return True
     except (TimeoutError, SyncTimeoutError, SyncConnectionError) as e:
-        logger.error("Failed to write async health (timeout/connection): %s", e)
+        logger.error("failed_to_write_async_health_timeout", error=str(e))
         return False
     except Exception as e:
-        logger.error("Failed to write async health: %s", e)
+        logger.error("failed_to_write_async_health", error=str(e))
         return False
     finally:
         # Always close the Redis client
@@ -202,14 +203,14 @@ class _HealthHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    def log_message(self, fmt, *args):
+    def log_message(self, format, *args):
         """Suppress default logging."""
 
 
 def start_health_server(port: int | None = None) -> HTTPServer | None:
     """Start the health check HTTP server in a background thread.
 
-    Port is read from WORKER_HEALTH_PORT env var (default: 8081).
+    Port is read from WORKER_HEALTH_PORT env var (default: 8082).
     Set WORKER_HEALTH_PORT=0 to disable.
 
     Returns the server instance (call server.shutdown() to stop).
@@ -218,18 +219,18 @@ def start_health_server(port: int | None = None) -> HTTPServer | None:
     if _health_server is not None:
         return _health_server
 
-    env_port = os.environ.get("WORKER_HEALTH_PORT", "8081")
+    env_port = os.environ.get("WORKER_HEALTH_PORT", "8082")
     if port is None:
         port = int(env_port)
 
     if port == 0:
-        logger.info("Worker health HTTP server disabled (WORKER_HEALTH_PORT=0)")
+        logger.info("worker_health_http_disabled")
         return None
 
     _health_server = HTTPServer(("0.0.0.0", port), _HealthHandler)
     thread = threading.Thread(target=_health_server.serve_forever, daemon=True)
     thread.start()
-    logger.info("Worker health server started on port %d", port)
+    logger.info("worker_health_server_started", port=port)
     return _health_server
 
 
@@ -241,7 +242,7 @@ def stop_health_server():
         try:
             _health_server.server_close()
         except Exception as e:
-            logger.warning("Error closing health server socket: %s", e)
+            logger.warning("error_closing_health_server_socket", error=str(e))
         _health_server = None
 
 

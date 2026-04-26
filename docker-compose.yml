@@ -28,38 +28,15 @@ x-common-env:
   FEATURE_METRICS_ENABLED: ${FEATURE_METRICS_ENABLED:-true}
   FEATURE_TRACING_ENABLED: ${FEATURE_TRACING_ENABLED:-true}
 
-x-security-context:
-  &security-context # Security context - run as non-root, read-only root filesystem
-  read_only: true
-  tmpfs:
-    - /tmp
-    - /var/run
-    - /var/cache
-  # Note: Storage and other writable paths need to be mounted as volumes
-  user: "1000:1000" # appuser:appuser
-  # Drop all privileges and add only necessary ones
-  cap_drop:
-    - ALL
-  cap_add:
-    - CHOWN # For entrypoint scripts that might need to chown volumes
-    - SETGID
-    - SETUID
-  # Additional security - use security_opt for no-new-privileges
-  security_opt:
-    - no-new-privileges=true
-  # AppArmor and Seccomp profiles (if available)
-  # apparmor: docker-default
-  # seccomp: runtime/default
-
-x-resources-security: &resources-security
+x-base-service: &base-service
   deploy:
     resources:
       limits:
         cpus: "1.0"
-        memory: 512M
+        memory: 1G
       reservations:
         cpus: "0.25"
-        memory: 128M
+        memory: 256M
   read_only: true
   tmpfs:
     - /tmp
@@ -85,12 +62,18 @@ services:
     restart: unless-stopped
     environment:
       <<: *common-env
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:8081,http://127.0.0.1:8080,http://asus:8081}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
       REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      # Override DATABASE_URL to use docker network hostnames (interpolated from env vars)
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD}@${DB_HOST:-db}:${DB_PORT:-5432}/${DB_NAME:-ytprocessor}
+      # Override REDIS_URL to use docker network hostname (interpolated from env vars)
+      REDIS_URL: redis://:${REDIS_PASSWORD}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}
       # Enable observability
       OTEL_PYTHON_TRACER_PROVIDER: otel
       OTEL_PYTHON_METER_PROVIDER: otel
+    expose:
+      - "8000"
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -102,19 +85,17 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    <<: *resources-security
+    <<: *base-service
     healthcheck:
       test:
         [
-          "CMD",
-          "python",
-          "-c",
-          "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8000)); s.close()",
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)\" || exit 1",
         ]
-      interval: 30s
+      interval: 15s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
     logging:
       driver: "json-file"
       options:
@@ -138,6 +119,11 @@ services:
     environment:
       <<: *common-env
       WORKER_ID: ${HOSTNAME:-worker-1}
+      WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-8082}
+      # Override DATABASE_URL to use docker network hostnames (interpolated from env vars)
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD}@${DB_HOST:-db}:${DB_PORT:-5432}/${DB_NAME:-ytprocessor}
+      # Override REDIS_URL to use docker network hostname (interpolated from env vars)
+      REDIS_URL: redis://:${REDIS_PASSWORD}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}
     volumes:
       - storage:/app/storage:Z
     depends_on:
@@ -145,16 +131,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    <<: *resources-security
+    <<: *base-service
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          'python -c "import urllib.request, sys; urllib.request.urlopen(''http://localhost:8081/health'', timeout=5); sys.exit(0)" || exit 1',
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=5)\" || exit 1",
         ]
-      interval: 30s
+      interval: 15s
       timeout: 10s
-      retries: 5
+      retries: 3
       start_period: 30s
     logging:
       driver: "json-file"
@@ -286,25 +272,28 @@ services:
         aliases:
           - otel-collector
 
-  # Nginx reverse proxy for API
+  # Nginx reverse proxy for API with SSL
   nginx:
     image: nginx:alpine
     container_name: ytprocessor-nginx
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "80:80" # Override with docker-compose.local.yml on rootless systems
+      - "443:443"
     volumes:
-      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./infra/nginx/nginx.ssl.local.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./infra/ssl:/etc/nginx/ssl:ro
+      - ./infra/certbot/data:/var/www/certbot:ro
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
       test:
-        ["CMD-SHELL", "wget -q --spider http://localhost:80/health || exit 1"]
+        ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 20s
     logging:
       driver: "json-file"
       options:
@@ -322,7 +311,10 @@ services:
     container_name: swagger-ui
     restart: unless-stopped
     environment:
-      URL: http://localhost:8080/openapi.json
+      # Route OpenAPI spec fetch through nginx reverse proxy (host:8080 -> nginx:80)
+      # This keeps all external traffic through the established reverse proxy architecture.
+      # Browser (at swagger-ui host:8081) fetches from nginx (host:8080), which proxies to api:8000
+      URL: http://127.0.0.1:8080/openapi.json
     ports:
       - "8081:8080"
     # swagger-ui doesn't need resource limits or security context restrictions

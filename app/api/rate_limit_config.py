@@ -43,20 +43,22 @@ def _parse_retry_after(detail: str) -> int:
     match = re.match(r"(\d+)\s+per\s+(\d+)\s+(\w+)", detail)
     if not match:
         return 60  # Default to 60 seconds if parsing fails
-    _, window, unit = match.groups()
-    window = int(window)
-    unit = unit.lower().rstrip("s")  # normalize "minutes" to "minute"
+    limit, _window, unit = match.groups()
+    limit = int(limit)
+    unit = unit.lower()
+    if unit.endswith("s"):
+        unit = unit[:-1]  # "minutes" → "minute", "secs" → "sec"
+    # Handle "sec" variant
+    if unit == "sec":
+        unit = "second"
     multipliers = {
         "second": 1,
         "minute": 60,
         "hour": 3600,
         "day": 86400,
     }
-    multiplier = multipliers.get(unit)
-    if multiplier is None:
-        # Fall back to 60 seconds (minute) for unknown units
-        multiplier = 60
-    return window * multiplier
+    multiplier = multipliers.get(unit, 60)  # Default to minute (60s)
+    return limit * multiplier
 
 
 async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONResponse:

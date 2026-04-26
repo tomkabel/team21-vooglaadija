@@ -1,280 +1,421 @@
-{% extends "base.html" %}
-
-{% block title %}Dashboard — Vooglaadija{% endblock %}
-
+{% extends "base.html" %} {% block title %}Dashboard — Vooglaadija{% endblock %}
 {% block nav_actions %}
 <div class="flex items-center gap-3">
-    <div class="hidden sm:flex items-center gap-2 text-sm text-gray-500 bg-white/[0.04] px-3 py-1.5 rounded-lg border border-white/[0.06]">
-        <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-        </svg>
-        <span class="font-body">{{ current_user.username | default(current_user.email, true) }}</span>
-    </div>
-    <a href="/web/settings" class="btn-secondary text-sm">
-        Settings
-    </a>
-    <form method="POST" action="/web/logout" class="inline">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="btn-secondary text-sm">
-            Sign out
-        </button>
-    </form>
+  <div
+    class="hidden sm:flex items-center gap-2 text-sm text-gray-500 bg-white/[0.04] px-3 py-1.5 rounded-lg border border-white/[0.06]"
+  >
+    <svg
+      class="h-4 w-4"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      stroke-width="1.5"
+    >
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"
+      />
+    </svg>
+    <span class="font-body">{{ current_user.username | default(current_user.email, true) }}</span>
+  </div>
+  <a href="/web/settings" class="btn-secondary text-sm">
+    Settings
+  </a>
+  <form method="POST" action="/web/logout" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button type="submit" class="btn-secondary text-sm">Sign out</button>
+  </form>
 </div>
-{% endblock %}
-
-{% block content %}
+{% endblock %} {% block content %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-    <!-- Welcome Header -->
-    <div class="mb-10 slide-up opacity-0-initial animate-fill-forwards">
-        <h1 class="text-3xl sm:text-4xl font-display font-bold text-white tracking-tight">
-            Welcome back, <span class="text-gradient">{{ current_user.username | default('Guest', true) }}</span>
-        </h1>
-        <p class="mt-2 text-gray-500 font-body text-lg">Manage your YouTube downloads</p>
+  <!-- Welcome Header -->
+  <div class="mb-10 slide-up opacity-0-initial animate-fill-forwards">
+    <h1
+      class="text-3xl sm:text-4xl font-display font-bold text-white tracking-tight"
+    >
+      Welcome back,
+      <span class="text-gradient">{{ current_user.username | default(current_user.email.split('@')[0], true) }}</span>
+    </h1>
+    <p class="mt-2 text-gray-500 font-body text-lg">
+      Manage your YouTube downloads
+    </p>
+  </div>
+
+  <!-- URL Input Card -->
+  <div
+    class="card-glow p-6 sm:p-8 mb-8 slide-up animate-stagger-1 opacity-0-initial animate-fill-forwards"
+  >
+    <div class="mb-6">
+      <h2 class="text-lg font-display font-semibold text-white mb-1">
+        New Download
+      </h2>
+      <p class="text-gray-500 font-body text-sm">
+        Paste a YouTube URL to get started
+      </p>
     </div>
 
-    <!-- URL Input Card -->
-    <div class="card-glow p-6 sm:p-8 mb-8 slide-up animate-stagger-1 opacity-0-initial animate-fill-forwards">
-        <div class="mb-6">
-            <h2 class="text-lg font-display font-semibold text-white mb-1">New Download</h2>
-            <p class="text-gray-500 font-body text-sm">Paste a YouTube URL to get started</p>
+    <form
+      hx-post="/web/downloads"
+      action="/web/downloads/full"
+      method="POST"
+      hx-target="#download-rows"
+      hx-swap="beforeend"
+      hx-indicator="#submit-spinner"
+      hx-sync="this:drop"
+      hx-on:htmx:after-request="if(event.detail.successful) { document.querySelector('#download-error').innerHTML = ''; }"
+      hx-on:htmx:response-error="document.querySelector('#download-error').insertAdjacentHTML('beforeend', event.detail.xhr.response)"
+      class="flex flex-col sm:flex-row gap-3"
+    >
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <div class="input-icon-wrapper flex-1">
+        <svg
+          class="h-[18px] w-[18px]"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="1.5"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"
+          />
+        </svg>
+        <input
+          type="url"
+          name="url"
+          id="new-download-url"
+          placeholder="https://www.youtube.com/watch?v=..."
+          required
+          class="form-input"
+          aria-label="New download URL"
+        />
+      </div>
+
+      <button
+        type="submit"
+        class="btn-primary whitespace-nowrap flex items-center justify-center gap-2 px-6"
+      >
+        <span id="submit-spinner" class="htmx-indicator">
+          <svg
+            class="animate-spin h-4 w-4"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              class="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+            ></circle>
+            <path
+              class="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+            ></path>
+          </svg>
+        </span>
+        Download
+        <svg
+          class="h-4 w-4"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="2.5"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"
+          />
+        </svg>
+      </button>
+    </form>
+
+    <div id="download-error" class="mt-4"></div>
+  </div>
+
+  <!-- Downloads List Section -->
+  <div
+    class="mb-8 slide-up animate-stagger-2 opacity-0-initial animate-fill-forwards"
+    hx-ext="sse"
+    sse-connect="/web/downloads/stream"
+    hx-trigger="sse:job_update"
+    hx-history="false"
+  >
+    <div class="card p-6 sm:p-8">
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-lg font-display font-semibold text-white">
+            Downloads
+          </h2>
+          <p class="text-gray-500 font-body text-sm mt-0.5">
+            Track your download progress
+          </p>
         </div>
+        <div class="live-indicator">Live</div>
+      </div>
 
-        <form hx-post="/web/downloads"
-              action="/web/downloads/full"
-              method="POST"
-              hx-target="#download-rows"
-              hx-swap="beforeend"
-              hx-indicator="#submit-spinner"
-              hx-sync="this:drop"
-              hx-on:htmx:after-request="if(event.detail.successful) { document.querySelector('#download-error').innerHTML = ''; }"
-              hx-on:htmx:response-error="document.querySelector('#download-error').insertAdjacentHTML('beforeend', event.detail.xhr.response)"
-              class="flex flex-col sm:flex-row gap-3">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <div class="input-icon-wrapper flex-1">
-                <svg class="h-[18px] w-[18px]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
-                </svg>
-                <input type="url"
-                       name="url"
-                       id="new-download-url"
-                       placeholder="https://www.youtube.com/watch?v=..."
-                       required
-                       class="form-input"
-                       aria-label="New download URL">
-            </div>
+      <div id="download-list">{% include 'partials/_download_list.html' %}</div>
+    </div>
+  </div>
 
-            <button type="submit"
-                    class="btn-primary whitespace-nowrap flex items-center justify-center gap-2 px-6">
-                <span id="submit-spinner" class="htmx-indicator">
-                    <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                </span>
-                Download
-                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                </svg>
-            </button>
-        </form>
-
-        <div id="download-error" class="mt-4"></div>
+  <!-- Stats Row -->
+  <div
+    class="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 slide-up animate-stagger-3 opacity-0-initial animate-fill-forwards"
+  >
+    <div class="stat-card">
+      <div class="flex items-center gap-4">
+        <div
+          class="h-12 w-12 rounded-xl bg-jade-500/10 border border-jade-500/20 flex items-center justify-center flex-shrink-0"
+        >
+          <svg
+            class="h-6 w-6 text-jade-400"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+        </div>
+        <div>
+          <p
+            class="text-xs text-gray-500 font-display font-medium uppercase tracking-wider"
+          >
+            Completed
+          </p>
+          <p
+            id="stat-completed"
+            class="text-2xl font-display font-bold text-white mt-0.5"
+          >
+            {{ jobs|selectattr('status', 'equalto', 'completed')|list|length }}
+          </p>
+        </div>
+      </div>
     </div>
 
-    <!-- Downloads List Section -->
-    <div class="mb-8 slide-up animate-stagger-2 opacity-0-initial animate-fill-forwards"
-         hx-ext="sse"
-         sse-connect="/web/downloads/stream"
-         hx-trigger="sse:job_update"
-         hx-history="false">
-
-        <div class="card p-6 sm:p-8">
-            <div class="flex justify-between items-center mb-6">
-                <div>
-                    <h2 class="text-lg font-display font-semibold text-white">Downloads</h2>
-                    <p class="text-gray-500 font-body text-sm mt-0.5">Track your download progress</p>
-                </div>
-                <div class="live-indicator">
-                    Live
-                </div>
-            </div>
-
-            <div id="download-list">
-                {% include 'partials/_download_list.html' %}
-            </div>
+    <div class="stat-card">
+      <div class="flex items-center gap-4">
+        <div
+          class="h-12 w-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center flex-shrink-0"
+        >
+          <svg
+            class="h-6 w-6 text-amber-400"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
         </div>
+        <div>
+          <p
+            class="text-xs text-gray-500 font-display font-medium uppercase tracking-wider"
+          >
+            In Progress
+          </p>
+          <p
+            id="stat-in-progress"
+            class="text-2xl font-display font-bold text-white mt-0.5"
+          >
+            {{ jobs|selectattr('status', 'in', ['processing',
+            'pending'])|list|length }}
+          </p>
+        </div>
+      </div>
     </div>
 
-    <!-- Stats Row -->
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 slide-up animate-stagger-3 opacity-0-initial animate-fill-forwards">
-        <div class="stat-card">
-            <div class="flex items-center gap-4">
-                <div class="h-12 w-12 rounded-xl bg-jade-500/10 border border-jade-500/20 flex items-center justify-center flex-shrink-0">
-                    <svg class="h-6 w-6 text-jade-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-xs text-gray-500 font-display font-medium uppercase tracking-wider">Completed</p>
-                    <p id="stat-completed" class="text-2xl font-display font-bold text-white mt-0.5">
-                        {{ jobs|selectattr('status', 'equalto', 'completed')|list|length }}
-                    </p>
-                </div>
-            </div>
+    <div class="stat-card">
+      <div class="flex items-center gap-4">
+        <div
+          class="h-12 w-12 rounded-xl bg-warm-500/10 border border-warm-500/20 flex items-center justify-center flex-shrink-0"
+        >
+          <svg
+            class="h-6 w-6 text-warm-400"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"
+            />
+          </svg>
         </div>
-
-        <div class="stat-card">
-            <div class="flex items-center gap-4">
-                <div class="h-12 w-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center flex-shrink-0">
-                    <svg class="h-6 w-6 text-amber-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-xs text-gray-500 font-display font-medium uppercase tracking-wider">In Progress</p>
-                    <p id="stat-in-progress" class="text-2xl font-display font-bold text-white mt-0.5">
-                        {{ jobs|selectattr('status', 'in', ['processing', 'pending'])|list|length }}
-                    </p>
-                </div>
-            </div>
+        <div>
+          <p
+            class="text-xs text-gray-500 font-display font-medium uppercase tracking-wider"
+          >
+            Total
+          </p>
+          <p
+            id="stat-total"
+            class="text-2xl font-display font-bold text-white mt-0.5"
+          >
+            {{ jobs|length }}
+          </p>
         </div>
-
-        <div class="stat-card">
-            <div class="flex items-center gap-4">
-                <div class="h-12 w-12 rounded-xl bg-warm-500/10 border border-warm-500/20 flex items-center justify-center flex-shrink-0">
-                    <svg class="h-6 w-6 text-warm-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-xs text-gray-500 font-display font-medium uppercase tracking-wider">Total</p>
-                    <p id="stat-total" class="text-2xl font-display font-bold text-white mt-0.5">
-                        {{ jobs|length }}
-                    </p>
-                </div>
-            </div>
-        </div>
+      </div>
     </div>
+  </div>
 </div>
 
 <script nonce="{{ nonce }}">
-    // Update stats by counting current job rows
-    function updateStats() {
-        const rows = document.querySelectorAll('.download-row');
-        let completed = 0;
-        let inProgress = 0;
-        let total = rows.length;
+  // Update stats by counting current job rows
+  function updateStats() {
+    const rows = document.querySelectorAll(".download-row");
+    let completed = 0;
+    let inProgress = 0;
+    let total = rows.length;
 
-        rows.forEach(row => {
-            const statusEl = row.querySelector('.status-badge');
-            if (statusEl) {
-                const status = statusEl.textContent.trim().toLowerCase();
-                if (status === 'completed') completed++;
-                else if (status === 'processing' || status === 'pending') inProgress++;
-            }
-        });
-
-        const completedEl = document.getElementById('stat-completed');
-        const inProgressEl = document.getElementById('stat-in-progress');
-        const totalEl = document.getElementById('stat-total');
-
-        if (completedEl) completedEl.textContent = completed;
-        if (inProgressEl) inProgressEl.textContent = inProgress;
-        if (totalEl) totalEl.textContent = total;
-    }
-
-    document.body.addEventListener('sse:job_update', function(evt) {
-        let data;
-        try {
-            data = JSON.parse(evt.detail.data);
-        } catch (e) {
-            console.error('Failed to parse SSE event data:', e, 'Data:', evt.detail.data);
-            return;
-        }
-
-        let row = document.querySelector(`[data-job-id="${data.id}"]`);
-
-        if (!row) {
-            row = createDownloadRow(data);
-            const downloadRows = document.getElementById('download-rows');
-            const downloadList = document.getElementById('download-list');
-            if (downloadRows) {
-                downloadRows.prepend(row);
-            } else if (downloadList) {
-                downloadList.prepend(row);
-            }
-        } else {
-            updateDownloadRow(row, data);
-        }
-
-        row.classList.add('fade-in');
-
-        // Update stats after any job change
-        updateStats();
+    rows.forEach((row) => {
+      const statusEl = row.querySelector(".status-badge");
+      if (statusEl) {
+        const status = statusEl.textContent.trim().toLowerCase();
+        if (status === "completed") completed++;
+        else if (status === "processing" || status === "pending") inProgress++;
+      }
     });
 
-    // Also update stats after HTMX swaps (form submissions, deletes)
-    document.body.addEventListener('htmx:afterSwap', function(evt) {
-        updateStats();
-    });
+    const completedEl = document.getElementById("stat-completed");
+    const inProgressEl = document.getElementById("stat-in-progress");
+    const totalEl = document.getElementById("stat-total");
 
-    function createDownloadRow(data) {
-        const div = document.createElement('div');
-        div.className = 'download-row';
-        div.dataset.jobId = data.id;
-        div.innerHTML = getRowHTML(data);
-        // Required: tell HTMX to process hx-* attributes in dynamically created content
-        htmx.process(div);
-        return div;
+    if (completedEl) completedEl.textContent = completed;
+    if (inProgressEl) inProgressEl.textContent = inProgress;
+    if (totalEl) totalEl.textContent = total;
+  }
+
+  document.body.addEventListener("sse:job_update", function (evt) {
+    let data;
+    try {
+      data = JSON.parse(evt.detail.data);
+    } catch (e) {
+      console.error(
+        "Failed to parse SSE event data:",
+        e,
+        "Data:",
+        evt.detail.data,
+      );
+      return;
     }
 
-    function updateDownloadRow(row, data) {
-        const badge = row.querySelector('.status-badge');
-        if (badge) {
-            badge.textContent = data.status.charAt(0).toUpperCase() + data.status.slice(1);
-            badge.className = `status-badge status-${data.status}`;
-        }
+    let row = document.querySelector(`[data-job-id="${data.id}"]`);
 
-        let downloadBtn = row.querySelector('.download-btn');
-        if (data.status === 'completed') {
-            if (!downloadBtn) {
-                // Create download button if it doesn't exist
-                downloadBtn = document.createElement('a');
-                downloadBtn.href = `/api/v1/downloads/${data.id}/file`;
-                downloadBtn.className = 'download-btn btn-download text-xs';
-                downloadBtn.download = '';
-                downloadBtn.target = '_blank';
-                downloadBtn.setAttribute('hx-boost', 'false');
-                downloadBtn.innerHTML = `
+    if (!row) {
+      row = createDownloadRow(data);
+      const downloadRows = document.getElementById("download-rows");
+      const downloadList = document.getElementById("download-list");
+      if (downloadRows) {
+        downloadRows.prepend(row);
+      } else if (downloadList) {
+        downloadList.prepend(row);
+      }
+    } else {
+      updateDownloadRow(row, data);
+    }
+
+    row.classList.add("fade-in");
+
+    // Update stats after any job change
+    updateStats();
+  });
+
+  // Also update stats after HTMX swaps (form submissions, deletes)
+  document.body.addEventListener("htmx:afterSwap", function (evt) {
+    updateStats();
+  });
+
+  function createDownloadRow(data) {
+    const div = document.createElement("div");
+    div.className = "download-row";
+    div.dataset.jobId = data.id;
+    div.innerHTML = getRowHTML(data);
+    // Required: tell HTMX to process hx-* attributes in dynamically created content
+    htmx.process(div);
+    return div;
+  }
+
+  function updateDownloadRow(row, data) {
+    const badge = row.querySelector(".status-badge");
+    if (badge) {
+      badge.textContent =
+        data.status.charAt(0).toUpperCase() + data.status.slice(1);
+      badge.className = `status-badge status-${data.status}`;
+    }
+
+    let downloadBtn = row.querySelector(".download-btn");
+    if (data.status === "completed") {
+      if (!downloadBtn) {
+        // Create download button if it doesn't exist
+        downloadBtn = document.createElement("a");
+        downloadBtn.href = `/web/downloads/${data.id}/file`;
+        downloadBtn.className = "download-btn btn-download text-xs";
+        downloadBtn.download = "";
+        downloadBtn.target = "_blank";
+        downloadBtn.setAttribute("hx-boost", "false");
+        downloadBtn.innerHTML = `
                     <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
                     </svg>
                     Save
                 `;
-                downloadBtn.style.display = 'inline-flex';
-                // Append to the last .flex.items-center.gap-3 (actions column, not thumbnail)
-                const actionsContainers = row.querySelectorAll('.flex.items-center.gap-3');
-                actionsContainers[actionsContainers.length - 1].appendChild(downloadBtn);
-            } else {
-                downloadBtn.style.display = 'inline-flex';
-            }
-        } else if (downloadBtn) {
-            downloadBtn.style.display = 'none';
+        downloadBtn.style.display = "inline-flex";
+        // Insert before the delete button to match getRowHTML order
+        const actionsContainers = row.querySelectorAll(
+          ".flex.items-center.gap-3",
+        );
+        const actionsContainer =
+          actionsContainers[actionsContainers.length - 1];
+        const deleteBtn = actionsContainer.querySelector("button[hx-delete]");
+        if (deleteBtn) {
+          actionsContainer.insertBefore(downloadBtn, deleteBtn);
+        } else {
+          actionsContainer.appendChild(downloadBtn);
         }
+      } else {
+        downloadBtn.style.display = "inline-flex";
+      }
+    } else if (downloadBtn) {
+      downloadBtn.style.display = "none";
+    }
+  }
+
+  function getRowHTML(data) {
+    const statusText =
+      data.status.charAt(0).toUpperCase() + data.status.slice(1);
+    // Use server-provided timestamp from data.created_at, or fallback to current time
+    let date = "Just now";
+    if (data.created_at) {
+      const serverDate = new Date(data.created_at);
+      if (!isNaN(serverDate.getTime())) {
+        date = serverDate.toISOString().slice(0, 16).replace("T", " ");
+      }
     }
 
-    function getRowHTML(data) {
-        const statusText = data.status.charAt(0).toUpperCase() + data.status.slice(1);
-        // Use server-provided timestamp from data.created_at, or fallback to current time
-        let date = 'Just now';
-        if (data.created_at) {
-            const serverDate = new Date(data.created_at);
-            if (!isNaN(serverDate.getTime())) {
-                date = serverDate.toISOString().slice(0, 16).replace('T', ' ');
-            }
-        }
-
-        return `
+    return `
             <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-3">
                     <div class="h-10 w-10 rounded-xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
@@ -292,8 +433,10 @@
             <div class="flex items-center gap-3">
                 <span class="status-badge status-${data.status}">${statusText}</span>
 
-                ${data.status === 'completed' ? `
-                <a href="/api/v1/downloads/${data.id}/file"
+                ${
+                  data.status === "completed"
+                    ? `
+                <a href="/web/downloads/${data.id}/file"
                    class="download-btn btn-download text-xs"
                    download
                    target="_blank"
@@ -303,7 +446,9 @@
                     </svg>
                     Save
                 </a>
-                ` : ''}
+                `
+                    : ""
+                }
 
                 <button hx-delete="/web/downloads/${data.id}"
                         hx-target="closest .download-row"
@@ -317,12 +462,12 @@
                 </button>
             </div>
         `;
-    }
+  }
 
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
+  function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  }
 </script>
 {% endblock %}

@@ -1,14 +1,16 @@
+"""Worker main loop for processing download jobs with structured logging."""
+
 import asyncio
-import logging
 import os
 import signal
+import time
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
 from app.config import settings
 from app.database import get_async_session_factory
-from app.logging_config import setup_logging
+from app.logging_config import configure_logging, get_logger
 from app.models.download_job import DownloadJob
 from worker.health import (
     start_health_server,
@@ -19,16 +21,39 @@ from worker.health import (
 from worker.processor import process_next_job, reset_stuck_jobs, sync_outbox_to_queue
 from worker.queue import redis_client
 
-setup_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
-logger = logging.getLogger(__name__)
+# Initialize structured logging
+configure_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
+logger = get_logger(__name__)
 
-# Graceful shutdown event
+# Graceful shutdown configuration
+# Configurable grace period per 2026 Kubernetes best practices
+GRACE_PERIOD_SECONDS: int = int(os.environ.get("WORKER_GRACE_PERIOD_SECONDS", "25"))
+
+# Graceful shutdown event and timestamp tracking
 shutdown_event = asyncio.Event()
+shutdown_requested_at: float | None = None  # Timestamp when SIGTERM was received
 
 
 def _signal_handler() -> None:
-    logger.info("Received shutdown signal, stopping worker...")
+    """Handle shutdown signals gracefully with timestamp tracking."""
+    global shutdown_requested_at
+    if shutdown_requested_at is None:
+        shutdown_requested_at = time.monotonic()
+        logger.info(
+            "received_shutdown_signal",
+            signal="SIGTERM/SIGINT",
+            grace_period_seconds=GRACE_PERIOD_SECONDS,
+        )
     shutdown_event.set()
+
+
+def get_grace_period_remaining() -> float | None:
+    """Get remaining grace period in seconds, or None if shutdown not requested."""
+    if shutdown_requested_at is None:
+        return None
+    elapsed = time.monotonic() - shutdown_requested_at
+    remaining = GRACE_PERIOD_SECONDS - elapsed
+    return max(0.0, remaining)
 
 
 async def cleanup_expired_jobs() -> int:
@@ -57,27 +82,44 @@ async def cleanup_expired_jobs() -> int:
                 if resolved_path.startswith(safe_dir) and os.path.exists(resolved_path):
                     try:
                         os.remove(resolved_path)
-                        logger.info("Cleaned up expired file: %s", resolved_path)
+                        logger.info(
+                            "cleaned_up_expired_file", file_path=resolved_path, job_id=str(job.id)
+                        )
                         # Only delete DB row after successful file removal
                         await db.delete(job)
                         cleanup_count += 1
                     except OSError as e:
-                        logger.warning("Failed to delete expired file %s: %s", job.file_path, e)
+                        logger.warning(
+                            "failed_to_delete_expired_file", file_path=job.file_path, error=str(e)
+                        )
                         # Don't delete DB row - cleanup will retry next interval
                 elif resolved_path.startswith(safe_dir):
                     # File already deleted, just remove DB row
-                    logger.info("File already deleted for job %s: %s", job.id, job.file_path)
+                    logger.info("file_already_deleted", job_id=str(job.id), file_path=job.file_path)
                     await db.delete(job)
                     cleanup_count += 1
                 else:
                     logger.warning(
-                        "Skipping path traversal attempt for job %s: %s", job.id, job.file_path
+                        "path_traversal_attempt_skipped",
+                        job_id=str(job.id),
+                        file_path=job.file_path,
                     )
+            else:
+                # No file_path, just delete the DB row
+                try:
+                    await db.delete(job)
+                    cleanup_count += 1
+                except Exception as db_err:
+                    logger.warning("failed_to_delete_db_row", job_id=job.id, error=str(db_err), exc_info=True)
 
+        # Batch commit after processing all jobs
+        try:
             await db.commit()
+        except Exception as commit_err:
+            logger.warning("db_commit_failed", error=str(commit_err))
 
         if cleanup_count > 0:
-            logger.info("Cleaned up %d expired jobs", cleanup_count)
+            logger.info("cleanup_completed", expired_jobs_cleaned=cleanup_count)
 
         return cleanup_count
 
@@ -93,28 +135,28 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, _signal_handler)
 
-    logger.info("Worker started, waiting for jobs...")
+    logger.info("worker_started")
 
     # Test Redis connection before starting
-    logger.info("Testing Redis connection...")
+    logger.info("testing_redis_connection")
     try:
         await redis_client.ping()
-        logger.info("Redis connection successful")
+        logger.info("redis_connection_successful")
     except Exception as e:
-        logger.error("Failed to connect to Redis: %s", e)
+        logger.error("redis_connection_failed", error=str(e))
         raise
 
     # Test database connection before starting
-    logger.info("Testing database connection...")
+    logger.info("testing_database_connection")
     try:
         session_factory = get_async_session_factory()
         async with session_factory() as db:
             from sqlalchemy import text
 
             await db.execute(text("SELECT 1"))
-        logger.info("Database connection successful")
+        logger.info("database_connection_successful")
     except Exception as e:
-        logger.error("Failed to connect to database: %s", e)
+        logger.error("database_connection_failed", error=str(e))
         raise
 
     # Start HTTP health server for orchestration tools
@@ -133,6 +175,15 @@ async def main() -> None:
     update_worker_state(status="running")
 
     while not shutdown_event.is_set():
+        # Check if grace period has expired (force exit even if jobs are running)
+        grace_remaining = get_grace_period_remaining()
+        if grace_remaining is not None and grace_remaining <= 0:
+            logger.warning(
+                "grace_period_expired_forcing_shutdown",
+                grace_period_seconds=GRACE_PERIOD_SECONDS,
+            )
+            break
+
         try:
             # Move due retry jobs from retry_queue to download_queue atomically
             # Uses Lua script to prevent race conditions between workers
@@ -145,19 +196,37 @@ async def main() -> None:
                     redis.call('LPUSH', KEYS[2], job_id)
                 end
             end
-            return due_jobs
+            return #due_jobs
             """
-            await redis_client.eval(lua_script, 2, "retry_queue", "download_queue", now_ts)
+            moved_count = await redis_client.eval(
+                lua_script, 2, "retry_queue", "download_queue", now_ts
+            )
+            if moved_count and moved_count > 0:
+                logger.info("retry_jobs_moved", moved_count=moved_count)
+
+            # Calculate remaining time for dynamic BRPOP timeout
+            # Don't block longer than grace period remaining
+            grace_remaining = get_grace_period_remaining()
+            if grace_remaining is not None and grace_remaining <= 0:
+                # Grace period expired, exit immediately
+                break
+            effective_timeout = min(brpop_timeout, grace_remaining or brpop_timeout)
+            # Ensure minimum timeout of 1 second to avoid busy-waiting
+            effective_timeout = max(1, int(effective_timeout))
 
             # Use BRPOP with timeout for efficient blocking — no busy-waiting
             # Pass the job_id directly to process_next_job to avoid race condition
-            result = await redis_client.brpop("download_queue", timeout=brpop_timeout)
+            result = await redis_client.brpop("download_queue", timeout=effective_timeout)
             if result:
                 _, job_id_str = result
                 await process_next_job(job_id_str)
             # If BRPOP timed out, no jobs available — continue to cleanup/heartbeat
+        except asyncio.CancelledError:
+            # This can happen if we were cancelled during brpop or job processing
+            logger.info("Worker loop cancelled, exiting...")
+            break
         except Exception as e:
-            logger.error("Error processing job: %s", e)
+            logger.error("job_processing_error", error=str(e))
             await asyncio.sleep(1)
 
         now = datetime.now(UTC)
@@ -168,14 +237,14 @@ async def main() -> None:
                 cleanup_count = await cleanup_expired_jobs()
                 stuck_count = await reset_stuck_jobs(timeout_minutes=10)
                 logger.info(
-                    "Cleanup completed: cleaned up %d expired jobs, reset %d stuck jobs",
-                    cleanup_count,
-                    stuck_count,
+                    "cleanup_cycle_completed",
+                    expired_jobs_cleaned=cleanup_count,
+                    stuck_jobs_reset=stuck_count,
                 )
                 last_cleanup = now
                 update_worker_state(last_cleanup=last_cleanup.isoformat())
             except Exception as e:
-                logger.error("Error during cleanup: %s", e)
+                logger.error("cleanup_error", error=str(e))
 
         heartbeat_counter += 1
         if heartbeat_counter >= heartbeat_interval:
@@ -183,13 +252,34 @@ async def main() -> None:
                 await write_health_async()
                 update_worker_state()
             except Exception as e:
-                logger.warning("Failed to write health: %s", e)
+                logger.warning("health_write_failed", error=str(e))
             heartbeat_counter = 0
 
-    # Shutdown
+        # Check if graceful shutdown was requested and log remaining time
+        if shutdown_event.is_set():
+            grace_remaining = get_grace_period_remaining()
+            logger.info(
+                "Shutdown requested, exiting main loop...",
+                grace_period_seconds_remaining=grace_remaining,
+            )
+            break
+
+    # Graceful shutdown phase
+    # Log final grace period status
+    if shutdown_requested_at is not None:
+        total_shutdown_time = time.monotonic() - shutdown_requested_at
+        logger.info(
+            "Worker shutdown complete",
+            total_shutdown_seconds=total_shutdown_time,
+            grace_period_configured=GRACE_PERIOD_SECONDS,
+        )
+
+    logger.info("Worker shutdown complete, stopping health server...")
+
+    # Shutdown health server
     if health_server:
         stop_health_server()
-    logger.info("Worker stopped gracefully")
+    logger.info("worker_stopped_gracefully")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """Tests for worker processor module."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -16,8 +16,11 @@ class TestProcessNextJob:
     @pytest.fixture
     def mock_redis_client(self):
         """Create a mock Redis client."""
-        mock = MagicMock()
+        mock = AsyncMock()
         mock.rpop = AsyncMock(return_value=None)
+        mock.zadd = AsyncMock(return_value=1)
+        mock.lpush = AsyncMock(return_value=1)
+        mock.brpop = AsyncMock(return_value=None)
         return mock
 
     @pytest.mark.unit
@@ -26,7 +29,6 @@ class TestProcessNextJob:
         from worker.processor import process_next_job
 
         with patch("worker.processor.redis_client", mock_redis_client):
-            # No jobs in queue
             mock_redis_client.rpop = AsyncMock(return_value=None)
 
             # Should return without error
@@ -41,7 +43,6 @@ class TestProcessNextJob:
         from worker.processor import process_next_job
 
         with patch("worker.processor.redis_client", mock_redis_client):
-            # Job exists in queue but not in database
             mock_redis_client.rpop = AsyncMock(return_value="550e8400-e29b-41d4-a716-446655440099")
 
             # Should log warning and return
@@ -52,6 +53,8 @@ class TestProcessNextJob:
     @pytest.mark.unit
     async def test_process_next_job_completes_success(self, db_session, mock_redis_client):
         """Test successful job completion."""
+        import asyncio
+
         from app.database import get_async_session_factory
         from worker.processor import process_next_job
 
@@ -65,12 +68,16 @@ class TestProcessNextJob:
         db_session.add(job)
         await db_session.commit()
 
+        # Mock shutdown_event to ensure it's not set during test
+        mock_shutdown_event = asyncio.Event()
+
         with (
             patch("worker.processor.redis_client", mock_redis_client),
             patch(
-                "worker.processor.extract_media_url",
+                "worker.processor.extract_media_with_circuit_breaker",
                 new_callable=AsyncMock,
             ) as mock_extract,
+            patch("worker.main.shutdown_event", mock_shutdown_event),
         ):
             mock_extract.return_value = ("/storage/test.mp4", "test.mp4")
             mock_redis_client.rpop = AsyncMock(return_value="550e8400-e29b-41d4-a716-446655440000")

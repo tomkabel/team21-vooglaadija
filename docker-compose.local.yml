@@ -1,0 +1,55 @@
+# ============================================
+# Local Development Override
+# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#
+# This file overrides ports for local rootless environments
+# where privileged ports (80, 443) cannot be bound.
+# ============================================
+
+services:
+  # ==========================================
+  # Nginx - Local Testing with Non-Privileged Ports
+  # ==========================================
+  nginx:
+    ports:
+      - "8080:80"
+      - "8443:443"
+    # Increase start period for local environments
+    healthcheck:
+      test:
+        ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
+      start_period: 15s
+
+  # ==========================================
+  # PostgreSQL - Local Debugging Port
+  # ==========================================
+  db:
+    ports:
+      - "5432:5432"
+
+  # ==========================================
+  # Redis - Local Debugging Port
+  # ==========================================
+  redis:
+    ports:
+      - "6379:6379"
+
+  # ==========================================
+  # Swagger UI - Local accessible port
+  # ==========================================
+  swagger-ui:
+    profiles: []
+    restart: "no"
+    ports:
+      - "8081:8080"
+
+  # ==========================================
+  # Enable otel-collector locally
+  # ==========================================
+  otel-collector:
+    profiles: []
+    restart: "no"
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8888:8888"

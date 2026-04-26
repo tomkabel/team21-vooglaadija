@@ -19,7 +19,7 @@ JOBS_COMPLETED = Counter(
 JOB_DURATION_SECONDS = Histogram(
     "ytprocessor_job_duration_seconds",
     "Time spent processing a job",
-    buckets=[1, 5, 10, 30, 60, 120, 300, 600],
+    buckets=[10, 30, 60, 120, 300, 600],
 )
 
 QUEUE_DEPTH = Gauge(

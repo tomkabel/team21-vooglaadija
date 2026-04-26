@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import verify_token
 from app.database import get_db
-from app.models.user import User
+from app.models.user import User, not_deleted
 
 security = HTTPBearer(auto_error=False)  # auto_error=False allows None
 
@@ -57,7 +57,7 @@ async def get_current_user_from_cookie(
     except (ValueError, TypeError):
         raise credentials_exception from None
 
-    result = await db.execute(select(User).where(User.id == user_uuid))
+    result = await db.execute(select(User).where(User.id == user_uuid, not_deleted()))
     user = result.scalar_one_or_none()
 
     if user is None:
@@ -105,7 +105,7 @@ async def get_current_user(
     except (ValueError, TypeError):
         raise credentials_exception from None
 
-    result = await db.execute(select(User).where(User.id == user_uuid))
+    result = await db.execute(select(User).where(User.id == user_uuid, not_deleted()))
     user = result.scalar_one_or_none()
 
     if user is None:

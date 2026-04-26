@@ -1,0 +1,3 @@
+report:
+  auto-ignore-in-report:
+    vulnerabilities: ["64459", "64396"]

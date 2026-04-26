@@ -1,16 +1,37 @@
-import logging
+"""FastAPI application entry point with structured logging and performance optimizations.
+
+Features:
+- structlog for structured JSON logging in production
+- orjson for fast JSON serialization
+- uvloop for improved async performance
+- Sentry for error tracking (production only)
+"""
+
 import os
+import signal
+import threading
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, ORJSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+# Optional: uvloop for better async performance (installed separately)
+try:
+    import uvloop
+
+    uvloop.install()
+    UVLOOP_AVAILABLE = True
+except ImportError:
+    UVLOOP_AVAILABLE = False
 
 from app.api.middleware import PrometheusMiddleware
 from app.api.rate_limit_config import limiter, rate_limit_exceeded_handler
@@ -20,21 +41,156 @@ from app.api.routes.sse import router as sse_router
 from app.api.routes.web import router as web_router
 from app.auth import verify_token
 from app.config import settings
-from app.logging_config import setup_logging
+from app.logging_config import configure_logging, get_logger
 from app.metrics import init_metrics
 from app.schemas.error import ErrorCode, error_response_dict
 
-logger = logging.getLogger(__name__)
+# Initialize structlog - must happen before any logging
+configure_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
+logger = get_logger(__name__)
+
+APP_VERSION = "0.1.0"
+
+
+class _ShutdownState:
+    """Thread-safe shutdown state tracker."""
+
+    def __init__(self) -> None:
+        self._received: int = 0
+        self._lock = threading.Lock()
+
+    @property
+    def received(self) -> int:
+        with self._lock:
+            return self._received
+
+    def set(self, signum: int) -> None:
+        with self._lock:
+            self._received = signum
+
+
+_shutdown_state = _ShutdownState()
+
+
+def _sigterm_handler(signum: int, frame: Any) -> None:
+    """Handle SIGTERM/SIGINT for shutdown diagnostics."""
+    _shutdown_state.set(signum)
+    signal_name = signal.Signals(signum).name if hasattr(signal, "Signals") else str(signum)
+    logger.warning(
+        "shutdown_signal_received",
+        signal=signal_name,
+        signal_number=signum,
+    )
+
+
+def _install_shutdown_diagnostics() -> None:
+    """Install shutdown signal handlers safely from main thread.
+
+    This function should be called from inside the lifespan() startup routine
+    after Uvicorn has installed its handlers. It handles:
+    - Only registering from the main thread to avoid ValueError
+    - Chaining to any existing handlers instead of replacing them
+    """
+
+    def _chained_sigterm_handler(signum: int, frame: Any) -> None:
+        """Handler that calls previous handler and our diagnostics."""
+        _shutdown_state.set(signum)
+        signal_name = signal.Signals(signum).name if hasattr(signal, "Signals") else str(signum)
+        logger.warning(
+            "shutdown_signal_received",
+            signal=signal_name,
+            signal_number=signum,
+        )
+        prev_handler = prev_term_handler if signum == signal.SIGTERM else prev_int_handler
+        if callable(prev_handler) and prev_handler is not _chained_sigterm_handler:
+            try:
+                prev_handler(signum, frame)
+            except Exception:
+                pass
+
+    try:
+        # Only install from main thread to avoid ValueError
+        if threading.current_thread() is threading.main_thread():
+            # Get current handler to potentially chain to it
+            current_handler = signal.getsignal(signal.SIGTERM)
+            # Only install if not already our chained handler
+            if current_handler is not _chained_sigterm_handler:
+                prev_term_handler = signal.signal(signal.SIGTERM, _chained_sigterm_handler)
+            else:
+                prev_term_handler = current_handler
+            # Also register SIGINT
+            current_int_handler = signal.getsignal(signal.SIGINT)
+            if current_int_handler is not _chained_sigterm_handler:
+                prev_int_handler = signal.signal(signal.SIGINT, _chained_sigterm_handler)
+            else:
+                prev_int_handler = current_int_handler
+            logger.info("shutdown_diagnostics_installed")
+    except ValueError:
+        # Not running in main thread, skip signal handler installation
+        logger.warning("shutdown_diagnostics_skipped_not_main_thread")
+
+
+# Sentry initialization (production only)
+if settings.environment == "production" and os.environ.get("SENTRY_DSN"):
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.redis import RedisIntegration
+    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
+    sentry_sdk.init(
+        dsn=os.environ["SENTRY_DSN"],
+        integrations=[
+            FastApiIntegration(transaction_style="endpoint"),
+            SqlalchemyIntegration(),
+            RedisIntegration(),
+        ],
+        traces_sample_rate=0.1,  # 10% of transactions for performance monitoring
+        profiles_sample_rate=0.1,
+        environment=settings.environment,
+        release=f"vooglaadija@{APP_VERSION}",
+    )
+    logger.info("sentry_initialized", dsn_masked="***")
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI, *args, **kwargs):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifespan context manager for startup/shutdown events."""
-    setup_logging(log_level=os.environ.get("LOG_LEVEL", "INFO"))
+    logger.info(
+        "application_starting",
+        version=APP_VERSION,
+        environment=settings.environment,
+        uvloop_available=UVLOOP_AVAILABLE,
+    )
     init_metrics()
-    logger.info("Starting YouTube Link Processor API")
+
+    # Validate critical assets exist at startup to fail fast with clear errors
+    _template_dir = Path(__file__).resolve().parent / "templates"
+    _static_dir = Path(__file__).resolve().parent / "static"
+    if not _template_dir.exists():
+        logger.error("templates_directory_missing", path=str(_template_dir))
+    else:
+        required_templates = ["base.html", "login.html", "register.html", "dashboard.html"]
+        missing = [t for t in required_templates if not (_template_dir / t).exists()]
+        if missing:
+            logger.error("missing_templates", templates=missing, path=str(_template_dir))
+        else:
+            logger.info(
+                "templates_verified", count=len(required_templates), path=str(_template_dir)
+            )
+    if not _static_dir.exists():
+        logger.error("static_directory_missing", path=str(_static_dir))
+    else:
+        logger.info("static_directory_verified", path=str(_static_dir))
+
+    # Install shutdown diagnostics after Uvicorn handlers are in place
+    # This must happen after uvicorn imports the module but before handling requests
+    _install_shutdown_diagnostics()
+
     yield
-    logger.info("Shutting down YouTube Link Processor API")
+    logger.info(
+        "application_shutting_down",
+        shutdown_signal=_shutdown_state.received,
+    )
 
 
 app = FastAPI(
@@ -44,7 +200,9 @@ app = FastAPI(
         "REST API for user authentication, creating download jobs, tracking job status, "
         "and retrieving processed files. Authentication uses bearer JWT access tokens."
     ),
-    version="0.1.0",
+    version=APP_VERSION,
+    # Use ORJSONResponse for faster JSON serialization
+    default_response_class=ORJSONResponse,
     contact={
         "name": "Team 21",
         "url": "https://github.com/tomkabel/team21-vooglaadija",
@@ -77,7 +235,7 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # Security headers middleware (CSP and other best practices)
 @app.middleware("http")
-async def add_security_headers(request: Request, call_next):
+async def add_security_headers(request: Request, call_next: Any) -> Any:
     """Add Content-Security-Policy and other security headers to all responses."""
     # Generate a secure nonce for inline script tags
     nonce = uuid.uuid4().hex
@@ -99,7 +257,6 @@ async def add_security_headers(request: Request, call_next):
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
 
@@ -108,7 +265,7 @@ async def add_security_headers(request: Request, call_next):
 
 # Request ID middleware for debugging
 @app.middleware("http")
-async def add_request_id(request: Request, call_next):
+async def add_request_id(request: Request, call_next: Any) -> Any:
     """Add a unique request ID to each request for debugging."""
     request_id = str(uuid.uuid4())
     request.state.request_id = request_id
@@ -135,8 +292,11 @@ app.mount(
 
 # Global exception handlers
 @app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     """Handle HTTP exceptions with standardized error response."""
+    # Get request_id if available
+    request_id = getattr(request.state, "request_id", "unknown")
+
     # Map status codes to error codes
     error_code_map = {
         400: ErrorCode.VALIDATION_ERROR,
@@ -159,6 +319,14 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         ErrorCode.VALIDATION_ERROR if 400 <= exc.status_code < 500 else ErrorCode.INTERNAL_ERROR,
     )
 
+    logger.warning(
+        "http_exception",
+        status_code=exc.status_code,
+        error_code=code.value,
+        detail=str(exc.detail),
+        request_id=request_id,
+    )
+
     return JSONResponse(
         status_code=exc.status_code,
         content=error_response_dict(code, str(exc.detail)),
@@ -167,8 +335,12 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
     """Handle validation errors with standardized error response."""
+    request_id = getattr(request.state, "request_id", "unknown")
+
     # Extract validation errors details
     errors = []
     for error in exc.errors():
@@ -179,6 +351,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 "type": error["type"],
             },
         )
+
+    logger.warning(
+        "validation_error",
+        error_count=len(errors),
+        request_id=request_id,
+    )
 
     return JSONResponse(
         status_code=422,
@@ -191,11 +369,18 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 @app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
+async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle unexpected exceptions with standardized error response."""
     request_id = getattr(request.state, "request_id", "unknown")
-    logger.error(f"Unhandled exception [{request_id}]: {exc}", exc_info=True)
+    logger.error(
+        "unhandled_exception",
+        exception_type=type(exc).__name__,
+        exception_message=str(exc),
+        request_id=request_id,
+        exc_info=True,
+    )
 
+    # Sentry will automatically capture the exception if configured
     return JSONResponse(
         status_code=500,
         content=error_response_dict(ErrorCode.INTERNAL_ERROR, "An internal error occurred"),
@@ -205,7 +390,7 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(downloads.router, prefix="/api/v1")
-app.include_router(health.router, prefix="/api/v1")
+app.include_router(health.router)
 app.include_router(metrics_router)
 
 # Web/HTMX routes - SSE mounted FIRST so /web/downloads/stream is matched before /web/downloads
@@ -215,7 +400,7 @@ app.include_router(web_router)  # prefix="/web", routes: /web/login, /web/downlo
 
 
 @app.get("/")
-async def root(request: Request):
+async def root(request: Request) -> RedirectResponse:
     """Redirect root to login or dashboard based on auth status."""
     # Check if user has a valid token in cookies
     token = request.cookies.get("access_token")

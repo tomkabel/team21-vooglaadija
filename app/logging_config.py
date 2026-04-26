@@ -1,131 +1,195 @@
-"""Structured JSON logging configuration for production."""
+"""Structured logging configuration using structlog.
 
-import json
+This module provides structured logging for the Vooglaadija application.
+In production, logs are JSON formatted for log aggregation systems.
+In development, logs are human-readable with colors.
+
+Usage:
+    from app.logging_config import get_logger
+
+    logger = get_logger(__name__)
+    logger.info("user_login", user_id=123)  # Structured with context
+
+    # With bound context
+    logger = get_logger(__name__, request_id="abc")
+    logger.info("processing_request")  # Automatically includes request_id
+"""
+
 import logging
-import os
 import sys
-from datetime import UTC, datetime
-from typing import Any
+from collections.abc import MutableMapping
+from datetime import UTC
+from typing import TYPE_CHECKING, Any
+
+import structlog
+from structlog.types import Processor
+
+if TYPE_CHECKING:
+    from structlog.stdlib import BoundLogger
 
 
-class JSONFormatter(logging.Formatter):
-    """JSON formatter for structured logging.
+def add_timestamp(
+    logger: Any,
+    method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
+    """Add ISO timestamp to all log entries."""
+    from datetime import datetime
 
-    Formats log records as JSON with consistent fields for log aggregation.
+    event_dict["timestamp"] = datetime.now(UTC).isoformat()
+    return event_dict
+
+
+def add_service_context(
+    logger: Any,
+    method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
+    """Add service context to all log entries."""
+    event_dict["service"] = "vooglaadija"
+    # Try to get environment from settings, fall back to env var
+    try:
+        from app.config import settings
+
+        event_dict["environment"] = (
+            settings.environment if hasattr(settings, "environment") else "unknown"
+        )
+    except Exception:
+        import os
+
+        event_dict["environment"] = os.environ.get("ENVIRONMENT", "development")
+    return event_dict
+
+
+def rename_event_key(
+    logger: Any,
+    method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
+    """Rename 'event' key to 'message' for standard log aggregation compatibility.
+
+    structlog uses 'event' as the default key for log messages.
+    This processor renames it to 'message' for compatibility with most
+    log aggregation systems (ELK, Datadog, etc.)
     """
-
-    def __init__(self, include_extra: bool = True):
-        super().__init__()
-        self.include_extra = include_extra
-
-    def format(self, record: logging.LogRecord) -> str:
-        log_data: dict[str, Any] = {
-            "timestamp": datetime.now(UTC).isoformat(),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-            "module": record.module,
-            "function": record.funcName,
-            "line": record.lineno,
-        }
-
-        if record.exc_info:
-            log_data["exception"] = self.formatException(record.exc_info)
-
-        if self.include_extra:
-            extra_fields = {
-                k: v
-                for k, v in record.__dict__.items()
-                if k
-                not in (
-                    "name",
-                    "msg",
-                    "args",
-                    "created",
-                    "filename",
-                    "funcName",
-                    "levelname",
-                    "levelno",
-                    "lineno",
-                    "module",
-                    "msecs",
-                    "pathname",
-                    "process",
-                    "processName",
-                    "relativeCreated",
-                    "stack_info",
-                    "exc_info",
-                    "exc_text",
-                    "thread",
-                    "threadName",
-                    "message",
-                    "taskName",
-                    "asctime",
-                )
-            }
-            if extra_fields:
-                log_data["extra"] = extra_fields
-
-        return json.dumps(log_data, default=str)
+    if "event" in event_dict:
+        event_dict["message"] = event_dict.pop("event")
+    return event_dict
 
 
-class ContextLoggerAdapter(logging.LoggerAdapter):
-    """Logger adapter that includes context in every log message."""
+def configure_logging(log_level: str = "INFO") -> None:
+    """Configure structlog for the application.
 
-    def process(self, msg, kwargs):
-        # Merge: adapter defaults as base, then overlay per-call extra
-        # so per-call keys take precedence over adapter defaults
-        extra: dict[str, object] = {}
-        # Start with adapter defaults (type: ignore because LSP doesn't know self.extra is a dict)
-        for k, v in self.extra.items():
-            extra[k] = v
-        # Overlay per-call extra
-        per_call_extra = kwargs.get("extra")
-        if per_call_extra:
-            extra.update(per_call_extra)
-        kwargs["extra"] = extra
-        return msg, kwargs
+    Production: JSON structured logs for log aggregation
+    Development: Human-readable colored output
 
-
-def setup_logging(log_level: str = "INFO") -> None:
-    """Configure structured JSON logging.
-
-    For production, all logs are JSON formatted for log aggregation systems.
-    For development, use a human-readable format.
+    Args:
+        log_level: Minimum log level to output (default: INFO)
     """
+    import os
+
     is_production = os.environ.get("ENVIRONMENT", "development") == "production"
 
-    root_logger = logging.getLogger()
-    log_level_value = getattr(logging, log_level.upper(), logging.INFO)
-    root_logger.setLevel(log_level_value)
-
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(log_level_value)
+    # Shared processors for all environments
+    shared_processors: list[Processor] = [
+        # Merge context variables from structlog context managers
+        structlog.contextvars.merge_contextvars,
+        # Add log level
+        structlog.stdlib.add_log_level,
+        # Add logger name
+        structlog.stdlib.add_logger_name,
+        # Handle positional arguments in log calls
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        # Add stack info for debugging
+        structlog.processors.StackInfoRenderer(),
+        # Decode bytes to strings
+        structlog.processors.UnicodeDecoder(),
+        # Add timestamp
+        add_timestamp,
+        # Add service context
+        add_service_context,
+        # Rename 'event' to 'message' for standard compatibility
+        rename_event_key,
+    ]
 
     if is_production:
-        console_handler.setFormatter(JSONFormatter())
-    else:
-        formatter = logging.Formatter(
-            "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        # Production: JSON output with exception formatting
+        shared_processors.append(structlog.processors.format_exc_info)
+
+        structlog.configure(
+            processors=[
+                *shared_processors,
+                # Final renderer - JSON output
+                structlog.processors.JSONRenderer(),
+            ],
+            wrapper_class=structlog.stdlib.BoundLogger,
+            context_class=dict,
+            logger_factory=structlog.stdlib.LoggerFactory(),
+            cache_logger_on_first_use=True,
         )
-        console_handler.setFormatter(formatter)
+    else:
+        # Development: Pretty console output with colors
+        # Create a fresh processors list to avoid duplicates if configure_logging is called multiple times
+        dev_processors: list[Processor] = [
+            *shared_processors,
+            structlog.dev.ConsoleRenderer(
+                colors=True,
+                exception_formatter=structlog.dev.plain_traceback,
+            ),
+        ]
 
-    # Close and clear existing handlers to prevent resource leaks
-    for handler in list(root_logger.handlers):
-        handler.close()
-    root_logger.handlers.clear()
-    root_logger.addHandler(console_handler)
+        structlog.configure(
+            processors=dev_processors,
+            wrapper_class=structlog.stdlib.BoundLogger,
+            context_class=dict,
+            logger_factory=structlog.stdlib.LoggerFactory(),
+            cache_logger_on_first_use=False,
+        )
 
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    # Configure standard library logging
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    logging.basicConfig(
+        format="%(message)s",
+        stream=sys.stdout,
+        level=getattr(logging, log_level.upper(), logging.INFO),
+        force=True,
+    )
+
+    # Suppress noisy third-party loggers
+    for logger_name in ["uvicorn.access", "httpx", "httpcore", "aiohttp", "urllib3"]:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
-def get_logger(name: str, **context) -> ContextLoggerAdapter:
-    """Get a logger with optional context.
+def get_logger(name: str | None = None, **kwargs: Any) -> "BoundLogger":
+    """Get a structured logger instance.
 
-    Usage:
-        logger = get_logger(__name__, user_id="123")
-        logger.info("User did something")  # Logs {"user_id": "123", ...}
+    Args:
+        name: Logger name (typically __name__ for the module)
+        **kwargs: Additional context to bind to all log messages
+
+    Returns:
+        Configured structlog BoundLogger
+
+    Example:
+        logger = get_logger(__name__)
+        logger.info("user_action", action="login", user_id=123)
+
+        # With bound context
+        logger = get_logger(__name__, request_id="abc-123")
+        logger.info("processing")  # All logs include request_id
+
+        # Context manager for temporary context
+        from structlog.contextvars import bind_contextvars
+        with bind_contextvars(user_id=123, request_id="abc"):
+            logger.info("within_context")  # Includes both user_id and request_id
     """
-    logger = logging.getLogger(name)
-    return ContextLoggerAdapter(logger, context)
+    logger = structlog.get_logger(name)
+    if kwargs:
+        bound_logger = logger.bind(**kwargs)
+        return bound_logger  # type: ignore[no-any-return]
+    return logger  # type: ignore[no-any-return]
+
+
+# Backward compatibility alias for type hints
+LoggerAdapter = structlog.stdlib.BoundLogger

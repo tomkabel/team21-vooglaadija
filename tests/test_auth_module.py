@@ -1,10 +1,18 @@
 """Tests for JWT token creation and verification."""
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock
 
 from jose import jwt
 
-from app.auth import ALGORITHM, create_access_token, create_refresh_token, verify_token
+from app.auth import (
+    ALGORITHM,
+    clear_token_cookies,
+    create_access_token,
+    create_refresh_token,
+    set_token_cookies,
+    verify_token,
+)
 from app.config import settings
 
 
@@ -65,3 +73,78 @@ class TestVerifyToken:
             algorithm=ALGORITHM,
         )
         assert verify_token(token) is None
+
+
+class TestSetTokenCookies:
+    """Tests for set_token_cookies function."""
+
+    def test_set_token_cookies_sets_access_token(self):
+        """Test that set_token_cookies sets the access token cookie."""
+        response = MagicMock()
+        access_token = create_access_token("user-123")
+        refresh_token = create_refresh_token("user-123")
+
+        set_token_cookies(response, access_token, refresh_token)
+
+        access_token_call = None
+        for call in response.set_cookie.call_args_list:
+            if call.kwargs.get("key") == "access_token":
+                access_token_call = call
+                break
+
+        assert access_token_call is not None
+        assert access_token_call.kwargs["value"] == access_token
+        assert access_token_call.kwargs["httponly"] is True
+        assert access_token_call.kwargs["samesite"] == "lax"
+        assert "max_age" in access_token_call.kwargs
+
+    def test_set_token_cookies_sets_refresh_token(self):
+        """Test that set_token_cookies sets the refresh token cookie."""
+        response = MagicMock()
+        access_token = create_access_token("user-123")
+        refresh_token = create_refresh_token("user-123")
+
+        set_token_cookies(response, access_token, refresh_token)
+
+        refresh_token_call = None
+        for call in response.set_cookie.call_args_list:
+            if call.kwargs.get("key") == "refresh_token":
+                refresh_token_call = call
+                break
+
+        assert refresh_token_call is not None
+        assert refresh_token_call.kwargs["value"] == refresh_token
+        assert refresh_token_call.kwargs["httponly"] is True
+        assert "max_age" in refresh_token_call.kwargs
+
+
+class TestClearTokenCookies:
+    """Tests for clear_token_cookies function."""
+
+    def test_clear_token_cookies_deletes_access_token(self):
+        """Test that clear_token_cookies deletes the access token cookie."""
+        response = MagicMock()
+
+        clear_token_cookies(response)
+
+        delete_call = None
+        for call in response.delete_cookie.call_args_list:
+            if call.kwargs.get("key") == "access_token":
+                delete_call = call
+                break
+
+        assert delete_call is not None
+
+    def test_clear_token_cookies_deletes_refresh_token(self):
+        """Test that clear_token_cookies deletes the refresh token cookie."""
+        response = MagicMock()
+
+        clear_token_cookies(response)
+
+        delete_call = None
+        for call in response.delete_cookie.call_args_list:
+            if call.kwargs.get("key") == "refresh_token":
+                delete_call = call
+                break
+
+        assert delete_call is not None

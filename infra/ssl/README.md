@@ -1,100 +1,176 @@
-# SSL Certificates
+# SSL Certificates for Vooglaadija
 
-## Security Warning
+## Overview
 
-**Never commit private keys to the repository!** The `privkey.pem` file (and all `*.pem` files) should be added to `.gitignore` and loaded from an external secrets path.
+This directory contains SSL certificates for HTTPS serving via nginx.
 
-### .gitignore
+**Critical**: nginx configuration expects specific file names. Do NOT rename files arbitrarily.
 
-Add the following to your `.gitignore` file to prevent accidental commits of private keys:
+---
+
+## Expected Files
+
+nginx reads these files directly:
+
+| File            | Purpose                               | Permissions      |
+| --------------- | ------------------------------------- | ---------------- |
+| `fullchain.pem` | Server certificate + intermediate CAs | 644 (readable)   |
+| `privkey.pem`   | Private key                           | 600 (owner only) |
+
+For compatibility with various tools, symlinks are provided:
+
+| Symlink    | Target          | Purpose            |
+| ---------- | --------------- | ------------------ |
+| `cert.pem` | `fullchain.pem` | Alternative naming |
+| `key.pem`  | `privkey.pem`   | Alternative naming |
+
+---
+
+## Obtaining Certificates
+
+### Option 1: Let's Encrypt (Recommended)
+
+On the VPS, run:
+
+```bash
+sudo certbot certonly --webroot -w /var/www/certbot -d youtube.tomabel.ee
+
+# Copy to this directory:
+sudo cp /etc/letsencrypt/live/youtube.tomabel.ee/fullchain.pem ./
+sudo cp /etc/letsencrypt/live/youtube.tomabel.ee/privkey.pem ./
+
+# Create compatibility symlinks:
+ln -sf fullchain.pem cert.pem
+ln -sf privkey.pem key.pem
+
+# Set permissions:
+sudo chmod 644 fullchain.pem cert.pem
+sudo chmod 600 privkey.pem key.pem
+```
+
+### Option 2: Existing Certificates
+
+If you have certificates from another source:
+
+1. Copy `fullchain.pem` (or `cert.pem`) to this directory
+2. Copy `privkey.pem` (or `key.pem`) to this directory
+3. Ensure proper permissions
+
+### Option 3: Pre-provision Locally
+
+Copy certificates from a local machine to the VPS:
+
+```bash
+# Local machine
+scp user@vps:/etc/letsencrypt/live/youtube.tomabel.ee/*.pem ./infra/ssl/
+
+# Or use the deploy.sh script (Phase 4) which handles this automatically
+```
+
+---
+
+## Let's Encrypt File Structure
+
+Let's Encrypt creates these files in `/etc/letsencrypt/live/youtube.tomabel.ee/`:
+
+```
+/etc/letsencrypt/live/youtube.tomabel.ee/
+├── fullchain.pem   ← Use this as fullchain.pem
+├── privkey.pem     ← Use this as privkey.pem
+├── chain.pem      (intermediate CA)
+└── cert.pem       (server certificate only - NOT the same as fullchain)
+```
+
+**Important**: `cert.pem` contains ONLY the server certificate, NOT the full chain.
+nginx needs `fullchain.pem` (server + intermediates) for proper TLS.
+
+---
+
+## Security Warnings
+
+### NEVER commit private keys
+
+The `.gitignore` file excludes all `*.pem` and `*.key` files:
 
 ```gitignore
 # SSL Certificates - Never commit private keys
 *.pem
 privkey.pem
+key.pem
 ```
 
-### External Secrets (Recommended)
+### File Permissions
 
-For production deployments, load certificates from external secrets management:
-
-```bash
-# Mount from external secrets path (Docker example)
-# In docker-compose.yml:
-# volumes:
-#   - /path/to/external/secrets/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro
-#   - /path/to/external/secrets/privkey.pem:/etc/nginx/ssl/privkey.pem:ro
-
-# Or using environment-specific configuration
-export SSL_CERT_PATH=/run/secrets/fullchain.pem
-export SSL_KEY_PATH=/run/secrets/privkey.pem
-```
-
-## Directory Contents (When Deployed)
-
-This directory should contain (when deployed, not in repo):
-
-- `fullchain.pem` - Full certificate chain
-- `privkey.pem` - Private key (loaded from external secrets, not committed)
-
-## Getting Certificates
-
-### Option 1: Let's Encrypt (Recommended)
+Always set restrictive permissions:
 
 ```bash
-certbot certonly --webroot -w /var/www/certbot -d yourdomain.com
-# Certs will be in /etc/letsencrypt/live/yourdomain.com/
-```
-
-### Option 2: Self-signed (Development only)
-
-```bash
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout privkey.pem -out fullchain.pem \
-  -subj "/CN=localhost"
-```
-
-**Note:** Even for development, do not commit the generated `.pem` files. They will be ignored by `.gitignore`.
-
-### Option 3: Commercial certificate
-
-Purchase from a CA and place files here (for local use only - do not commit).
-
-## Docker Production Deployment
-
-```bash
-# Copy certificates to this directory for local testing only
-# For production, mount from external secrets:
-docker-compose -f docker-compose.yml -f docker-compose.production.yml up -d
+chmod 644 fullchain.pem cert.pem   # Readable by nginx
+chmod 600 privkey.pem key.pem       # Owner read/write only
 ```
 
 ### Production Best Practices
 
-1. **Use Docker Secrets or Kubernetes Secrets** for certificate storage
+1. **Use Docker Secrets** or Kubernetes Secrets for certificate storage in production
 2. **Mount certificates as read-only volumes** (`:ro`)
-3. **Set restrictive file permissions** (`chmod 600 privkey.pem`)
-4. **Rotate certificates regularly** (automate with certbot or similar)
-5. **Never commit certificates to version control**
+3. **Rotate certificates regularly** - Let's Encrypt certs expire every 90 days
+4. **Enable auto-renewal** - The `certbot` container handles this
+5. **Backup certificates** - Store a copy in a secure location
 
-### Example: Docker Compose with External Secrets
+---
+
+## Docker Integration
+
+The `docker-compose.production.yml` mounts this directory:
 
 ```yaml
-version: '3.8'
-services:
-  nginx:
-    image: nginx:alpine
-    volumes:
-      # Mount from external secrets path, read-only
-      - /etc/letsencrypt/live/yourdomain.com/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro
-      - /etc/letsencrypt/live/yourdomain.com/privkey.pem:/etc/nginx/ssl/privkey.pem:ro
-    # Or use Docker secrets
-    secrets:
-      - ssl_cert
-      - ssl_key
+nginx:
+  volumes:
+    - ./infra/ssl:/etc/nginx/ssl:ro
+```
 
-secrets:
-  ssl_cert:
-    external: true
-  ssl_key:
-    external: true
+nginx reads `fullchain.pem` and `privkey.pem` from this mount point.
+
+---
+
+## Verification
+
+Check certificate is valid:
+
+```bash
+# View certificate details
+openssl x509 -in fullchain.pem -noout -subject -issuer -dates
+
+# Test nginx config
+nginx -t
+
+# Verify HTTPS is working
+curl -I https://youtube.tomabel.ee
+```
+
+---
+
+## Troubleshooting
+
+### "SSL certificate not found" errors
+
+1. Verify files exist: `ls -la infra/ssl/`
+2. Check permissions: `ls -la infra/ssl/*.pem`
+3. Ensure symlinks are valid: `ls -la infra/ssl/ | grep pem`
+
+### Certificate expired
+
+Re-run certbot to renew:
+
+```bash
+sudo certbot renew
+# Or use deploy.sh phase 4
+```
+
+### Wrong certificate being served
+
+Check that nginx is using the correct config:
+
+```bash
+docker compose logs nginx
+openssl s_client -connect youtube.tomabel.ee:443 -servername youtube.tomabel.ee
 ```

@@ -50,6 +50,9 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-staging
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+          build-args: GIT_SHA=${{ github.sha }}
 
       - name: Build and push Worker Docker image
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c038f3e463c
@@ -64,3 +67,6 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-worker:${{ steps.version.outputs.version }}-staging
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+          build-args: GIT_SHA=${{ github.sha }}

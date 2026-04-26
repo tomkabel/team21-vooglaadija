@@ -5,10 +5,13 @@ services:
       POSTGRES_DB: test_db
       POSTGRES_USER: test_user
       POSTGRES_PASSWORD: test_pass
-    ports:
-      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test_user -d test_db"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - ytprocessor-network
+
+networks:
+  ytprocessor-network:

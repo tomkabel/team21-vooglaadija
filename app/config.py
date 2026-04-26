@@ -30,6 +30,9 @@ def _estimate_entropy(text: str) -> float:
 
 
 class Settings(BaseSettings):
+    # Application mode - used for structlog, sentry, etc.
+    environment: str = "development"
+
     database_url: str = ""
     secret_key: str = ""
     redis_url: str = ""

@@ -1,4 +1,3 @@
-import asyncio
 import os
 
 # CRITICAL: Set environment variables BEFORE any other imports
@@ -16,7 +15,7 @@ import app.config  # noqa: E402
 
 app.config.settings.database_url = _test_db_url
 
-from collections.abc import AsyncGenerator, Generator  # noqa: E402
+from collections.abc import AsyncGenerator  # noqa: E402
 
 import pytest  # noqa: E402
 from sqlalchemy.ext.asyncio import (  # noqa: E402
@@ -45,13 +44,6 @@ test_engine = create_async_engine(
 TestingSessionLocal = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 
 
-@pytest.fixture(scope="session")
-def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
-
 # Set up dependency override at session scope - applies to all tests
 def override_get_db():
     async def inner():
@@ -63,6 +55,13 @@ def override_get_db():
 
 # Set the overrides on the FastAPI app instance
 fastapi_app.dependency_overrides[get_db] = override_get_db()
+
+
+@pytest.fixture(scope="session", autouse=True)
+async def _session_cleanup() -> AsyncGenerator[None, None]:
+    """Dispose the test engine after all tests in the worker finish."""
+    yield
+    await test_engine.dispose()
 
 
 @pytest.fixture(scope="function", autouse=True)
