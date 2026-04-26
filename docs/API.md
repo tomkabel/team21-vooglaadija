@@ -10,7 +10,7 @@ Authorization: Bearer <access_token>
 
 Web UI routes use cookie-based authentication (access token stored in an `httpOnly` cookie).
 
-The `/health`, `/health/ready`, and `/metrics` endpoints do not require JWT authentication. `/metrics` may be IP-restricted in production deployments.
+The `/api/v1/health`, `/api/v1/health/ready`, and `/metrics` endpoints do not require JWT authentication. `/metrics` may be IP-restricted in production deployments.
 
 ---
 
@@ -121,6 +121,7 @@ Obtain a new access token using the refresh token (sent via cookie).
 ```json
 {
   "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "token_type": "bearer"
 }
 ```
@@ -140,7 +141,7 @@ Clear auth cookies and redirect.
 
 ### User
 
-#### `GET /api/v1/me`
+#### `GET /api/v1/auth/me`
 
 Get the current authenticated user profile.
 
@@ -153,9 +154,7 @@ Get the current authenticated user profile.
 ```json
 {
   "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "email": "user@example.com",
-  "username": "optional_username",
-  "created_at": "2024-01-15T10:30:00Z"
+  "email": "user@example.com"
 }
 ```
 
@@ -170,7 +169,7 @@ Create a new download job.
 | | |
 |---|---|
 | **Auth** | Bearer JWT |
-| **Status Codes** | `201 Created`, `422 Validation Error`, `429 Rate Limited` |
+| **Status Codes** | `201 Created`, `401 Unauthorized`, `422 Validation Error` |
 
 **Request body:**
 ```json
@@ -226,13 +225,19 @@ List the authenticated user's download jobs.
 **Response (`200`):**
 ```json
 {
-  "data": [
+  "downloads": [
     {
       "id": "550e8400-e29b-41d4-a716-446655440000",
-      "status": "completed",
       "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+      "status": "completed",
+      "file_name": "video.mp4",
+      "error": null,
+      "retry_count": 0,
+      "max_retries": 3,
+      "next_retry_at": null,
       "created_at": "2024-01-15T10:30:00Z",
-      "completed_at": "2024-01-15T10:32:00Z"
+      "completed_at": "2024-01-15T10:32:00Z",
+      "expires_at": "2024-01-16T10:32:00Z"
     }
   ],
   "pagination": {
@@ -293,8 +298,16 @@ Retry a failed job.
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
+  "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
   "status": "pending",
-  "message": "Job queued for retry"
+  "file_name": null,
+  "error": null,
+  "retry_count": 1,
+  "max_retries": 3,
+  "next_retry_at": "2024-01-15T10:35:00Z",
+  "created_at": "2024-01-15T10:30:00Z",
+  "completed_at": null,
+  "expires_at": null
 }
 ```
 
@@ -313,7 +326,7 @@ Delete a download job and its associated file.
 
 ### Health & Metrics
 
-#### `GET /health`
+#### `GET /api/v1/health`
 
 Service health check. Returns `200` when the API process is running.
 
@@ -325,13 +338,13 @@ Service health check. Returns `200` when the API process is running.
 **Response (`200`):**
 ```json
 {
-  "status": "healthy"
+  "status": "ok"
 }
 ```
 
 ---
 
-#### `GET /health/ready`
+#### `GET /api/v1/health/ready`
 
 Readiness probe. Returns `200` when dependencies (database, Redis) are reachable; `503` otherwise.
 

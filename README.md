@@ -25,7 +25,7 @@ Async video media extraction API with job queue and real-time status streaming.
 
 **Built by** [![GitHub](https://img.shields.io/badge/@tomkabel-181717?style=flat&logo=github)](https://github.com/tomkabel) [![GitHub](https://img.shields.io/badge/@Kevindaman-181717?style=flat&logo=github)](https://github.com/Kevindaman) [![GitHub](https://img.shields.io/badge/@triinum-181717?style=flat&logo=github)](https://github.com/triinum)
 
-**Contributors** [![GitHub](https://img.shields.io/badge/@Migfive-181717?style=flat&logo=github)](https://github.com/Migfive) [![GitHub](https://img.shields.io/badge/@DrWarpMan-181717?style=flat&logo=github)](https://github.com/DrWarpMan) [![GitHub](https://img.shields.io/badge/@Snazzah-181717?style=flat&logo=github)](https://github.com/Snazzah) [![GitHub](https://img.shields.io/badge/@wukko-181717?style=flat&logo=github)](https://github.com/wukko) [![GitHub](https://img.shields.io/badge/@Blobadoodle-181717?style=flat&logo=github)](https://github.com/Blobadoodle) [![GitHub](https://img.shields.io/badge/@nexpid-181717?style=flat&logo=github)](https://github.com/nexpid)
+**Acknowledgements** [![GitHub](https://img.shields.io/badge/@Migfive-181717?style=flat&logo=github)](https://github.com/Migfive) [![GitHub](https://img.shields.io/badge/@DrWarpMan-181717?style=flat&logo=github)](https://github.com/DrWarpMan) [![GitHub](https://img.shields.io/badge/@Snazzah-181717?style=flat&logo=github)](https://github.com/Snazzah) [![GitHub](https://img.shields.io/badge/@wukko-181717?style=flat&logo=github)](https://github.com/wukko) [![GitHub](https://img.shields.io/badge/@Blobadoodle-181717?style=flat&logo=github)](https://github.com/Blobadoodle) [![GitHub](https://img.shields.io/badge/@nexpid-181717?style=flat&logo=github)](https://github.com/nexpid)
 
 </div>
 
@@ -164,6 +164,15 @@ Expected response:
   "error": {
     "code": "VALIDATION_ERROR",
     "message": "Request validation failed"
+  },
+  "details": {
+    "validation_errors": [
+      {
+        "field": "url",
+        "message": "Value error, Must be a valid YouTube URL",
+        "type": "value_error"
+      }
+    ]
   }
 }
 ```

@@ -20,7 +20,7 @@
 | `REDIS_URL` | Full Redis connection string | *(built from components)* | If set, `REDIS_*` variables are ignored. |
 | `REDIS_HOST` | Redis host | `localhost` | |
 | `REDIS_PORT` | Redis port | `6379` | |
-| `REDIS_PASSWORD` | Redis password | *(required)* | Enforced by Docker Compose via interpolation. |
+| `REDIS_PASSWORD` | Redis password | *(conditional)* | Only required when Redis AUTH is enabled. Docker Compose interpolates the value when provided. |
 
 ### Application
 

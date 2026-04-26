@@ -35,7 +35,7 @@ flowchart TD
 - **Media Extraction:** Executes yt-dlp with circuit breaker protection to prevent cascading failures during YouTube rate limits or signature changes.
 - **Status Updates:** Writes job progress (`pending` → `processing` → `completed`/`failed`) to PostgreSQL.
 - **File Lifecycle:** Stores downloaded files to local storage, enforces expiration, and cleans up orphaned files.
-- **Crash Safety:** Transactional outbox pattern ensures job creation is durable even if the worker crashes mid-processing.
+- **Crash Safety:** Transactional outbox pattern ensures the ordering between database commit and queue enqueue is durable. If the API crashes after committing the job to the database but before enqueuing it to Redis, the outbox recovery process will enqueue it on the next worker startup. This pattern does not protect against crashes during active extraction; those are handled by automatic retries and the stale-job reaper instead.
 - **Retry Logic:** Automatic retry with exponential backoff + jitter for transient yt-dlp failures.
 - **Stale Job Reaper:** Background task that resets jobs stuck in `processing` longer than a configured threshold.
 - **Graceful Shutdown:** On SIGTERM, stops accepting new jobs, completes in-flight extraction, then exits.
