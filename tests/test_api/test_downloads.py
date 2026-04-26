@@ -550,7 +550,9 @@ async def test_retry_download_success(db_session: AsyncSession):
 
         # Manually mark as failed
         await db_session.execute(
-            update(DownloadJob).where(DownloadJob.id == job_id).values(status="failed", error="Test error"),
+            update(DownloadJob)
+            .where(DownloadJob.id == job_id)
+            .values(status="failed", error="Test error"),
         )
         await db_session.commit()
 

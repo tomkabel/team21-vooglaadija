@@ -1183,7 +1183,9 @@ class TestUpdateUsername:
             access_token = login_resp.cookies.get("access_token", "")
 
             # Get fresh CSRF token
-            csrf_response = await client.get("/web/settings", cookies={"access_token": access_token})
+            csrf_response = await client.get(
+                "/web/settings", cookies={"access_token": access_token}
+            )
             csrf_token = get_csrf_from_response(csrf_response)
 
             response = await client.post(
@@ -1215,7 +1217,9 @@ class TestUpdateUsername:
 
             access_token = login_resp.cookies.get("access_token", "")
 
-            csrf_response = await client.get("/web/settings", cookies={"access_token": access_token})
+            csrf_response = await client.get(
+                "/web/settings", cookies={"access_token": access_token}
+            )
             csrf_token = get_csrf_from_response(csrf_response)
 
             response = await client.post(
@@ -1280,7 +1284,9 @@ class TestChangePassword:
 
             access_token = login_resp.cookies.get("access_token", "")
 
-            csrf_response = await client.get("/web/settings", cookies={"access_token": access_token})
+            csrf_response = await client.get(
+                "/web/settings", cookies={"access_token": access_token}
+            )
             csrf_token = get_csrf_from_response(csrf_response)
 
             response = await client.post(
@@ -1316,7 +1322,9 @@ class TestChangePassword:
 
             access_token = login_resp.cookies.get("access_token", "")
 
-            csrf_response = await client.get("/web/settings", cookies={"access_token": access_token})
+            csrf_response = await client.get(
+                "/web/settings", cookies={"access_token": access_token}
+            )
             csrf_token = get_csrf_from_response(csrf_response)
 
             response = await client.post(
@@ -1352,7 +1360,9 @@ class TestChangePassword:
 
             access_token = login_resp.cookies.get("access_token", "")
 
-            csrf_response = await client.get("/web/settings", cookies={"access_token": access_token})
+            csrf_response = await client.get(
+                "/web/settings", cookies={"access_token": access_token}
+            )
             csrf_token = get_csrf_from_response(csrf_response)
 
             response = await client.post(
@@ -1388,7 +1398,9 @@ class TestChangePassword:
 
             access_token = login_resp.cookies.get("access_token", "")
 
-            csrf_response = await client.get("/web/settings", cookies={"access_token": access_token})
+            csrf_response = await client.get(
+                "/web/settings", cookies={"access_token": access_token}
+            )
             csrf_token = get_csrf_from_response(csrf_response)
 
             response = await client.post(
