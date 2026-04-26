@@ -108,7 +108,7 @@ run_migrations_and_verify() {
     # Run migrations (don't fail on error - capture the exit code)
     echo "Running database migrations..."
     set +e  # Temporarily disable errexit to capture alembic exit code
-    python -m alembic upgrade head 2>&1
+    python -m alembic -c /app/alembic.ini upgrade head 2>&1
     migrations_result=$?
     set -e  # Re-enable errexit
 
@@ -116,7 +116,7 @@ run_migrations_and_verify() {
         echo "Migrations completed successfully"
 
         # Verify migrations are at head using alembic's built-in check
-        verify_output=$(python -m alembic current --check-heads 2>&1)
+        verify_output=$(python -m alembic -c /app/alembic.ini current --check-heads 2>&1)
         verify_result=$?
         if [ $verify_result -ne 0 ]; then
             echo "ERROR: current migration does not match head. Schema is out of date!"
