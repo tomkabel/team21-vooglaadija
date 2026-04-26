@@ -138,7 +138,11 @@ if $CLEAN_VOLUMES; then
 fi
 
 if $CLEAN_BUILD_CACHE; then
-    BUILDER_PRUNE_CMD="docker builder prune${CLEAN_IMAGES:+ --all}"
+    if [[ "$CLEAN_IMAGES" == "true" ]]; then
+        BUILDER_PRUNE_CMD="docker builder prune --all"
+    else
+        BUILDER_PRUNE_CMD="docker builder prune"
+    fi
 fi
 
 if $CLEAN_IMAGES; then
