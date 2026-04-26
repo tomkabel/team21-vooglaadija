@@ -17,8 +17,8 @@ services:
     # Increase start period for local environments
     healthcheck:
       test:
-        ["CMD-SHELL", "wget -q --spider http://localhost:80/health || exit 1"]
-      start_period: 10s
+        ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
+      start_period: 15s
 
   # ==========================================
   # PostgreSQL - Local Debugging Port
