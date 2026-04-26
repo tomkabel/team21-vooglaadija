@@ -21,7 +21,7 @@ class TestUpdateWorkerState:
     def test_update_worker_state_sets_values(self):
         """Test that update_worker_state updates state values."""
         update_worker_state(status="running", current_job_started_at="2024-01-01T00:00:00")
-        from worker.health import _worker_state, _state_lock
+        from worker.health import _state_lock, _worker_state
 
         with _state_lock:
             assert _worker_state["status"] == "running"
@@ -34,7 +34,7 @@ class TestUpdateWorkerState:
 
         def update_state(value):
             update_worker_state(status=value)
-            from worker.health import _worker_state, _state_lock
+            from worker.health import _state_lock, _worker_state
 
             with _state_lock:
                 results.append(_worker_state["status"])
@@ -126,7 +126,7 @@ class TestStartHealthServer:
         health_module._health_server = None
 
         with patch.dict(os.environ, {"WORKER_HEALTH_PORT": "18083"}):
-            server = start_health_server()
+            start_health_server()
             stop_health_server()
             assert health_module._health_server is None
 
@@ -153,7 +153,9 @@ class TestWriteHealthSync:
         with patch("redis.from_url") as mock_redis:
             import redis
 
-            mock_redis.return_value.setex.side_effect = redis.exceptions.ConnectionError("Connection failed")
+            mock_redis.return_value.setex.side_effect = redis.exceptions.ConnectionError(
+                "Connection failed"
+            )
 
             result = write_health_sync()
             assert result is False
