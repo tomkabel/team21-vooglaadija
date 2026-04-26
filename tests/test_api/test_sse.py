@@ -1,7 +1,6 @@
 """Tests for SSE (Server-Sent Events) endpoints."""
 
 import uuid
-from collections import OrderedDict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,8 +24,9 @@ class TestDownloadStatusStream:
     async def test_sse_endpoint_with_auth_starts_stream(self):
         """Test that SSE endpoint accepts authenticated request and starts streaming."""
         import uuid
+        from unittest.mock import MagicMock
+
         from httpx import ASGITransport, AsyncClient
-        from unittest.mock import patch, MagicMock
 
         # Create test user and get token
         email = f"ssetest_{uuid.uuid4().hex[:8]}@example.com"
@@ -68,8 +68,9 @@ class TestEventGenerator:
     @pytest.mark.asyncio
     async def test_event_generator_handles_disconnection(self):
         """Test that event generator breaks when request is disconnected."""
-        from app.api.routes.sse import event_generator
         from fastapi import Request
+
+        from app.api.routes.sse import event_generator
 
         mock_request = MagicMock(spec=Request)
         mock_request.is_disconnected = AsyncMock(return_value=True)
@@ -88,9 +89,11 @@ class TestEventGenerator:
     @pytest.mark.asyncio
     async def test_event_generator_yields_job_updates(self):
         """Test that event generator yields job status updates."""
-        from app.api.routes.sse import event_generator, MAX_SEEN_JOBS
+        from datetime import UTC, datetime
+
+        from app.api.routes.sse import event_generator
         from app.models.download_job import DownloadJob
-        from datetime import datetime, UTC
+        from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
         mock_request.is_disconnected = AsyncMock(side_effect=[False, True])
@@ -131,9 +134,11 @@ class TestEventGenerator:
     @pytest.mark.asyncio
     async def test_event_generator_cursor_pagination(self):
         """Test that event generator uses cursor-based pagination after initial load."""
+        from datetime import UTC, datetime
+
         from app.api.routes.sse import event_generator
         from app.models.download_job import DownloadJob
-        from datetime import datetime, UTC
+        from fastapi import Request
 
         # First call returns jobs (is_disconnected=False, last_updated_at=None)
         # Second call returns empty (is_disconnected=False but returns)
@@ -183,9 +188,11 @@ class TestEventGenerator:
     @pytest.mark.asyncio
     async def test_event_generator_skips_duplicate_status(self):
         """Test that event generator doesn't yield events for unchanged job status."""
+        from datetime import UTC, datetime
+
         from app.api.routes.sse import event_generator
         from app.models.download_job import DownloadJob
-        from datetime import datetime, UTC
+        from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
         call_count = [0]
@@ -236,8 +243,10 @@ class TestEventGenerator:
     @pytest.mark.asyncio
     async def test_event_generator_cancelled_error_handled(self):
         """Test that CancelledError is caught and handled gracefully."""
-        from app.api.routes.sse import event_generator
         import asyncio
+
+        from app.api.routes.sse import event_generator
+        from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
         mock_request.is_disconnected = AsyncMock(side_effect=asyncio.CancelledError)
@@ -257,9 +266,11 @@ class TestEventGenerator:
     @pytest.mark.asyncio
     async def test_event_generator_max_seen_jobs_limit(self):
         """Test that event generator respects MAX_SEEN_JOBS limit."""
-        from app.api.routes.sse import event_generator, MAX_SEEN_JOBS
+        from datetime import UTC, datetime
+
+        from app.api.routes.sse import MAX_SEEN_JOBS, event_generator
         from app.models.download_job import DownloadJob
-        from datetime import datetime, UTC
+        from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
         call_count = [0]

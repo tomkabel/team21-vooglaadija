@@ -8,7 +8,6 @@ These tests verify:
 """
 
 import asyncio
-import signal
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 

@@ -70,9 +70,10 @@ class TestRateLimitExceededHandler:
     @pytest.mark.asyncio
     async def test_handler_returns_429_with_retry_after(self):
         """Test that handler returns 429 status with Retry-After header."""
+        from unittest.mock import MagicMock
+
         from fastapi import Request
         from slowapi.errors import RateLimitExceeded
-        from unittest.mock import MagicMock
 
         mock_request = MagicMock(spec=Request)
         mock_exc = MagicMock(spec=RateLimitExceeded)
@@ -87,8 +88,9 @@ class TestRateLimitExceededHandler:
     @pytest.mark.asyncio
     async def test_handler_raises_non_rate_limit_exception(self):
         """Test that non-RateLimitExceeded exceptions are raised."""
-        from fastapi import Request
         from unittest.mock import MagicMock
+
+        from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
         mock_exc = ValueError("not a rate limit error")

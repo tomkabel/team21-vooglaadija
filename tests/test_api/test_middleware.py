@@ -1,8 +1,8 @@
 """Tests for API middleware."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -35,8 +35,9 @@ class TestPrometheusMiddleware:
     @pytest.mark.asyncio
     async def test_metrics_recorded_on_success(self):
         """Test that metrics are recorded on successful request."""
-        from app.metrics import HTTP_REQUESTS, HTTP_REQUEST_DURATION
         from unittest.mock import patch
+
+        from app.metrics import HTTP_REQUEST_DURATION, HTTP_REQUESTS
 
         middleware = PrometheusMiddleware(app=MagicMock())
 
@@ -53,8 +54,10 @@ class TestPrometheusMiddleware:
         mock_response.status_code = 200
         mock_call_next.return_value = mock_response
 
-        with patch.object(HTTP_REQUESTS, "labels") as mock_requests_labels, \
-             patch.object(HTTP_REQUEST_DURATION, "labels") as mock_duration_labels:
+        with (
+            patch.object(HTTP_REQUESTS, "labels") as mock_requests_labels,
+            patch.object(HTTP_REQUEST_DURATION, "labels") as mock_duration_labels,
+        ):
             mock_inc = MagicMock()
             mock_observe = MagicMock()
             mock_requests_labels.return_value.inc = mock_inc
@@ -74,8 +77,9 @@ class TestPrometheusMiddleware:
     @pytest.mark.asyncio
     async def test_metrics_recorded_on_exception(self):
         """Test that metrics are recorded when exception occurs."""
-        from app.metrics import HTTP_REQUESTS, HTTP_REQUEST_DURATION
         from unittest.mock import patch
+
+        from app.metrics import HTTP_REQUEST_DURATION, HTTP_REQUESTS
 
         middleware = PrometheusMiddleware(app=MagicMock())
 
@@ -90,8 +94,10 @@ class TestPrometheusMiddleware:
         async def raise_exception(request):
             raise ValueError("Test error")
 
-        with patch.object(HTTP_REQUESTS, "labels") as mock_requests_labels, \
-             patch.object(HTTP_REQUEST_DURATION, "labels") as mock_duration_labels:
+        with (
+            patch.object(HTTP_REQUESTS, "labels") as mock_requests_labels,
+            patch.object(HTTP_REQUEST_DURATION, "labels") as mock_duration_labels,
+        ):
             mock_inc = MagicMock()
             mock_observe = MagicMock()
             mock_requests_labels.return_value.inc = mock_inc
