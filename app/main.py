@@ -390,7 +390,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
 
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(downloads.router, prefix="/api/v1")
-app.include_router(health.router, prefix="/api/v1")
+app.include_router(health.router)
 app.include_router(metrics_router)
 
 # Web/HTMX routes - SSE mounted FIRST so /web/downloads/stream is matched before /web/downloads

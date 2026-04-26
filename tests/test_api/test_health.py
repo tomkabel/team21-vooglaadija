@@ -14,35 +14,39 @@ class TestHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_healthy(self):
         """Test health check returns healthy status when all dependencies are up."""
-        with (
-            patch("app.api.routes.health.create_async_engine") as mock_engine,
-            patch("app.api.routes.health.Redis") as mock_redis_class,
+        with patch.dict(
+            "os.environ",
+            {"DATABASE_URL": "postgresql://test", "REDIS_URL": "redis://test"},
         ):
-            # Mock successful database connection
-            mock_conn = AsyncMock()
-            mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
-            mock_conn.__aexit__ = AsyncMock()
-            mock_conn.execute = AsyncMock()
+            with (
+                patch("app.api.routes.health.create_async_engine") as mock_engine,
+                patch("app.api.routes.health.Redis") as mock_redis_class,
+            ):
+                # Mock successful database connection
+                mock_conn = AsyncMock()
+                mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+                mock_conn.__aexit__ = AsyncMock()
+                mock_conn.execute = AsyncMock()
 
-            mock_engine.return_value.connect = MagicMock(return_value=mock_conn)
-            mock_engine.return_value.dispose = AsyncMock()
+                mock_engine.return_value.connect = MagicMock(return_value=mock_conn)
+                mock_engine.return_value.dispose = AsyncMock()
 
-            # Mock successful Redis connection
-            mock_redis = MagicMock()
-            mock_redis.ping = AsyncMock(return_value=True)
-            mock_redis.close = AsyncMock()
-            mock_redis_class.return_value = mock_redis
+                # Mock successful Redis connection
+                mock_redis = MagicMock()
+                mock_redis.ping = AsyncMock(return_value=True)
+                mock_redis.close = AsyncMock()
+                mock_redis_class.from_url.return_value = mock_redis
 
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                response = await client.get("/health")
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    response = await client.get("/health")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["status"] == "healthy"
-            assert data["dependencies"]["database"] == "ok"
-            assert data["dependencies"]["redis"] == "ok"
+                assert response.status_code == 200
+                data = response.json()
+                assert data["status"] == "healthy"
+                assert data["dependencies"]["database"] == "ok"
+                assert data["dependencies"]["redis"] == "ok"
 
     @pytest.mark.asyncio
     async def test_health_check_database_error(self):
@@ -76,33 +80,38 @@ class TestHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_redis_error(self):
         """Test health check returns unhealthy when Redis is down."""
-        with (
-            patch("app.api.routes.health.create_async_engine") as mock_engine,
-            patch("app.api.routes.health.Redis") as mock_redis_class,
+        with patch.dict(
+            "os.environ",
+            {"DATABASE_URL": "postgresql://test", "REDIS_URL": "redis://test"},
         ):
-            # Mock successful database
-            mock_conn = AsyncMock()
-            mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
-            mock_conn.__aexit__ = AsyncMock()
-            mock_conn.execute = AsyncMock()
+            with (
+                patch("app.api.routes.health.create_async_engine") as mock_engine,
+                patch("app.api.routes.health.Redis") as mock_redis_class,
+            ):
+                # Mock successful database
+                mock_conn = AsyncMock()
+                mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+                mock_conn.__aexit__ = AsyncMock()
+                mock_conn.execute = AsyncMock()
 
-            mock_engine.return_value.connect = MagicMock(return_value=mock_conn)
-            mock_engine.return_value.dispose = AsyncMock()
+                mock_engine.return_value.connect = MagicMock(return_value=mock_conn)
+                mock_engine.return_value.dispose = AsyncMock()
 
-            # Mock failed Redis connection
-            mock_redis_class.return_value.ping = AsyncMock(
-                side_effect=Exception("Connection refused")
-            )
+                # Mock failed Redis connection
+                mock_redis = MagicMock()
+                mock_redis.ping = AsyncMock(side_effect=Exception("Connection refused"))
+                mock_redis.close = AsyncMock()
+                mock_redis_class.from_url.return_value = mock_redis
 
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                response = await client.get("/health")
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    response = await client.get("/health")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["status"] == "unhealthy"
-            assert "error" in data["dependencies"]["redis"]
+                assert response.status_code == 200
+                data = response.json()
+                assert data["status"] == "unhealthy"
+                assert "error" in data["dependencies"]["redis"]
 
     @pytest.mark.asyncio
     async def test_health_check_missing_database_url(self):
@@ -165,32 +174,36 @@ class TestReadinessCheck:
     @pytest.mark.asyncio
     async def test_readiness_check_ready(self):
         """Test readiness check returns ready when all dependencies are up."""
-        with (
-            patch("app.api.routes.health.create_async_engine") as mock_engine,
-            patch("app.api.routes.health.redis_client") as mock_redis,
+        with patch.dict(
+            "os.environ",
+            {"DATABASE_URL": "postgresql://test", "REDIS_URL": "redis://test"},
         ):
-            # Mock successful database
-            mock_conn = AsyncMock()
-            mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
-            mock_conn.__aexit__ = AsyncMock()
-            mock_conn.execute = AsyncMock()
+            with (
+                patch("app.api.routes.health.create_async_engine") as mock_engine,
+                patch("app.api.routes.health.redis_client") as mock_redis,
+            ):
+                # Mock successful database
+                mock_conn = AsyncMock()
+                mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+                mock_conn.__aexit__ = AsyncMock()
+                mock_conn.execute = AsyncMock()
 
-            mock_engine.return_value.connect = MagicMock(return_value=mock_conn)
-            mock_engine.return_value.dispose = AsyncMock()
+                mock_engine.return_value.connect = MagicMock(return_value=mock_conn)
+                mock_engine.return_value.dispose = AsyncMock()
 
-            # Mock successful Redis
-            mock_redis.ping = AsyncMock(return_value=True)
+                # Mock successful Redis
+                mock_redis.ping = AsyncMock(return_value=True)
 
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                response = await client.get("/health/ready")
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    response = await client.get("/health/ready")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["status"] == "ready"
-            assert data["database"] == "connected"
-            assert data["redis"] == "connected"
+                assert response.status_code == 200
+                data = response.json()
+                assert data["status"] == "ready"
+                assert data["database"] == "connected"
+                assert data["redis"] == "connected"
 
     @pytest.mark.asyncio
     async def test_readiness_check_database_down(self):
