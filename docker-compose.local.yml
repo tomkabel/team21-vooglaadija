@@ -18,7 +18,7 @@ services:
     healthcheck:
       test:
         ["CMD-SHELL", "wget -q --spider http://localhost:80/health || exit 1"]
-      start_period: 15s
+      start_period: 10s
 
   # ==========================================
   # PostgreSQL - Local Debugging Port
