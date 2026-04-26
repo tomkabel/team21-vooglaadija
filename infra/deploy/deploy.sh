@@ -69,6 +69,7 @@ phase1() {
         docker-compose-plugin \
         certbot \
         python3-certbot-nginx \
+        dnsutils \
         ufw \
         rsync \
         curl \
