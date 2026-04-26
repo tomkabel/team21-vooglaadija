@@ -88,7 +88,7 @@ last_error = None
 for i, format_spec in enumerate(fallback_chain):
     ydl_opts = {{
         "format": format_spec["format"],
-        "format_sort": format_spec.get("S", []),
+        "format_sort": format_spec.get("format_sort", []),
         "outtmpl": output_template,
         "quiet": True,
         "no_warnings": True,

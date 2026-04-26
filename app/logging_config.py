@@ -129,6 +129,7 @@ def configure_logging(log_level: str = "INFO") -> None:
         )
     else:
         # Development: Pretty console output with colors
+        # Create a fresh processors list to avoid duplicates if configure_logging is called multiple times
         dev_processors: list[Processor] = [
             *shared_processors,
             structlog.dev.ConsoleRenderer(

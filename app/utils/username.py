@@ -12,7 +12,7 @@ def default_username_from_email(
     Ensures the result is at most ``max_length`` and at least ``min_length``
     characters so it satisfies the same rules as ``/web/settings/username``.
     """
-    base = email.split("@")[0].strip()
+    base = email.split("@", maxsplit=1)[0].strip()
     if not base:
         candidate = "user"
     else:

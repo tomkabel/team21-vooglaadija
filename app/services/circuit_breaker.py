@@ -89,9 +89,24 @@ class CircuitBreaker:
 
     @property
     def state(self) -> CircuitState:
-        """Get current circuit state, checking for timeout transition."""
+        """Get current circuit state, checking for timeout transition.
+
+        Note: This property only checks for transitions but does NOT modify state.
+        Use _check_and_transition() or can_execute() for state mutations.
+        """
         if self._state == CircuitState.OPEN and self._last_failure_time is not None:
             # Check if reset timeout has elapsed
+            elapsed = time.monotonic() - self._last_failure_time
+            if elapsed >= self.reset_timeout:
+                return CircuitState.HALF_OPEN
+        return self._state
+
+    def _check_and_transition_to_half_open(self) -> CircuitState:
+        """Check timeout and transition OPEN→HALF_OPEN under lock.
+
+        Returns the current state after potential transition.
+        """
+        if self._state == CircuitState.OPEN and self._last_failure_time is not None:
             elapsed = time.monotonic() - self._last_failure_time
             if elapsed >= self.reset_timeout:
                 logger.info(
@@ -100,7 +115,8 @@ class CircuitBreaker:
                     elapsed_seconds=elapsed,
                     reset_timeout=self.reset_timeout,
                 )
-                return CircuitState.HALF_OPEN
+                self._state = CircuitState.HALF_OPEN
+                self._last_failure_time = None  # Reset timer
         return self._state
 
     @property
@@ -121,7 +137,8 @@ class CircuitBreaker:
     async def can_execute(self) -> bool:
         """Check if request can proceed."""
         async with self._lock:
-            current_state = self.state
+            # First: check for timeout-based transition OPEN→HALF_OPEN under lock
+            current_state = self._check_and_transition_to_half_open()
 
             if current_state == CircuitState.CLOSED:
                 return True
@@ -224,8 +241,10 @@ class CircuitBreaker:
             raise CircuitBreakerOpenError(self.name, self.reset_timeout)
 
         try:
-            if self.state == CircuitState.HALF_OPEN:
-                async with self._lock:
+            async with self._lock:
+                # Re-check state inside lock for accurate half_open_calls tracking
+                actual_state = self._check_and_transition_to_half_open()
+                if actual_state == CircuitState.HALF_OPEN:
                     self._half_open_calls += 1
 
             result = await func(*args, **kwargs)
@@ -256,7 +275,7 @@ _youtube_circuit_breaker: CircuitBreaker | None = None
 
 def get_youtube_circuit_breaker() -> CircuitBreaker:
     """Get or create the YouTube API circuit breaker."""
-    global _youtube_circuit_breaker
+    global _youtube_circuit_breaker  # noqa: PLW0603 - singleton pattern requires module-level state
     if _youtube_circuit_breaker is None:
         _youtube_circuit_breaker = CircuitBreaker(
             name="youtube_api",
@@ -283,11 +302,12 @@ async def extract_media_with_circuit_breaker(url: str, storage_path: str) -> tup
         url=url[:50],
     )
 
-    return await cb.execute(
+    result: tuple[str, str] = await cb.execute(
         _extract_media_url_internal,
         url,
         storage_path,
     )
+    return result
 
 
 async def _extract_media_url_internal(url: str, storage_path: str) -> tuple[str, str]:
