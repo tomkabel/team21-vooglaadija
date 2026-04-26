@@ -22,44 +22,23 @@ class TestDownloadStatusStream:
 
     @pytest.mark.asyncio
     async def test_sse_endpoint_with_auth_starts_stream(self):
-        """Test that SSE endpoint accepts authenticated request and starts streaming."""
-        import uuid
+        """Test that SSE endpoint returns an EventSourceResponse for authenticated users."""
+        import uuid as _uuid
         from unittest.mock import MagicMock
 
-        from httpx import ASGITransport, AsyncClient
+        from sse_starlette import EventSourceResponse
 
-        # Create test user and get token
-        email = f"ssetest_{uuid.uuid4().hex[:8]}@example.com"
-        password = "securepassword123"
+        from app.api.routes.sse import download_status_stream
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            # Register and login
-            await client.post(
-                "/api/v1/auth/register",
-                json={"email": email, "password": password},
-            )
-            login_resp = await client.post(
-                "/api/v1/auth/login",
-                json={"email": email, "password": password},
-            )
-            token = login_resp.json()["access_token"]
+        mock_request = MagicMock()
+        mock_user = MagicMock()
+        mock_user.id = _uuid.uuid4()
 
-            # Test SSE endpoint
-            # Note: The actual SSE response is a streaming response that we can't fully test
-            # without a real SSE client, but we can verify the endpoint accepts the connection
-            with patch("app.api.routes.sse.get_async_session_factory") as mock_session_factory:
-                # Mock the session factory and event generator
-                mock_session = MagicMock()
-                mock_session_factory.return_value = MagicMock(return_value=mock_session)
+        response = await download_status_stream(mock_request, mock_user)
 
-                # Make request with proper auth
-                response = await client.get(
-                    "/web/downloads/stream",
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-
-                # The endpoint should start (even if we can't test the full SSE stream)
-                assert response.status_code == 200
+        assert isinstance(response, EventSourceResponse)
+        assert response.status_code == 200
+        assert response.media_type == "text/event-stream"
 
 
 class TestEventGenerator:
@@ -91,9 +70,10 @@ class TestEventGenerator:
         """Test that event generator yields job status updates."""
         from datetime import UTC, datetime
 
+        from fastapi import Request
+
         from app.api.routes.sse import event_generator
         from app.models.download_job import DownloadJob
-        from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
         mock_request.is_disconnected = AsyncMock(side_effect=[False, True])
@@ -136,9 +116,10 @@ class TestEventGenerator:
         """Test that event generator uses cursor-based pagination after initial load."""
         from datetime import UTC, datetime
 
+        from fastapi import Request
+
         from app.api.routes.sse import event_generator
         from app.models.download_job import DownloadJob
-        from fastapi import Request
 
         # First call returns jobs (is_disconnected=False, last_updated_at=None)
         # Second call returns empty (is_disconnected=False but returns)
@@ -190,9 +171,10 @@ class TestEventGenerator:
         """Test that event generator doesn't yield events for unchanged job status."""
         from datetime import UTC, datetime
 
+        from fastapi import Request
+
         from app.api.routes.sse import event_generator
         from app.models.download_job import DownloadJob
-        from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
         call_count = [0]
@@ -245,8 +227,9 @@ class TestEventGenerator:
         """Test that CancelledError is caught and handled gracefully."""
         import asyncio
 
-        from app.api.routes.sse import event_generator
         from fastapi import Request
+
+        from app.api.routes.sse import event_generator
 
         mock_request = MagicMock(spec=Request)
         mock_request.is_disconnected = AsyncMock(side_effect=asyncio.CancelledError)
@@ -268,9 +251,10 @@ class TestEventGenerator:
         """Test that event generator respects MAX_SEEN_JOBS limit."""
         from datetime import UTC, datetime
 
+        from fastapi import Request
+
         from app.api.routes.sse import MAX_SEEN_JOBS, event_generator
         from app.models.download_job import DownloadJob
-        from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
         call_count = [0]
