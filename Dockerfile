@@ -84,13 +84,11 @@ COPY --from=frontend-builder /app/frontend/node_modules/htmx.org/dist/htmx.min.j
 
 # Generate SBOM from installed dependencies
 # Uses pip freeze to get exact versions, then generates CycloneDX SBOM
-# This is more reliable than 'environment' subcommand which may produce empty output
-RUN pip install cyclonedx-bom && \
+# Uses modern subcommand form: cyclonedx-py requirements <file>
+RUN pip install 'cyclonedx-bom==5.*' && \
     pip freeze > /tmp/requirements.txt && \
-    cyclonedx-py -r -i /tmp/requirements.txt -o /tmp/sbom.xml --output-format XML || \
-    echo '<?xml version="1.0" encoding="utf-8"?><bom xmlns="http://cyclonedx.org/schema/bom/1.5" />' > /tmp/sbom.xml
-RUN cyclonedx-py -r -i /tmp/requirements.txt -o /tmp/sbom.json --output-format JSON || \
-    echo '{}' > /tmp/sbom.json
+    cyclonedx-py requirements /tmp/requirements.txt --output-format XML --output-file /tmp/sbom.xml && \
+    cyclonedx-py requirements /tmp/requirements.txt --output-format JSON --output-file /tmp/sbom.json
 
 # Generate SLSA provenance metadata (simplified for this example)
 # In production, use slsa-framework/github-actions-slsa-generator or similar
@@ -105,12 +103,18 @@ FROM python:3.12-slim AS runtime-base
 # Install ffmpeg for yt-dlp media merging, redis-tools for migrate.sh, and gosu for privilege dropping
 # Also install redis-tools for migrate.sh's redis-cli commands
 # Node.js is required for yt-dlp to solve YouTube video signatures (JS-based decryption)
+# Use NodeSource repository to get LTS Node.js 20 instead of distro's EOL Node.js 18
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     redis-tools \
     gosu \
-    nodejs \
     curl \
+    gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python runtime from builder (with dependencies installed)
