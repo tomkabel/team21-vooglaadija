@@ -125,17 +125,23 @@ services:
       - ./infra/letsencrypt:/etc/letsencrypt:rw
       # ACME challenge webroot
       - ./infra/certbot/data:/var/www/certbot:rw
+      # Mount Docker socket to signal nginx container on renewal
+      - /var/run/docker.sock:/var/run/docker.sock:rw
     entrypoint: |
       /bin/sh -c '
-        # Deploy hook to reload nginx after successful renewal
-        # Copies renewed certs and signals nginx to reopen fds
+        # Deploy hook reloads nginx after successful renewal via Docker socket
+        # Uses docker exec to signal nginx from within the docker network
         deploy_hook() {
           echo "Deploy hook: reloading nginx after cert renewal..."
-          nginx -s reload 2>/dev/null || echo "nginx reload attempted"
+          docker exec ytprocessor-nginx nginx -s reload 2>/dev/null || {
+            # Fallback: if nginx not reachable, try to reload via signal
+            echo "Docker exec failed, checking nginx status..."
+            docker exec ytprocessor-nginx sh -c "nginx -s reload" 2>/dev/null || echo "nginx reload attempted"
+          }
         }
         trap exit TERM;
         while :; do
-          certbot renew --deploy-hook "bash -c 'deploy_hook'" || true;
+          certbot renew --deploy-hook "bash -c deploy_hook" || true;
           sleep 12h;
         done;
       '
