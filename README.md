@@ -1,132 +1,128 @@
 <div align="center">
 
-# YouTube Link Processor
+# Vooglaadija
 
-High-performance YouTube media extraction API with async processing
+*Pronounced voo-gla-tee-ya* — Media Link Processor
+
+Async video media extraction API with job queue and real-time status streaming.
 
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-GPLv3-A41E35?style=for-the-badge&logo=gnu&logoColor=white)](https://www.gnu.org/licenses/gpl-3.0.html)
-[![Version](https://img.shields.io/badge/Version-0.0.1-22D3EE?style=for-the-badge)](https://github.com/yourusername/vooglaadija)
+[![Version](https://img.shields.io/badge/Version-1.0.0-22D3EE?style=for-the-badge)](https://github.com/tomkabel/team21-vooglaadija)
 [![FastAPI](https://img.shields.io/badge/FastAPI-26A69A?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![HTMX](https://img.shields.io/badge/HTMX-5967AF?style=for-the-badge)](https://htmx.org/)
-[![Jinja2](https://img.shields.io/badge/Jinja2-B41717?style=for-the-badge&logo=jinja2)](https://jinja.palletsprojects.com/)
 [![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Redis](https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io/)
-[![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71F1B?style=for-the-badge&logo=sqlalchemy)](https://www.sqlalchemy.org/)
-[![uvicorn](https://img.shields.io/badge/uvicorn-2D3748?style=for-the-badge&logo=uvicorn)](https://www.uvicorn.org/)
-[![JWT](https://img.shields.io/badge/JWT-000000?style=for-the-badge&logo=json-web-tokens)](https://jwt.io/)
-[![Code%20Style-black](https://img.shields.io/badge/Code%20Style-black-000000?style=for-the-badge&logo=black)](https://github.com/psf/black)
-[![Ruff](https://img.shields.io/badge/Ruff-041635?style=for-the-badge&logo=ruff)](https://docs.astral.sh/ruff/)
+[![yt--dlp](https://img.shields.io/badge/yt--dlp-F16729?style=for-the-badge&logo=youtube&logoColor=white)](https://github.com/yt-dlp/yt-dlp)
 
 </div>
 
 <div align="center">
-  <img src="docs/images/vooglaadija_fin.png" alt="YouTube Link Processor" width="600" />
+  <img src="docs/images/vooglaadija_fin.png" alt="Vooglaadija" width="600" />
+</div>
+
+<div align="center">
+
+**Built by** [![GitHub](https://img.shields.io/badge/@tomkabel-181717?style=flat&logo=github)](https://github.com/tomkabel) [![GitHub](https://img.shields.io/badge/@Kevindaman-181717?style=flat&logo=github)](https://github.com/Kevindaman) [![GitHub](https://img.shields.io/badge/@triinum-181717?style=flat&logo=github)](https://github.com/triinum)
+
+**Contributors** [![GitHub](https://img.shields.io/badge/@Migfive-181717?style=flat&logo=github)](https://github.com/Migfive) [![GitHub](https://img.shields.io/badge/@DrWarpMan-181717?style=flat&logo=github)](https://github.com/DrWarpMan) [![GitHub](https://img.shields.io/badge/@Snazzah-181717?style=flat&logo=github)](https://github.com/Snazzah) [![GitHub](https://img.shields.io/badge/@wukko-181717?style=flat&logo=github)](https://github.com/wukko) [![GitHub](https://img.shields.io/badge/@Blobadoodle-181717?style=flat&logo=github)](https://github.com/Blobadoodle) [![GitHub](https://img.shields.io/badge/@nexpid-181717?style=flat&logo=github)](https://github.com/nexpid)
+
 </div>
 
 ---
 
-## 📋 Table of Contents
+## Contents
 
-- [Overview](#-overview)
-- [Features](#-features)
-- [Quick Start](#-quick-start)
-- [Usage](#-usage)
-- [API Reference](#-api-reference)
-- [Environment Variables](#-environment-variables)
-- [Tech Stack](#-tech-stack)
-- [Architecture](#-architecture)
-- [Contributing](#-contributing)
-- [License](#-license)
-- [Contact](#-contact)
+- [Overview](#overview)
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Usage](#usage)
+- [Documentation](#documentation)
+- [Tech Stack](#tech-stack)
+- [Architecture](#architecture)
+- [License](#license)
 
 ---
 
-## 📖 Overview
+## Overview
 
-**YouTube Link Processor** is a production-grade REST API service for extracting and downloading media from YouTube URLs. Built with FastAPI, it leverages async/await patterns for high-throughput request handling, with background job processing via Redis queues for resource-intensive media extraction operations.
+Vooglaadija is an async REST API for extracting media from video URLs. It uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) as the extraction engine and currently accepts YouTube URLs. The architecture separates the FastAPI web layer from a Redis-backed worker process.
 
-The system employs a decoupled architecture: the FastAPI application handles authentication, job management, and file delivery, while a dedicated worker process consumes jobs from Redis and performs media extraction using yt-dlp.
-
-A modern **HTMX-powered web interface** provides users with a seamless experience for registering, logging in, and managing their downloads directly from the browser.
+The system includes JWT authentication, CSRF protection, rate limiting, structured logging, Prometheus metrics, OpenTelemetry tracing, and Sentry error tracking. A server-rendered web UI built with HTMX and Tailwind CSS provides job management with real-time status updates via Server-Sent Events.
 
 ---
 
-## ✨ Features
+## Features
 
-- **🔐 Secure Authentication** — JWT-based auth with access/refresh token rotation
-- **⚡ Async Processing** — Non-blocking job queue with Redis-backed worker
-- **📊 Job Lifecycle Management** — Complete job states: pending → processing → completed/failed
-- **🔗 Flexible Media Extraction** — yt-dlp powered extraction for various formats
-- **⏰ Expiring Downloads** — Time-limited download links (configurable, default 24h)
-- **🐳 Container-Ready** — Multi-stage Docker builds with multi-arch support
-- **🧪 Test Suite** — Comprehensive pytest coverage with async test support
-- **🌐 HTMX Frontend** — Dynamic web UI with login, register, and downloads dashboard
-- **📥 Download Dashboard** — User-friendly interface to manage download jobs
-- **🔄 Real-time Status** — HTMX-powered polling for live job status updates
+### Core Processing
+- Media extraction via yt-dlp (YouTube-optimized)
+- Async job queue with Redis-backed worker
+- Job lifecycle: pending → processing → completed/failed
+- Automatic retry with exponential backoff and jitter
+- Time-limited download links (default 24h)
+- Stale job reaper for orphaned processing jobs
+
+### Security & Reliability
+- JWT access/refresh tokens with bcrypt hashing
+- CSRF token protection
+- Per-IP and per-user rate limiting
+- Content-Security-Policy headers
+- Safe file serving with path traversal protection
+- Circuit breaker for yt-dlp extraction failures
+- Transactional outbox for crash-safe job creation
+- Graceful worker shutdown with job draining
+
+### Observability
+- SSE real-time status streaming
+- Prometheus metrics endpoint
+- Structured JSON logging (structlog)
+- OpenTelemetry tracing support
+- Sentry error tracking
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
-### Prerequisites
-
-- Python 3.12+
-- PostgreSQL 14+
-- Redis 7+
-
-### Option 1: Docker Compose (Recommended)
+### Docker Compose (Recommended)
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/vooglaadija.git
-cd vooglaadija
-
-# Start all services
-docker-compose up -d
+git clone https://github.com/tomkabel/team21-vooglaadija.git
+cd team21-vooglaadija
+docker compose up -d
 ```
 
-### Option 2: Local Development
+The stack runs API, Worker, PostgreSQL, Redis, nginx, OpenTelemetry Collector, and Swagger UI.
+
+### Local Development
 
 ```bash
-# Clone and setup
-git clone https://github.com/yourusername/vooglaadija.git
-cd vooglaadija
-
-# Install dependencies using hatch
+git clone https://github.com/tomkabel/team21-vooglaadija.git
+cd team21-vooglaadija
 hatch env create
 
-# Or install with specific features
-pip install "vooglaadija[test,lint]"
-
-# Configure environment
 cp .env.example .env
-# Edit .env with your settings
+# Minimum required:
+#   DB_PASSWORD=<strong-password>
+#   REDIS_PASSWORD=<strong-password>
+#   SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
 
-# Run database migrations
 hatch run db-migrate
-
-# Run the API
-hatch run dev
-
-# Run the worker (separate terminal)
-hatch run python -m worker.main
+hatch run dev              # API
+python -m worker.main      # Worker (separate terminal)
 ```
 
-### Access the Web Interface
+### Access Points
 
-Once running, access the HTMX frontend at:
-- **Home:** http://localhost:8000/
-- **Login:** http://localhost:8000/login
-- **Register:** http://localhost:8000/register
-- **Downloads:** http://localhost:8000/downloads (requires login)
+- Web Dashboard: http://localhost:8000/web/downloads
+- Login: http://localhost:8000/web/login
+- API Docs: http://localhost:8000/docs
+- Standalone Swagger: http://localhost:8081
 
 ---
 
-## 💻 Usage
+## Usage
 
-### Register a new user
+### Register
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/register \
@@ -134,21 +130,12 @@ curl -X POST http://localhost:8000/api/v1/auth/register \
   -d '{"email": "user@example.com", "password": "securepassword123"}'
 ```
 
-### Login and obtain tokens
+### Login
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email": "user@example.com", "password": "securepassword123"}'
-```
-
-Response:
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer"
-}
 ```
 
 ### Create a download job
@@ -157,246 +144,110 @@ Response:
 curl -X POST http://localhost:8000/api/v1/downloads \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}'
+  -d '{"url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ"}'
 ```
 
-Response:
+**Note:** The current deployment accepts YouTube URLs via yt-dlp.
+
+### Error example (422 Validation Error)
+
+```bash
+curl -X POST http://localhost:8000/api/v1/downloads \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "not-a-url"}'
+```
+
+Expected response:
 ```json
 {
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "pending",
-  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "created_at": "2024-01-15T10:30:00Z"
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed"
+  }
 }
 ```
 
-### Check job status
-
-```bash
-curl -X GET http://localhost:8000/api/v1/downloads/550e8400-e29b-41d4-a716-446655440000 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-### Download the file
-
-```bash
-curl -X GET "http://localhost:8000/api/v1/downloads/550e8400-e29b-41d4-a716-446655440000/file" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  -o downloaded_file.mp4
-```
+See [docs/API.md](docs/API.md) for the full endpoint reference, request/response schemas, and status codes.
 
 ---
 
-## 🔌 API Reference
+## Documentation
 
-### Web UI Routes
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/` | Home page |
-| `GET` | `/login` | Login page |
-| `POST` | `/login` | Login form submission |
-| `GET` | `/register` | Registration page |
-| `POST` | `/register` | Registration form submission |
-| `GET` | `/logout` | Logout and redirect |
-| `GET` | `/downloads` | Downloads dashboard |
-| `GET` | `/downloads/{id}/status` | Job status (HTMX partial) |
-
-### REST API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/v1/auth/register` | Register new user account |
-| `POST` | `/api/v1/auth/login` | Authenticate and get JWT tokens |
-| `POST` | `/api/v1/auth/refresh` | Refresh access token |
-| `GET` | `/api/v1/me` | Get current user profile |
-| `POST` | `/api/v1/downloads` | Create new download job |
-| `GET` | `/api/v1/downloads` | List user's download jobs |
-| `GET` | `/api/v1/downloads/{id}` | Get job status and details |
-| `GET` | `/api/v1/downloads/{id}/file` | Download the processed file |
-| `DELETE` | `/api/v1/downloads/{id}` | Delete a download job |
-| `GET` | `/api/v1/health` | Service health check |
+| Document | Description |
+|----------|-------------|
+| [docs/API.md](docs/API.md) | Full API reference with auth requirements, status codes, and schemas |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture and component responsibilities |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Development workflow, tests, and code standards |
+| [docs/OPS.md](docs/OPS.md) | Environment variables, deployment, and troubleshooting |
 
 ---
 
-## ⚙️ Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@localhost:5432/ytprocessor` |
-| `SECRET_KEY` | JWT signing key | `change-me` |
-| `REDIS_URL` | Redis connection string | `redis://localhost:6379` |
-| `CORS_ORIGINS` | Allowed CORS origins | `*` |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | Access token expiry (minutes) | `15` |
-| `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh token expiry (days) | `7` |
-| `FILE_EXPIRE_HOURS` | Download link expiry (hours) | `24` |
-| `STORAGE_PATH` | Local storage directory | `./storage` |
-
----
-
-## 🛠 Tech Stack
+## Tech Stack
 
 | Technology | Purpose |
 |------------|---------|
-| ![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white) | Runtime |
-| ![FastAPI](https://img.shields.io/badge/FastAPI-26A69A?style=for-the-badge&logo=fastapi&logoColor=white) | API Framework |
-| ![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71F1B?style=for-the-badge&logo=sqlalchemy) | ORM |
-| ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white) | Database |
-| ![Redis](https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white) | Queue & Cache |
-| ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white) | Containerization |
-| ![GitHub%20Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=for-the-badge&logo=github&logoColor=white) | CI/CD |
+| Python 3.12+ | Runtime |
+| FastAPI | API framework |
+| SQLAlchemy | ORM |
+| PostgreSQL | Database |
+| Redis | Queue and cache |
+| Docker | Containerization |
+| nginx | Reverse proxy |
+| Tailwind CSS | Frontend styling |
+| Prometheus | Metrics |
+| sse-starlette | Real-time updates |
+| GitHub Actions | CI/CD |
 
-### Key Libraries
+### Runtime Dependencies
 
-- `python-jose[cryptography]` — JWT token handling
+- `python-jose[cryptography]` — JWT handling
 - `passlib[bcrypt]` — Password hashing
-- `yt-dlp` — Media extraction engine
-- `pytest` — Testing framework
-- `Jinja2` — Template engine for HTMX pages
-- `HTMX` — Dynamic frontend interactions
+- `yt-dlp` — Media extraction
+- `sse-starlette` — Server-Sent Events
+- `prometheus-client` — Metrics
+- `slowapi` — Rate limiting
+- `structlog` — Structured logging
+- `orjson` — Fast JSON serialization
+- `uvloop` — Async event loop
+- `tenacity` — Retry logic
+- `sentry-sdk` — Error tracking
 
-### Project Structure
+### System Dependencies
 
-```
-app/
-├── api/routes/
-│   ├── pages.py         # HTMX page routes
-│   └── downloads.py     # Download API endpoints
-├── templates/           # Jinja2 templates
-│   ├── base.html
-│   ├── pages/          # Login, register, downloads
-│   └── partials/       # Navbar, cards, forms
-└── static/css/         # Stylesheets
-```
+- `Node.js` — yt-dlp JavaScript signature solving
+- `ffmpeg` — Media merging and transcoding
 
 ---
 
-## 🏗 Architecture
+## Architecture
 
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Client    │────▶│  FastAPI    │────▶│ PostgreSQL  │
-│ Application │     │     API     │     │  Database   │
-└─────────────┘     └──────┬──────┘     └─────────────┘
-                           │
-                           ▼
-                    ┌─────────────┐
-                    │    Redis    │
-                    │    Queue    │
-                    └──────┬──────┘
-                           │
-                           ▼
-                    ┌─────────────┐     ┌─────────────┐
-                    │   Worker    │────▶│   Storage   │
-                    │  (yt-dlp)   │     │  (downloads)│
-                    └─────────────┘     └─────────────┘
+```mermaid
+flowchart TD
+    Client([Client]) -->|HTTP/S| nginx[nginx]
+    nginx -->|Proxy| api[FastAPI API]
+    api -->|SQL| db[(PostgreSQL)]
+    api -->|Queue| redis[(Redis)]
+    redis -->|Consume| worker[Worker<br/>yt-dlp]
+    worker -->|Files| storage[(Storage)]
+    worker -->|Update| db
+    api -.->|Metrics/Traces| otel[OpenTelemetry Collector]
+    api -.->|Errors| sentry[Sentry]
 ```
 
-### Component Responsibilities
-
-**API Server**
-- User authentication (register, login, token refresh)
-- Download job CRUD operations
-- File streaming and expiration logic
-- Health check endpoints
-
-**Worker Process**
-- Consumes jobs from Redis queue
-- Extracts media using yt-dlp
-- Updates job status in PostgreSQL
-- Manages file lifecycle
+The API server handles authentication, job management, HTMX rendering, SSE streaming, and observability. The worker consumes jobs from Redis, extracts media via yt-dlp, and manages file lifecycle. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full diagram and component details.
 
 ---
 
-## 🤝 Contributing
+## License
 
-We welcome contributions! Please follow these guidelines:
-
-### Development Workflow
-
-1. **Fork** the repository
-2. **Create** a feature branch: `feat/your-feature` or `fix/your-bug`
-3. **Commit** your changes following conventional commits
-4. **Push** to your fork and **create** a Pull Request
-5. **Ensure** all tests pass before merging
-
-### Week-by-Week Workflow
-
-This is designed as an 8-week working group project. Each week has specific deliverables:
-
-- **Week 1-2:** Complete foundation and authentication UI
-- **Week 3-4:** Complete downloads dashboard and status polling
-- **Week 5-7:** Polish and testing
-- **Week 8:** Cloud deployment (if required)
-
-### Branch Strategy
-
-- `main` — Production-ready code only
-- Feature branches — Short-lived, deleted after merge
-- Direct commits to `main` are prohibited
-
-### Code Standards
-
-- Type hints required for all new code
-- 100% test coverage for new features
-- Follow PEP 8 with 100 character line limit
-- Use `async`/`await` for I/O-bound operations
-
-### Running Tests
-
-```bash
-# Run all tests with coverage
-pytest tests/ --cov=app --cov-report=term-missing
-
-# Run specific test file
-pytest tests/test_api/test_auth.py -v
-```
-
-### Manual Test Checklist
-
-Before demoing, verify:
-- [ ] Register new user works
-- [ ] Login with wrong password shows error
-- [ ] Login with correct password redirects
-- [ ] Create download with invalid URL shows error
-- [ ] Create download with valid URL appears in list
-- [ ] Status updates during processing
-- [ ] Completed file downloads successfully
-- [ ] Logout redirects to login
+GNU General Public License v3.0. See [LICENSE](LICENSE).
 
 ---
-
-## 📜 License
-
-This project is licensed under the **GNU General Public License v3.0**.
-
-```
-YouTube Link Processor - REST API for YouTube media extraction
-Copyright (C) 2024
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
-```
-
----
-
-## 📞 Contact
 
 <div align="center">
 
-[![GitHub](https://img.shields.io/badge/View_on-GitHub-181717?style=for-the-badge&logo=github)](https://github.com/yourusername/vooglaadija)
-[![Issues](https://img.shields.io/badge/Report_Issue-EE3B3B?style=for-the-badge&logo=github)](https://github.com/yourusername/vooglaadija/issues)
-
-*Built with FastAPI • Powered by yt-dlp*
+[![GitHub](https://img.shields.io/badge/View_on-GitHub-181717?style=for-the-badge&logo=github)](https://github.com/tomkabel/team21-vooglaadija)
+[![Issues](https://img.shields.io/badge/Report_Issue-EE3B3B?style=for-the-badge&logo=github)](https://github.com/tomkabel/team21-vooglaadija/issues)
 
 </div>

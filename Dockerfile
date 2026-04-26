@@ -171,7 +171,7 @@ ARG GIT_SHA
 LABEL org.opencontainers.image.source="https://github.com/team21/vooglaadija" \
       org.opencontainers.image.version="1.0.0" \
       org.opencontainers.image.description="YouTube Link Processor API" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="GPL-3.0" \
       org.opencontainers.image.revision=${GIT_SHA:-unknown} \
       io.buildkit.sbom="true" \
       io.sigstore.cosign.signature="true"
@@ -214,7 +214,7 @@ USER appuser
 LABEL org.opencontainers.image.source="https://github.com/team21/vooglaadija" \
       org.opencontainers.image.version="1.0.0" \
       org.opencontainers.image.description="YouTube Link Processor Worker" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="GPL-3.0" \
       org.opencontainers.image.revision=${GIT_SHA:-unknown} \
       io.buildkit.sbom="true" \
       io.sigstore.cosign.signature="true"
