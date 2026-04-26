@@ -1258,7 +1258,8 @@ class TestUpdateUsername:
                 cookies={"access_token": access_token},
             )
 
-        assert response.status_code == 403
+        assert response.status_code == 303
+        assert response.headers["location"] == "/web/settings?error=csrf"
 
 
 class TestChangePassword:

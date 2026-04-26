@@ -588,7 +588,7 @@ async def test_retry_download_not_failed_returns_400(db_session: AsyncSession):
         )
 
     assert response.status_code == 400
-    assert "Only failed jobs can be retried" in response.json()["detail"]
+    assert "Only failed jobs can be retried" in response.json()["error"]["message"]
 
 
 @pytest.mark.asyncio
