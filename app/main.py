@@ -9,6 +9,7 @@ Features:
 
 import os
 import signal
+import threading
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -50,14 +51,30 @@ logger = get_logger(__name__)
 
 APP_VERSION = "0.1.0"
 
-# Track shutdown signal for diagnostics
-_shutdown_signal_received: int = 0
+
+class _ShutdownState:
+    """Thread-safe shutdown state tracker."""
+
+    def __init__(self) -> None:
+        self._received: int = 0
+        self._lock = threading.Lock()
+
+    @property
+    def received(self) -> int:
+        with self._lock:
+            return self._received
+
+    def set(self, signum: int) -> None:
+        with self._lock:
+            self._received = signum
+
+
+_shutdown_state = _ShutdownState()
 
 
 def _sigterm_handler(signum: int, frame: Any) -> None:
     """Handle SIGTERM/SIGINT for shutdown diagnostics."""
-    global _shutdown_signal_received  # noqa: PLW0603 - signal handlers require module-level state
-    _shutdown_signal_received = signum
+    _shutdown_state.set(signum)
     signal_name = signal.Signals(signum).name if hasattr(signal, "Signals") else str(signum)
     logger.warning(
         "shutdown_signal_received",
@@ -66,9 +83,48 @@ def _sigterm_handler(signum: int, frame: Any) -> None:
     )
 
 
-# Register signal handlers for graceful shutdown diagnostics
-signal.signal(signal.SIGTERM, _sigterm_handler)
-signal.signal(signal.SIGINT, _sigterm_handler)
+def _install_shutdown_diagnostics() -> None:
+    """Install shutdown signal handlers safely from main thread.
+
+    This function should be called from inside the lifespan() startup routine
+    after Uvicorn has installed its handlers. It handles:
+    - Only registering from the main thread to avoid ValueError
+    - Chaining to any existing handlers instead of replacing them
+    """
+
+    def _chained_sigterm_handler(signum: int, frame: Any) -> None:
+        """Handler that calls previous handler and our diagnostics."""
+        _shutdown_state.set(signum)
+        signal_name = signal.Signals(signum).name if hasattr(signal, "Signals") else str(signum)
+        logger.warning(
+            "shutdown_signal_received",
+            signal=signal_name,
+            signal_number=signum,
+        )
+        previous_handler = signal.getsignal(signal.SIGTERM)
+        if callable(previous_handler) and previous_handler is not _chained_sigterm_handler:
+            try:
+                previous_handler(signum, frame)
+            except Exception:
+                pass
+
+    try:
+        # Only install from main thread to avoid ValueError
+        if threading.current_thread() is threading.main_thread():
+            # Get current handler to potentially chain to it
+            current_handler = signal.getsignal(signal.SIGTERM)
+            # Only install if not already our chained handler
+            if current_handler is not _chained_sigterm_handler:
+                signal.signal(signal.SIGTERM, _chained_sigterm_handler)
+            # Also register SIGINT
+            current_int_handler = signal.getsignal(signal.SIGINT)
+            if current_int_handler is not _chained_sigterm_handler:
+                signal.signal(signal.SIGINT, _chained_sigterm_handler)
+            logger.info("shutdown_diagnostics_installed")
+    except ValueError:
+        # Not running in main thread, skip signal handler installation
+        logger.warning("shutdown_diagnostics_skipped_not_main_thread")
+
 
 # Sentry initialization (production only)
 if settings.environment == "production" and os.environ.get("SENTRY_DSN"):
@@ -102,10 +158,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         uvloop_available=UVLOOP_AVAILABLE,
     )
     init_metrics()
+
+    # Install shutdown diagnostics after Uvicorn handlers are in place
+    # This must happen after uvicorn imports the module but before handling requests
+    _install_shutdown_diagnostics()
+
     yield
     logger.info(
         "application_shutting_down",
-        shutdown_signal=_shutdown_signal_received,
+        shutdown_signal=_shutdown_state.received,
     )
 
 
