@@ -43,7 +43,7 @@ def _parse_retry_after(detail: str) -> int:
     match = re.match(r"(\d+)\s+per\s+(\d+)\s+(\w+)", detail)
     if not match:
         return 60  # Default to 60 seconds if parsing fails
-    limit, window, unit = match.groups()
+    limit, _window, unit = match.groups()
     limit = int(limit)
     unit = unit.lower()
     if unit.endswith("s"):

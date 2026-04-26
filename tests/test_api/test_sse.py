@@ -1,7 +1,7 @@
 """Tests for SSE (Server-Sent Events) endpoints."""
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
