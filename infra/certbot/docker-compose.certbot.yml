@@ -5,12 +5,18 @@ services:
       - ./ssl:/etc/letsencrypt:rw
       - ./cloudflare.ini:/etc/letsencrypt/cloudflare.ini:ro
     entrypoint: |
-      /bin/sh -c 'trap exit TERM;
+      /bin/sh -c '
+        deploy_hook() {
+          echo "Reloading nginx after cert renewal..."
+          docker exec ytprocessor-nginx nginx -s reload 2>/dev/null || echo "nginx reload attempted"
+        }
+        trap exit TERM;
         while :; do
           certbot renew \
             --dns-cloudflare \
             --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
-            --dns-cloudflare-propagation-seconds 30 || true;
+            --dns-cloudflare-propagation-seconds 30 \
+            --deploy-hook "bash -c deploy_hook" || true;
           sleep 12h;
         done;'
     restart: unless-stopped

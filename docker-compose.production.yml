@@ -120,7 +120,7 @@ services:
     restart: unless-stopped
     volumes:
       # SSL certificates - preserves full LetsEncrypt layout
-      - ./infra/letsencrypt:/etc/letsencrypt:rw
+      - ./infra/ssl:/etc/letsencrypt:rw
       # Cloudflare API credentials for DNS-01 challenge
       - ./infra/certbot/cloudflare.ini:/etc/letsencrypt/cloudflare.ini:ro
       # Mount Docker socket to signal nginx container on renewal
