@@ -422,7 +422,7 @@ async def terms_page(request: Request):
     return templates.TemplateResponse(
         request,
         "terms.html",
-        get_template_context(request),
+        get_template_context(request, last_updated="April 26, 2026"),
     )
 
 

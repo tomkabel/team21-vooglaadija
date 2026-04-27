@@ -29,7 +29,6 @@ Third-Party Components
 This software includes the following third-party components:
 
 1. yt-dlp
-   - Copyright (c) 2023-2026 yt-dlp contributors
    - License: Unlicense (public domain)
    - URL: https://github.com/yt-dlp/yt-dlp
 
@@ -39,7 +38,7 @@ This software includes the following third-party components:
    - URL: https://github.com/tiangolo/fastapi
 
 3. SQLAlchemy
-   - Copyright (c) 2005-2026 SQLAlchemy authors
+   - Copyright (c) 2007-2026 SQLAlchemy authors
    - License: MIT
    - URL: https://github.com/sqlalchemy/sqlalchemy
 
@@ -55,8 +54,8 @@ This software includes the following third-party components:
 
 6. HTMX
    - Copyright (c) 2023-2026 Big Sky Software
-   - License: Apache 2.0
-   - URL: https://github.com/htmx/htmx
+   - License: 0BSD
+   - URL: https://github.com/bigskysoftware/htmx
 
 7. Tailwind CSS
    - Copyright (c) 2023-2026 Tailwind Labs
