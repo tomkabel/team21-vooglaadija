@@ -4,15 +4,26 @@
 # For subdomain: youtube.tomabel.ee
 # Target: Ubuntu 25 VPS at 37.114.46.226
 # ===========================================
+#
+# Architecture: All services run in Docker Compose.
+#   - nginx (reverse proxy + SSL termination) is the ytprocessor-nginx container.
+#   - certbot renewal is handled by the ytprocessor-certbot container.
+#   - NO host-level nginx or certbot should be running.
+#
+# Usage:
+#   sudo ./infra/deploy/deploy.sh all
+#
+# ===========================================
 
 set -euo pipefail
 
 # Configuration
 DOMAIN="youtube.tomabel.ee"
 DEPLOY_DIR="/opt/vooglaadija"
-SSL_DIR="$DEPLOY_DIR/infra/ssl"
+LETSENCRYPT_DIR="$DEPLOY_DIR/infra/letsencrypt"
 CERTBOT_DATA_DIR="$DEPLOY_DIR/infra/certbot/data"
 BACKUP_DIR="/opt/vooglaadija-backups"
+NGINX_CONTAINER="ytprocessor-nginx"
 
 # Colors for output
 RED='\033[0;31m'
@@ -45,6 +56,11 @@ phase0() {
         exit 1
     fi
 
+    if [[ ! -f "docker-compose.production.yml" ]]; then
+        log_error "docker-compose.production.yml not found. Run from project directory."
+        exit 1
+    fi
+
     if [[ ! -f "infra/nginx/nginx.production.conf" ]]; then
         log_error "nginx.production.conf not found."
         exit 1
@@ -67,8 +83,6 @@ phase1() {
     apt install -y \
         docker.io \
         docker-compose-plugin \
-        certbot \
-        python3-certbot-nginx \
         dnsutils \
         ufw \
         rsync \
@@ -87,6 +101,9 @@ phase1() {
     fi
 
     # Configure UFW
+    # NOTE: Docker manipulates iptables directly. UFW rules for Docker-published
+    # ports are best-effort. For strict isolation, consider setting
+    # {"iptables": false} in /etc/docker/daemon.json and managing rules manually.
     log_info "Configuring firewall..."
     ufw default deny incoming
     ufw default allow outgoing
@@ -131,20 +148,17 @@ phase3() {
 
     # Create deployment directory
     mkdir -p "$DEPLOY_DIR"
-    mkdir -p "$SSL_DIR"
+    mkdir -p "$LETSENCRYPT_DIR"
     mkdir -p "$CERTBOT_DATA_DIR"
     mkdir -p "$BACKUP_DIR"
-    mkdir -p /var/www/certbot
 
     # Set permissions
-    chmod 755 /var/www/certbot
     chmod 755 "$DEPLOY_DIR"
-    chmod 755 "$SSL_DIR"
+    chmod 755 "$LETSENCRYPT_DIR"
     chmod 755 "$CERTBOT_DATA_DIR"
 
-    # Set ownership (use www-data for nginx compatibility)
+    # Set ownership
     chown -R root:root "$DEPLOY_DIR"
-    chown -R www-data:www-data /var/www/certbot
 
     # Copy project files (excluding sensitive data)
     log_info "Copying project files to $DEPLOY_DIR..."
@@ -179,117 +193,114 @@ phase3() {
 phase4() {
     log_step "=== Phase 4: SSL Certificate Acquisition ==="
 
-    # Stop nginx if running (conflicts with certbot port 80)
-    systemctl stop nginx || true
+    # The production stack runs nginx inside Docker. Host nginx must NEVER run,
+    # or it will bind ports 80/443 and prevent the container from starting.
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        log_warn "Host nginx is running - stopping it to free ports 80/443"
+        systemctl stop nginx || true
+    fi
+
+    if systemctl is-enabled --quiet nginx 2>/dev/null; then
+        log_warn "Host nginx is enabled - disabling it"
+        systemctl disable nginx || true
+    fi
+
+    # Remove stale host nginx site configs to prevent accidental re-enabling
+    rm -f "/etc/nginx/sites-enabled/$DOMAIN" 2>/dev/null || true
+    rm -f "/etc/nginx/sites-available/$DOMAIN" 2>/dev/null || true
+
+    # Remove legacy host-level certbot renewal hook (previously created by old
+    # versions of this script). Renewal is now handled by the certbot container.
+    rm -f /etc/letsencrypt/renewal-hooks/deploy/vooglaadija.sh 2>/dev/null || true
+
+    # Ensure docker nginx is not using port 80 before we attempt issuance
+    if docker ps --format '{{.Names}}' | grep -q "^${NGINX_CONTAINER}$"; then
+        log_warn "Docker nginx container is running - stopping it to free port 80"
+        cd "$DEPLOY_DIR"
+        docker compose -f docker-compose.yml -f docker-compose.production.yml stop nginx 2>/dev/null || true
+        sleep 2
+    fi
+
+    # Ensure directories exist
+    mkdir -p "$LETSENCRYPT_DIR"
+    mkdir -p "$CERTBOT_DATA_DIR"
+
+    local LIVE_DIR
+    LIVE_DIR="$LETSENCRYPT_DIR/live/$DOMAIN"
 
     # Check if certificates already exist
-    if [[ -f "$SSL_DIR/fullchain.pem" ]] && [[ -f "$SSL_DIR/privkey.pem" ]]; then
-        log_info "SSL certificates already exist in $SSL_DIR"
-        log_info "To re-generate, delete existing certs and run this phase again"
+    if [[ -f "$LIVE_DIR/fullchain.pem" ]] && [[ -f "$LIVE_DIR/privkey.pem" ]]; then
+        log_info "SSL certificates already exist in $LIVE_DIR"
+        log_info "To re-generate, delete $LIVE_DIR and run this phase again"
         return 0
     fi
 
     log_info "Obtaining Let's Encrypt certificate for $DOMAIN..."
+    log_info "Port 80 must be free (nothing bound to 0.0.0.0:80)"
 
-    # Create temporary nginx config for ACME challenge
-    cat > /tmp/certbot-nginx.conf << 'EOF'
-server {
-    listen 80;
-    server_name DOMAIN_PLACEHOLDER;
+    # -------------------------------------------------------------------------
+    # Initial certificate issuance strategy:
+    #   1. Spin up a temporary lightweight HTTP server on port 80 to serve the
+    #      ACME webroot challenges.
+    #   2. Run certbot in Docker with --webroot so the certificate is registered
+    #      with the webroot authenticator.
+    #   3. Tear down the temporary server.
+    #
+    # Why --webroot (not --standalone)?
+    #   The docker-compose.production.yml certbot service runs 'certbot renew'.
+    #   Renewals inherit the original authenticator. If we used --standalone,
+    #   renewal would try to bind port 80 and collide with the running nginx
+    #   container. With --webroot, renewal writes files to /var/www/certbot and
+    #   the live nginx container serves them.
+    # -------------------------------------------------------------------------
 
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-}
-EOF
+    local TEMP_SERVER_NAME="temp-acme-server"
 
-    sed -i "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" /tmp/certbot-nginx.conf
+    log_info "Starting temporary ACME challenge server on port 80..."
+    docker run -d --rm \
+        --name "$TEMP_SERVER_NAME" \
+        -p 80:80 \
+        -v "$CERTBOT_DATA_DIR:/var/www/certbot" \
+        python:3-alpine \
+        python -m http.server 80 --directory /var/www/certbot >/dev/null 2>&1
 
-    # Configure nginx temporarily
-    cp /tmp/certbot-nginx.conf /etc/nginx/sites-available/"$DOMAIN"
-    ln -sf /etc/nginx/sites-available/"$DOMAIN" /etc/nginx/sites-enabled/"$DOMAIN"
+    # Give the server a moment to bind
+    sleep 2
 
-    # Test and reload nginx
-    if nginx -t; then
-        systemctl reload nginx || systemctl start nginx
-    else
-        log_error "Nginx configuration test failed"
-        return 1
-    fi
-
-    # Obtain certificate
-    certbot certonly \
+    log_info "Requesting certificate via certbot --webroot..."
+    docker run --rm \
+        -v "$LETSENCRYPT_DIR:/etc/letsencrypt" \
+        -v "$CERTBOT_DATA_DIR:/var/www/certbot" \
+        certbot/certbot certonly \
         --webroot \
         --webroot-path=/var/www/certbot \
-        --email "admin@tomabel.ee" \
+        --non-interactive \
         --agree-tos \
         --no-eff-email \
+        --email "admin@tomabel.ee" \
         -d "$DOMAIN" \
         --verbose
 
-    # Copy certificates to project directory
-    log_info "Copying certificates to project directory..."
-    cp /etc/letsencrypt/live/"$DOMAIN"/fullchain.pem "$SSL_DIR/fullchain.pem"
-    cp /etc/letsencrypt/live/"$DOMAIN"/privkey.pem "$SSL_DIR/privkey.pem"
+    # Always clean up the temporary server
+    log_info "Stopping temporary ACME challenge server..."
+    docker stop "$TEMP_SERVER_NAME" >/dev/null 2>&1 || true
 
-    # Create symlinks for compatibility (cert.pem -> fullchain.pem, key.pem -> privkey.pem)
-    cd "$SSL_DIR"
-    ln -sf fullchain.pem cert.pem 2>/dev/null || true
-    ln -sf privkey.pem key.pem 2>/dev/null || true
+    # Verify certificates were created
+    if [[ ! -f "$LIVE_DIR/fullchain.pem" ]] || [[ ! -f "$LIVE_DIR/privkey.pem" ]]; then
+        log_error "Certificate acquisition failed. Check certbot output above."
+        return 1
+    fi
+
+    log_info "Certificates obtained successfully."
 
     # Set secure permissions
-    chmod 644 "$SSL_DIR/fullchain.pem"
-    chmod 644 "$SSL_DIR/cert.pem"
-    chmod 600 "$SSL_DIR/privkey.pem"
-    chmod 600 "$SSL_DIR/key.pem"
+    chmod 755 "$LETSENCRYPT_DIR"
+    find "$LETSENCRYPT_DIR" -type d -exec chmod 755 {} \; 2>/dev/null || true
+    find "$LETSENCRYPT_DIR" -type f -exec chmod 644 {} \; 2>/dev/null || true
 
-    # Create deploy hook for automatic certificate renewal
-    log_info "Creating certbot renewal deploy hook..."
-    mkdir -p /etc/letsencrypt/renewal-hooks/deploy
-    cat > /etc/letsencrypt/renewal-hooks/deploy/vooglaadija.sh << 'DEPLOY_HOOK'
-#!/bin/bash
-# Certbot renewal deploy hook for Vooglaadija
-# Copies renewed certificates to the application SSL directory and reloads nginx
-
-DOMAIN="youtube.tomabel.ee"
-SSL_DIR="/opt/vooglaadija/infra/ssl"
-NGINX_CONTAINER="ytprocessor-nginx"
-
-echo "Certbot deploy hook: Processing certificate renewal for $DOMAIN"
-
-# Copy renewed certificates to application SSL directory
-if [[ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
-    cp /etc/letsencrypt/live/"$DOMAIN"/fullchain.pem "$SSL_DIR/fullchain.pem"
-    cp /etc/letsencrypt/live/"$DOMAIN"/privkey.pem "$SSL_DIR/privkey.pem"
-    chmod 644 "$SSL_DIR/fullchain.pem"
-    chmod 600 "$SSL_DIR/privkey.pem"
-    echo "Certificates copied to $SSL_DIR"
-fi
-
-# Signal nginx to reload certificates
-if docker ps --format '{{.Names}}' | grep -q "^${NGINX_CONTAINER}$"; then
-    docker exec "$NGINX_CONTAINER" nginx -s reload 2>/dev/null || {
-        docker exec "$NGINX_CONTAINER" sh -c "nginx -s reload" 2>/dev/null || echo "nginx reload attempted"
-    }
-    echo "nginx container reloaded"
-fi
-
-echo "Certificate renewal processed successfully"
-DEPLOY_HOOK
-    chmod +x /etc/letsencrypt/renewal-hooks/deploy/vooglaadija.sh
-
-    # Enable certbot timer for automatic renewal
-    log_info "Enabling certbot.timer for automatic renewal..."
-    systemctl enable certbot.timer || log_warn "Could not enable certbot.timer"
-    systemctl start certbot.timer || log_warn "Could not start certbot.timer"
-
-    # Verify timer is running
-    log_info "Checking certbot timer status..."
-    systemctl list-timers certbot* || true
-
-    # Verify certificates
+    # Verify certificate details
     log_info "Certificate details:"
-    openssl x509 -in "$SSL_DIR/fullchain.pem" -noout -subject -dates
+    openssl x509 -in "$LIVE_DIR/fullchain.pem" -noout -subject -dates
 
     log_info "Phase 4 complete - SSL certificates obtained"
 }
@@ -298,12 +309,31 @@ DEPLOY_HOOK
 # PHASE 5: Nginx Configuration
 # ===========================================
 phase5() {
-    log_step "=== Phase 5: Nginx Configuration (SKIPPED) ==="
+    log_step "=== Phase 5: Nginx Configuration ==="
 
-    # Host nginx is NOT used - the docker-compose nginx container handles TLS
-    # All SSL/TLS termination happens in the nginx container with Let's Encrypt certs
-    # See docker-compose.production.yml for the production nginx configuration
-    log_info "Phase 5 skipped - nginx container handles TLS (no host nginx needed)"
+    log_info "Ensuring host nginx is fully disabled (docker nginx handles TLS)..."
+
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        systemctl stop nginx
+        log_info "Host nginx stopped"
+    fi
+
+    if systemctl is-enabled --quiet nginx 2>/dev/null; then
+        systemctl disable nginx
+        log_info "Host nginx disabled"
+    fi
+
+    # Paranoid cleanup of any host-level config that could lead to accidental starts
+    if [[ -f "/etc/nginx/sites-enabled/$DOMAIN" ]]; then
+        rm -f "/etc/nginx/sites-enabled/$DOMAIN"
+        log_info "Removed old host nginx site config (sites-enabled)"
+    fi
+    if [[ -f "/etc/nginx/sites-available/$DOMAIN" ]]; then
+        rm -f "/etc/nginx/sites-available/$DOMAIN"
+        log_info "Removed old host nginx site config (sites-available)"
+    fi
+
+    log_info "Phase 5 complete - Host nginx disabled, docker nginx will handle traffic"
 }
 
 # ===========================================
@@ -391,9 +421,10 @@ phase7() {
         return 1
     fi
 
-    # Verify SSL certificates exist
-    if [[ ! -f "infra/ssl/fullchain.pem" ]] || [[ ! -f "infra/ssl/privkey.pem" ]]; then
-        log_error "SSL certificates not found in infra/ssl/"
+    # Verify SSL certificates exist where the production nginx container mounts them
+    local LIVE_DIR="infra/letsencrypt/live/$DOMAIN"
+    if [[ ! -f "$LIVE_DIR/fullchain.pem" ]] || [[ ! -f "$LIVE_DIR/privkey.pem" ]]; then
+        log_error "SSL certificates not found in $LIVE_DIR"
         log_info "Run phase 4 to obtain certificates"
         return 1
     fi
@@ -405,13 +436,16 @@ phase7() {
     docker compose -f docker-compose.yml -f docker-compose.production.yml up -d db redis
 
     log_info "Waiting for database to be healthy..."
-    sleep 15
 
-    # Check database health
+    # Check database health (up to 60 seconds)
     for i in {1..30}; do
-        if docker compose -f docker-compose.yml -f docker-compose.production.yml exec db pg_isready -U postgres -d ytprocessor >/dev/null 2>&1; then
+        if docker compose -f docker-compose.yml -f docker-compose.production.yml exec -T db pg_isready -U postgres -d ytprocessor >/dev/null 2>&1; then
             log_info "Database is healthy"
             break
+        fi
+        if [[ $i -eq 30 ]]; then
+            log_error "Database did not become healthy within 60 seconds"
+            return 1
         fi
         log_info "Waiting for database... ($i/30)"
         sleep 2
@@ -468,10 +502,11 @@ phase8() {
     # Check SSL certificate
     log_info ""
     log_info "=== SSL Certificate Info ==="
-    if [[ -f "infra/ssl/fullchain.pem" ]]; then
-        openssl x509 -in infra/ssl/fullchain.pem -noout -subject -issuer -dates 2>/dev/null || log_warn "Could not display certificate info"
+    local LIVE_DIR="infra/letsencrypt/live/$DOMAIN"
+    if [[ -f "$LIVE_DIR/fullchain.pem" ]]; then
+        openssl x509 -in "$LIVE_DIR/fullchain.pem" -noout -subject -issuer -dates 2>/dev/null || log_warn "Could not display certificate info"
     else
-        log_warn "Certificate file not found"
+        log_warn "Certificate file not found in $LIVE_DIR"
     fi
 
     # Check container logs
@@ -511,9 +546,10 @@ status() {
 
     echo ""
     echo "SSL Certificates:"
-    if [[ -f "infra/ssl/fullchain.pem" ]]; then
+    local LIVE_DIR="infra/letsencrypt/live/$DOMAIN"
+    if [[ -f "$LIVE_DIR/fullchain.pem" ]]; then
         echo "  Certificate: VALID"
-        openssl x509 -in infra/ssl/fullchain.pem -noout -enddate 2>/dev/null || true
+        openssl x509 -in "$LIVE_DIR/fullchain.pem" -noout -enddate 2>/dev/null || true
     else
         echo "  Certificate: NOT FOUND"
     fi
