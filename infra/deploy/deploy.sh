@@ -10,8 +10,15 @@
 #   - certbot renewal is handled by the ytprocessor-certbot container.
 #   - NO host-level nginx or certbot should be running.
 #
+# SSL via Let's Encrypt DNS-01 challenge (Cloudflare).
+# Requires CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY environment variables.
+#
 # Usage:
-#   sudo ./infra/deploy/deploy.sh all
+#   export CLOUDFLARE_EMAIL=cloudflare@proksiabel.ee
+#   export CLOUDFLARE_API_KEY=<your-global-api-key>
+#   sudo -E ./infra/deploy/deploy.sh all
+#
+# Note: Use `sudo -E` to preserve exported environment variables.
 #
 # ===========================================
 
@@ -64,6 +71,17 @@ phase0() {
     if [[ ! -f "infra/nginx/nginx.production.conf" ]]; then
         log_error "nginx.production.conf not found."
         exit 1
+    fi
+
+    # Validate Cloudflare credentials for DNS-01 challenge
+    if [[ -z "${CLOUDFLARE_EMAIL:-}" ]]; then
+        log_warn "CLOUDFLARE_EMAIL is not set. Phase 4 (SSL) will fail."
+        log_info "Export it before running: export CLOUDFLARE_EMAIL=your-email@example.com"
+    fi
+
+    if [[ -z "${CLOUDFLARE_API_KEY:-}" ]]; then
+        log_warn "CLOUDFLARE_API_KEY is not set. Phase 4 (SSL) will fail."
+        log_info "Export it before running: export CLOUDFLARE_API_KEY=your-global-api-key"
     fi
 
     log_info "Pre-flight checks passed"
@@ -170,6 +188,7 @@ phase3() {
         --exclude='*.pem' \
         --exclude='*.key' \
         --exclude='*.crt' \
+        --exclude='cloudflare.ini' \
         --exclude='storage/' \
         --exclude='data/' \
         --exclude='node_modules/' \
@@ -188,10 +207,25 @@ phase3() {
 }
 
 # ===========================================
-# PHASE 4: SSL Certificate Acquisition
+# PHASE 4: SSL Certificate Acquisition (Cloudflare DNS-01)
 # ===========================================
 phase4() {
-    log_step "=== Phase 4: SSL Certificate Acquisition ==="
+    log_step "=== Phase 4: SSL Certificate Acquisition (Cloudflare DNS-01) ==="
+
+    # Validate Cloudflare credentials
+    if [[ -z "${CLOUDFLARE_EMAIL:-}" ]]; then
+        log_error "CLOUDFLARE_EMAIL environment variable is not set"
+        log_info "Export it before running this script:"
+        log_info "  export CLOUDFLARE_EMAIL=cloudflare@proksiabel.ee"
+        return 1
+    fi
+
+    if [[ -z "${CLOUDFLARE_API_KEY:-}" ]]; then
+        log_error "CLOUDFLARE_API_KEY environment variable is not set"
+        log_info "Export it before running this script:"
+        log_info "  export CLOUDFLARE_API_KEY=your-global-api-key"
+        return 1
+    fi
 
     # The production stack runs nginx inside Docker. Host nginx must NEVER run,
     # or it will bind ports 80/443 and prevent the container from starting.
@@ -213,14 +247,6 @@ phase4() {
     # versions of this script). Renewal is now handled by the certbot container.
     rm -f /etc/letsencrypt/renewal-hooks/deploy/vooglaadija.sh 2>/dev/null || true
 
-    # Ensure docker nginx is not using port 80 before we attempt issuance
-    if docker ps --format '{{.Names}}' | grep -q "^${NGINX_CONTAINER}$"; then
-        log_warn "Docker nginx container is running - stopping it to free port 80"
-        cd "$DEPLOY_DIR"
-        docker compose -f docker-compose.yml -f docker-compose.production.yml stop nginx 2>/dev/null || true
-        sleep 2
-    fi
-
     # Ensure directories exist
     mkdir -p "$LETSENCRYPT_DIR"
     mkdir -p "$CERTBOT_DATA_DIR"
@@ -235,55 +261,42 @@ phase4() {
         return 0
     fi
 
-    log_info "Obtaining Let's Encrypt certificate for $DOMAIN..."
-    log_info "Port 80 must be free (nothing bound to 0.0.0.0:80)"
+    log_info "Obtaining Let's Encrypt certificate for $DOMAIN via Cloudflare DNS challenge..."
+
+    # Create Cloudflare credentials file with restricted permissions
+    local CF_CREDENTIALS_FILE="$CERTBOT_DATA_DIR/cloudflare.ini"
+
+    cat > "$CF_CREDENTIALS_FILE" << EOF
+# Cloudflare API credentials
+# DO NOT commit this file to version control
+dns_cloudflare_email = ${CLOUDFLARE_EMAIL}
+dns_cloudflare_api_key = ${CLOUDFLARE_API_KEY}
+EOF
+
+    chmod 600 "$CF_CREDENTIALS_FILE"
+    log_info "Created Cloudflare credentials file: $CF_CREDENTIALS_FILE"
 
     # -------------------------------------------------------------------------
-    # Initial certificate issuance strategy:
-    #   1. Spin up a temporary lightweight HTTP server on port 80 to serve the
-    #      ACME webroot challenges.
-    #   2. Run certbot in Docker with --webroot so the certificate is registered
-    #      with the webroot authenticator.
-    #   3. Tear down the temporary server.
-    #
-    # Why --webroot (not --standalone)?
-    #   The docker-compose.production.yml certbot service runs 'certbot renew'.
-    #   Renewals inherit the original authenticator. If we used --standalone,
-    #   renewal would try to bind port 80 and collide with the running nginx
-    #   container. With --webroot, renewal writes files to /var/www/certbot and
-    #   the live nginx container serves them.
+    # DNS-01 challenge strategy (Cloudflare):
+    #   Uses the certbot-dns-cloudflare plugin to automate DNS TXT record
+    #   creation via Cloudflare's API. No inbound port 80 access required.
+    #   The certbot/dns-cloudflare image includes the plugin.
     # -------------------------------------------------------------------------
 
-    local TEMP_SERVER_NAME="temp-acme-server"
-
-    log_info "Starting temporary ACME challenge server on port 80..."
-    docker run -d --rm \
-        --name "$TEMP_SERVER_NAME" \
-        -p 80:80 \
-        -v "$CERTBOT_DATA_DIR:/var/www/certbot" \
-        python:3-alpine \
-        python -m http.server 80 --directory /var/www/certbot >/dev/null 2>&1
-
-    # Give the server a moment to bind
-    sleep 2
-
-    log_info "Requesting certificate via certbot --webroot..."
+    log_info "Requesting certificate via certbot --dns-cloudflare..."
     docker run --rm \
         -v "$LETSENCRYPT_DIR:/etc/letsencrypt" \
-        -v "$CERTBOT_DATA_DIR:/var/www/certbot" \
-        certbot/certbot certonly \
-        --webroot \
-        --webroot-path=/var/www/certbot \
+        -v "$CF_CREDENTIALS_FILE:/etc/letsencrypt/cloudflare.ini:ro" \
+        certbot/dns-cloudflare certonly \
+        --dns-cloudflare \
+        --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
+        --dns-cloudflare-propagation-seconds 30 \
         --non-interactive \
         --agree-tos \
         --no-eff-email \
-        --email "admin@tomabel.ee" \
+        --email "${CLOUDFLARE_EMAIL}" \
         -d "$DOMAIN" \
         --verbose
-
-    # Always clean up the temporary server
-    log_info "Stopping temporary ACME challenge server..."
-    docker stop "$TEMP_SERVER_NAME" >/dev/null 2>&1 || true
 
     # Verify certificates were created
     if [[ ! -f "$LIVE_DIR/fullchain.pem" ]] || [[ ! -f "$LIVE_DIR/privkey.pem" ]]; then
@@ -297,6 +310,8 @@ phase4() {
     chmod 755 "$LETSENCRYPT_DIR"
     find "$LETSENCRYPT_DIR" -type d -exec chmod 755 {} \; 2>/dev/null || true
     find "$LETSENCRYPT_DIR" -type f -exec chmod 644 {} \; 2>/dev/null || true
+    # Keep cloudflare credentials restricted
+    chmod 600 "$CF_CREDENTIALS_FILE"
 
     # Verify certificate details
     log_info "Certificate details:"
@@ -392,6 +407,16 @@ STORAGE_PATH=/app/storage
 # Observability (disabled for production)
 FEATURE_METRICS_ENABLED=false
 FEATURE_TRACING_ENABLED=false
+
+# ===========================================
+# Cloudflare DNS Challenge Credentials
+# These must be exported as environment variables before running deploy.sh:
+#   export CLOUDFLARE_EMAIL=cloudflare@proksiabel.ee
+#   export CLOUDFLARE_API_KEY=<your-global-api-key>
+# Get your Global API Key from: https://dash.cloudflare.com/profile/api-tokens
+# ===========================================
+# CLOUDFLARE_EMAIL=
+# CLOUDFLARE_API_KEY=
 EOF
 
     chmod 600 "$DEPLOY_DIR/.env"
