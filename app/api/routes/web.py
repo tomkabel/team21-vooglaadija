@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Form, HTTPException, Request, Response, status
+from fastapi import APIRouter, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, update
@@ -193,7 +193,7 @@ async def validate_csrf_token(request: Request) -> bool:
 def _error_html(message: str) -> str:
     """Render a standardized error HTML fragment."""
     return (
-        f"<div class='error bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded'>"
+        f"<div class='error-box' role='alert' aria-live='assertive'>"
         f"{html.escape(message)}</div>"
     )
 
@@ -201,9 +201,65 @@ def _error_html(message: str) -> str:
 def _success_html(message: str) -> str:
     """Render a standardized success HTML fragment."""
     return (
-        f"<div class='success bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded'>"
+        f"<div class='success-box' role='status' aria-live='polite'>"
         f"{html.escape(message)}</div>"
     )
+
+
+def _resolve_login_errors(error_code: str | None) -> tuple[str | None, dict[str, str]]:
+    """Map login error code to summary and field-level errors."""
+    if error_code in {"1", "invalid_credentials"}:
+        message = "Invalid email or password"
+        return message, {"email": message, "password": message}
+    if error_code == "csrf":
+        return "Invalid CSRF token", {}
+    if error_code == "inactive":
+        message = "Account is inactive"
+        return message, {"email": message}
+    return None, {}
+
+
+def _resolve_register_errors(error_code: str | None) -> tuple[str | None, dict[str, str]]:
+    """Map register error code to summary and field-level errors."""
+    if error_code == "password_mismatch":
+        message = "Passwords do not match"
+        return message, {"password_confirm": message}
+    if error_code == "password_too_short":
+        message = "Password must be at least 8 characters"
+        return message, {"password": message}
+    if error_code == "email_exists":
+        message = "Email already registered"
+        return message, {"email": message}
+    if error_code == "csrf":
+        return "Invalid CSRF token", {}
+    return None, {}
+
+
+def _resolve_settings_errors(error_code: str | None) -> tuple[str | None, dict[str, str]]:
+    """Map settings error code to summary and field-level errors."""
+    if error_code == "username_too_short":
+        message = "Username must be at least 3 characters"
+        return message, {"username": message}
+    if error_code == "bad_current_password":
+        message = "Current password is incorrect"
+        return message, {"current_password": message}
+    if error_code == "password_mismatch":
+        message = "New passwords do not match"
+        return message, {"new_password_confirm": message}
+    if error_code == "password_too_short":
+        message = "New password must be at least 8 characters"
+        return message, {"new_password": message}
+    if error_code == "bad_password":
+        message = "Password is incorrect"
+        return message, {"delete_password": message}
+    if error_code == "delete_confirmation":
+        message = "Please type DELETE to confirm account deletion"
+        return message, {"confirm_text": message}
+    if error_code == "file_cleanup":
+        return "Unable to remove all downloaded files. Account was not deleted.", {}
+    if error_code == "csrf":
+        return "Invalid CSRF token", {}
+    return None, {}
 
 
 def _htmx_or_redirect(
@@ -272,13 +328,24 @@ def _validate_file_path(file_path: str) -> str:
 
 
 @router.get("/login")
-async def login_page(request: Request, return_url: str = "/web/downloads"):
+async def login_page(
+    request: Request,
+    return_url: str = "/web/downloads",
+    error: Annotated[str | None, Query(max_length=100)] = None,
+):
     """Render login page."""
     token = get_csrf_token(request)
+    error_message, field_errors = _resolve_login_errors(error)
     response = templates.TemplateResponse(
         request,
         "login.html",
-        get_template_context(request, csrf_token=token, return_url=return_url),
+        get_template_context(
+            request,
+            csrf_token=token,
+            return_url=return_url,
+            error=error_message,
+            field_errors=field_errors,
+        ),
     )
     set_csrf_token_cookie(response, token)
     return response
@@ -323,13 +390,22 @@ async def login_form(
 
 
 @router.get("/register")
-async def register_page(request: Request):
+async def register_page(
+    request: Request,
+    error: Annotated[str | None, Query(max_length=100)] = None,
+):
     """Render register page."""
     token = get_csrf_token(request)
+    error_message, field_errors = _resolve_register_errors(error)
     response = templates.TemplateResponse(
         request,
         "register.html",
-        get_template_context(request, csrf_token=token),
+        get_template_context(
+            request,
+            csrf_token=token,
+            error=error_message,
+            field_errors=field_errors,
+        ),
     )
     set_csrf_token_cookie(response, token)
     return response
@@ -450,10 +526,12 @@ async def dashboard_page(
 async def settings_page(
     request: Request,
     current_user: CurrentUserFromCookie,
+    error: Annotated[str | None, Query(max_length=100)] = None,
 ):
     """Render settings page for the current user."""
     token = get_csrf_token(request)
     username = current_user.username or _default_username_from_email(current_user.email)
+    error_message, field_errors = _resolve_settings_errors(error)
     response = templates.TemplateResponse(
         request,
         "settings.html",
@@ -462,6 +540,8 @@ async def settings_page(
             csrf_token=token,
             current_user=current_user,
             username=username,
+            error=error_message,
+            field_errors=field_errors,
         ),
     )
     set_csrf_token_cookie(response, token)
@@ -523,7 +603,7 @@ async def change_password(
             request,
             401,
             _error_html("Current password is incorrect"),
-            "/web/settings?error=bad_password",
+            "/web/settings?error=bad_current_password",
         )
 
     if new_password != new_password_confirm:

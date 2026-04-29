@@ -352,6 +352,18 @@ class TestLoginPage:
         assert 'name="password"' in response.text
         assert 'name="csrf_token"' in response.text
 
+    @pytest.mark.asyncio
+    async def test_login_page_maps_error_to_field_level_accessibility(self):
+        """Test login error is shown inline and linked through ARIA."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/web/login?error=1")
+
+        assert response.status_code == 200
+        assert 'id="email-error"' in response.text
+        assert 'aria-describedby="email-error"' in response.text
+        assert 'aria-errormessage="email-error"' in response.text
+        assert "Invalid email or password" in response.text
+
 
 class TestLoginForm:
     """Tests for POST /web/login."""
@@ -469,6 +481,18 @@ class TestRegisterPage:
         assert 'name="email"' in response.text
         assert 'name="password"' in response.text
         assert 'name="password_confirm"' in response.text
+
+    @pytest.mark.asyncio
+    async def test_register_page_maps_error_to_field_level_accessibility(self):
+        """Test register error is shown inline and linked through ARIA."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/web/register?error=password_mismatch")
+
+        assert response.status_code == 200
+        assert 'id="password-confirm-error"' in response.text
+        assert 'aria-describedby="password-confirm-error"' in response.text
+        assert 'aria-errormessage="password-confirm-error"' in response.text
+        assert "Passwords do not match" in response.text
 
 
 class TestRegisterForm:
@@ -1157,6 +1181,36 @@ class TestSettingsPage:
             )
 
         assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_settings_page_maps_password_error_to_field_level_accessibility(self):
+        """Test settings password errors are linked to the right input."""
+        email = f"settings_err_{uuid.uuid4().hex[:8]}@example.com"
+        password = "securepassword123"
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+        ) as client:
+            await do_register(client, email, password)
+            csrf_token = await do_login(client, email, password)
+
+            login_resp = await client.post(
+                "/web/login",
+                data={"email": email, "password": password},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+            access_token = login_resp.cookies.get("access_token", "")
+
+            response = await client.get(
+                "/web/settings?error=bad_current_password",
+                cookies={"access_token": access_token},
+            )
+
+        assert response.status_code == 200
+        assert 'id="current-password-error"' in response.text
+        assert 'aria-describedby="current-password-error"' in response.text
+        assert 'aria-errormessage="current-password-error"' in response.text
+        assert "Current password is incorrect" in response.text
 
 
 class TestUpdateUsername:
