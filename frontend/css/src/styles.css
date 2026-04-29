@@ -208,11 +208,13 @@
 
     .success-box {
         @apply mt-2 bg-jade-500/10 border border-jade-500/25 text-jade-300 px-5 py-4 rounded-xl;
+
         box-shadow: 0 0 30px rgba(52, 211, 153, 0.1);
     }
 
     .error {
         @apply bg-coral-500/10 border border-coral-500/30 text-coral-300 px-5 py-4 rounded-xl;
+
         box-shadow: 0 0 24px rgba(244, 63, 94, 0.1);
     }
 

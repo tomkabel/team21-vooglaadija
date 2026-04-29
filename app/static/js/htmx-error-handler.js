@@ -36,7 +36,9 @@
       // This avoids duplicate generic toasts when backend returns an HTML error fragment.
       if (isWebFormRequest && xhr.status >= 400 && xhr.status < 500) {
         if (renderErrorInTarget(evt, xhr.responseText)) {
-          return;
+          if (xhr.status !== 401) {
+            return;
+          }
         }
       }
 

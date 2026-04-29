@@ -237,29 +237,42 @@ def _resolve_register_errors(error_code: str | None) -> tuple[str | None, dict[s
 
 def _resolve_settings_errors(error_code: str | None) -> tuple[str | None, dict[str, str]]:
     """Map settings error code to summary and field-level errors."""
-    if error_code == "username_too_short":
-        message = "Username must be at least 3 characters"
-        return message, {"username": message}
-    if error_code == "bad_current_password":
-        message = "Current password is incorrect"
-        return message, {"current_password": message}
-    if error_code == "password_mismatch":
-        message = "New passwords do not match"
-        return message, {"new_password_confirm": message}
-    if error_code == "password_too_short":
-        message = "New password must be at least 8 characters"
-        return message, {"new_password": message}
-    if error_code == "bad_password":
-        message = "Password is incorrect"
-        return message, {"delete_password": message}
-    if error_code == "delete_confirmation":
-        message = "Please type DELETE to confirm account deletion"
-        return message, {"confirm_text": message}
-    if error_code == "file_cleanup":
-        return "Unable to remove all downloaded files. Account was not deleted.", {}
-    if error_code == "csrf":
-        return "Invalid CSRF token", {}
-    return None, {}
+    error_map: dict[str, tuple[str, dict[str, str]]] = {
+        "username_too_short": (
+            "Username must be at least 3 characters",
+            {"username": "Username must be at least 3 characters"},
+        ),
+        "bad_current_password": (
+            "Current password is incorrect",
+            {"current_password": "Current password is incorrect"},
+        ),
+        "password_mismatch": (
+            "New passwords do not match",
+            {"new_password_confirm": "New passwords do not match"},
+        ),
+        "password_too_short": (
+            "New password must be at least 8 characters",
+            {"new_password": "New password must be at least 8 characters"},
+        ),
+        "bad_password": (
+            "Password is incorrect",
+            {"delete_password": "Password is incorrect"},
+        ),
+        "delete_confirmation": (
+            "Please type DELETE to confirm account deletion",
+            {"confirm_text": "Please type DELETE to confirm account deletion"},
+        ),
+        "file_cleanup": (
+            "Unable to remove all downloaded files. Account was not deleted.",
+            {},
+        ),
+        "csrf": ("Invalid CSRF token", {}),
+    }
+    result = error_map.get(error_code)
+    if result is None:
+        return None, {}
+    message, field_errors = result
+    return message, field_errors
 
 
 def _htmx_or_redirect(
