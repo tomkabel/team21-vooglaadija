@@ -192,18 +192,12 @@ async def validate_csrf_token(request: Request) -> bool:
 
 def _error_html(message: str) -> str:
     """Render a standardized error HTML fragment."""
-    return (
-        f"<div class='error-box' role='alert' aria-live='assertive'>"
-        f"{html.escape(message)}</div>"
-    )
+    return f"<div class='error-box' role='alert' aria-live='assertive'>{html.escape(message)}</div>"
 
 
 def _success_html(message: str) -> str:
     """Render a standardized success HTML fragment."""
-    return (
-        f"<div class='success-box' role='status' aria-live='polite'>"
-        f"{html.escape(message)}</div>"
-    )
+    return f"<div class='success-box' role='status' aria-live='polite'>{html.escape(message)}</div>"
 
 
 def _resolve_login_errors(error_code: str | None) -> tuple[str | None, dict[str, str]]:
@@ -268,6 +262,8 @@ def _resolve_settings_errors(error_code: str | None) -> tuple[str | None, dict[s
         ),
         "csrf": ("Invalid CSRF token", {}),
     }
+    if error_code is None:
+        return None, {}
     result = error_map.get(error_code)
     if result is None:
         return None, {}
