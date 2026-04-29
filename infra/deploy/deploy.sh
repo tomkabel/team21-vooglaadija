@@ -4,15 +4,33 @@
 # For subdomain: youtube.tomabel.ee
 # Target: Ubuntu 25 VPS at 37.114.46.226
 # ===========================================
+#
+# Architecture: All services run in Docker Compose.
+#   - nginx (reverse proxy + SSL termination) is the ytprocessor-nginx container.
+#   - certbot renewal is handled by the ytprocessor-certbot container.
+#   - NO host-level nginx or certbot should be running.
+#
+# SSL via Let's Encrypt DNS-01 challenge (Cloudflare).
+# Requires CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY environment variables.
+#
+# Usage:
+#   export CLOUDFLARE_EMAIL=cloudflare@proksiabel.ee
+#   export CLOUDFLARE_API_KEY=<your-global-api-key>
+#   sudo -E ./infra/deploy/deploy.sh all
+#
+# Note: Use `sudo -E` to preserve exported environment variables.
+#
+# ===========================================
 
 set -euo pipefail
 
 # Configuration
 DOMAIN="youtube.tomabel.ee"
 DEPLOY_DIR="/opt/vooglaadija"
-SSL_DIR="$DEPLOY_DIR/infra/ssl"
+LETSENCRYPT_DIR="$DEPLOY_DIR/infra/letsencrypt"
 CERTBOT_DATA_DIR="$DEPLOY_DIR/infra/certbot/data"
 BACKUP_DIR="/opt/vooglaadija-backups"
+NGINX_CONTAINER="ytprocessor-nginx"
 
 # Colors for output
 RED='\033[0;31m'
@@ -45,9 +63,25 @@ phase0() {
         exit 1
     fi
 
+    if [[ ! -f "docker-compose.production.yml" ]]; then
+        log_error "docker-compose.production.yml not found. Run from project directory."
+        exit 1
+    fi
+
     if [[ ! -f "infra/nginx/nginx.production.conf" ]]; then
         log_error "nginx.production.conf not found."
         exit 1
+    fi
+
+    # Validate Cloudflare credentials for DNS-01 challenge
+    if [[ -z "${CLOUDFLARE_EMAIL:-}" ]]; then
+        log_warn "CLOUDFLARE_EMAIL is not set. Phase 4 (SSL) will fail."
+        log_info "Export it before running: export CLOUDFLARE_EMAIL=your-email@example.com"
+    fi
+
+    if [[ -z "${CLOUDFLARE_API_KEY:-}" ]]; then
+        log_warn "CLOUDFLARE_API_KEY is not set. Phase 4 (SSL) will fail."
+        log_info "Export it before running: export CLOUDFLARE_API_KEY=your-global-api-key"
     fi
 
     log_info "Pre-flight checks passed"
@@ -67,8 +101,6 @@ phase1() {
     apt install -y \
         docker.io \
         docker-compose-plugin \
-        certbot \
-        python3-certbot-nginx \
         dnsutils \
         ufw \
         rsync \
@@ -87,6 +119,9 @@ phase1() {
     fi
 
     # Configure UFW
+    # NOTE: Docker manipulates iptables directly. UFW rules for Docker-published
+    # ports are best-effort. For strict isolation, consider setting
+    # {"iptables": false} in /etc/docker/daemon.json and managing rules manually.
     log_info "Configuring firewall..."
     ufw default deny incoming
     ufw default allow outgoing
@@ -131,20 +166,17 @@ phase3() {
 
     # Create deployment directory
     mkdir -p "$DEPLOY_DIR"
-    mkdir -p "$SSL_DIR"
+    mkdir -p "$LETSENCRYPT_DIR"
     mkdir -p "$CERTBOT_DATA_DIR"
     mkdir -p "$BACKUP_DIR"
-    mkdir -p /var/www/certbot
 
     # Set permissions
-    chmod 755 /var/www/certbot
     chmod 755 "$DEPLOY_DIR"
-    chmod 755 "$SSL_DIR"
+    chmod 755 "$LETSENCRYPT_DIR"
     chmod 755 "$CERTBOT_DATA_DIR"
 
-    # Set ownership (use www-data for nginx compatibility)
+    # Set ownership
     chown -R root:root "$DEPLOY_DIR"
-    chown -R www-data:www-data /var/www/certbot
 
     # Copy project files (excluding sensitive data)
     log_info "Copying project files to $DEPLOY_DIR..."
@@ -156,6 +188,7 @@ phase3() {
         --exclude='*.pem' \
         --exclude='*.key' \
         --exclude='*.crt' \
+        --exclude='cloudflare.ini' \
         --exclude='storage/' \
         --exclude='data/' \
         --exclude='node_modules/' \
@@ -174,122 +207,115 @@ phase3() {
 }
 
 # ===========================================
-# PHASE 4: SSL Certificate Acquisition
+# PHASE 4: SSL Certificate Acquisition (Cloudflare DNS-01)
 # ===========================================
 phase4() {
-    log_step "=== Phase 4: SSL Certificate Acquisition ==="
+    log_step "=== Phase 4: SSL Certificate Acquisition (Cloudflare DNS-01) ==="
 
-    # Stop nginx if running (conflicts with certbot port 80)
-    systemctl stop nginx || true
-
-    # Check if certificates already exist
-    if [[ -f "$SSL_DIR/fullchain.pem" ]] && [[ -f "$SSL_DIR/privkey.pem" ]]; then
-        log_info "SSL certificates already exist in $SSL_DIR"
-        log_info "To re-generate, delete existing certs and run this phase again"
-        return 0
-    fi
-
-    log_info "Obtaining Let's Encrypt certificate for $DOMAIN..."
-
-    # Create temporary nginx config for ACME challenge
-    cat > /tmp/certbot-nginx.conf << 'EOF'
-server {
-    listen 80;
-    server_name DOMAIN_PLACEHOLDER;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-}
-EOF
-
-    sed -i "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" /tmp/certbot-nginx.conf
-
-    # Configure nginx temporarily
-    cp /tmp/certbot-nginx.conf /etc/nginx/sites-available/"$DOMAIN"
-    ln -sf /etc/nginx/sites-available/"$DOMAIN" /etc/nginx/sites-enabled/"$DOMAIN"
-
-    # Test and reload nginx
-    if nginx -t; then
-        systemctl reload nginx || systemctl start nginx
-    else
-        log_error "Nginx configuration test failed"
+    # Validate Cloudflare credentials
+    if [[ -z "${CLOUDFLARE_EMAIL:-}" ]]; then
+        log_error "CLOUDFLARE_EMAIL environment variable is not set"
+        log_info "Export it before running this script:"
+        log_info "  export CLOUDFLARE_EMAIL=cloudflare@proksiabel.ee"
         return 1
     fi
 
-    # Obtain certificate
-    certbot certonly \
-        --webroot \
-        --webroot-path=/var/www/certbot \
-        --email "admin@tomabel.ee" \
+    if [[ -z "${CLOUDFLARE_API_KEY:-}" ]]; then
+        log_error "CLOUDFLARE_API_KEY environment variable is not set"
+        log_info "Export it before running this script:"
+        log_info "  export CLOUDFLARE_API_KEY=your-global-api-key"
+        return 1
+    fi
+
+    # The production stack runs nginx inside Docker. Host nginx must NEVER run,
+    # or it will bind ports 80/443 and prevent the container from starting.
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        log_warn "Host nginx is running - stopping it to free ports 80/443"
+        systemctl stop nginx || true
+    fi
+
+    if systemctl is-enabled --quiet nginx 2>/dev/null; then
+        log_warn "Host nginx is enabled - disabling it"
+        systemctl disable nginx || true
+    fi
+
+    # Remove stale host nginx site configs to prevent accidental re-enabling
+    rm -f "/etc/nginx/sites-enabled/$DOMAIN" 2>/dev/null || true
+    rm -f "/etc/nginx/sites-available/$DOMAIN" 2>/dev/null || true
+
+    # Remove legacy host-level certbot renewal hook (previously created by old
+    # versions of this script). Renewal is now handled by the certbot container.
+    rm -f /etc/letsencrypt/renewal-hooks/deploy/vooglaadija.sh 2>/dev/null || true
+
+    # Ensure directories exist
+    mkdir -p "$LETSENCRYPT_DIR"
+    mkdir -p "$CERTBOT_DATA_DIR"
+
+    local LIVE_DIR
+    LIVE_DIR="$LETSENCRYPT_DIR/live/$DOMAIN"
+
+    # Check if certificates already exist
+    if [[ -f "$LIVE_DIR/fullchain.pem" ]] && [[ -f "$LIVE_DIR/privkey.pem" ]]; then
+        log_info "SSL certificates already exist in $LIVE_DIR"
+        log_info "To re-generate, delete $LIVE_DIR and run this phase again"
+        return 0
+    fi
+
+    log_info "Obtaining Let's Encrypt certificate for $DOMAIN via Cloudflare DNS challenge..."
+
+    # Create Cloudflare credentials file with restricted permissions
+    local CF_CREDENTIALS_FILE="$CERTBOT_DATA_DIR/cloudflare.ini"
+
+    cat > "$CF_CREDENTIALS_FILE" << EOF
+# Cloudflare API credentials
+# DO NOT commit this file to version control
+dns_cloudflare_email = ${CLOUDFLARE_EMAIL}
+dns_cloudflare_api_key = ${CLOUDFLARE_API_KEY}
+EOF
+
+    chmod 600 "$CF_CREDENTIALS_FILE"
+    log_info "Created Cloudflare credentials file: $CF_CREDENTIALS_FILE"
+
+    # -------------------------------------------------------------------------
+    # DNS-01 challenge strategy (Cloudflare):
+    #   Uses the certbot-dns-cloudflare plugin to automate DNS TXT record
+    #   creation via Cloudflare's API. No inbound port 80 access required.
+    #   The certbot/dns-cloudflare image includes the plugin.
+    # -------------------------------------------------------------------------
+
+    log_info "Requesting certificate via certbot --dns-cloudflare..."
+    docker run --rm \
+        -v "$LETSENCRYPT_DIR:/etc/letsencrypt" \
+        -v "$CF_CREDENTIALS_FILE:/etc/letsencrypt/cloudflare.ini:ro" \
+        certbot/dns-cloudflare certonly \
+        --dns-cloudflare \
+        --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
+        --dns-cloudflare-propagation-seconds 30 \
+        --non-interactive \
         --agree-tos \
         --no-eff-email \
+        --email "${CLOUDFLARE_EMAIL}" \
         -d "$DOMAIN" \
         --verbose
 
-    # Copy certificates to project directory
-    log_info "Copying certificates to project directory..."
-    cp /etc/letsencrypt/live/"$DOMAIN"/fullchain.pem "$SSL_DIR/fullchain.pem"
-    cp /etc/letsencrypt/live/"$DOMAIN"/privkey.pem "$SSL_DIR/privkey.pem"
+    # Verify certificates were created
+    if [[ ! -f "$LIVE_DIR/fullchain.pem" ]] || [[ ! -f "$LIVE_DIR/privkey.pem" ]]; then
+        log_error "Certificate acquisition failed. Check certbot output above."
+        return 1
+    fi
 
-    # Create symlinks for compatibility (cert.pem -> fullchain.pem, key.pem -> privkey.pem)
-    cd "$SSL_DIR"
-    ln -sf fullchain.pem cert.pem 2>/dev/null || true
-    ln -sf privkey.pem key.pem 2>/dev/null || true
+    log_info "Certificates obtained successfully."
 
     # Set secure permissions
-    chmod 644 "$SSL_DIR/fullchain.pem"
-    chmod 644 "$SSL_DIR/cert.pem"
-    chmod 600 "$SSL_DIR/privkey.pem"
-    chmod 600 "$SSL_DIR/key.pem"
+    chmod 755 "$LETSENCRYPT_DIR"
+    find "$LETSENCRYPT_DIR" -type d -exec chmod 755 {} \; 2>/dev/null || true
+    find "$LETSENCRYPT_DIR" -type f -exec chmod 644 {} \; 2>/dev/null || true
+    # Keep cloudflare credentials restricted
+    chmod 600 "$CF_CREDENTIALS_FILE"
 
-    # Create deploy hook for automatic certificate renewal
-    log_info "Creating certbot renewal deploy hook..."
-    mkdir -p /etc/letsencrypt/renewal-hooks/deploy
-    cat > /etc/letsencrypt/renewal-hooks/deploy/vooglaadija.sh << 'DEPLOY_HOOK'
-#!/bin/bash
-# Certbot renewal deploy hook for Vooglaadija
-# Copies renewed certificates to the application SSL directory and reloads nginx
-
-DOMAIN="youtube.tomabel.ee"
-SSL_DIR="/opt/vooglaadija/infra/ssl"
-NGINX_CONTAINER="ytprocessor-nginx"
-
-echo "Certbot deploy hook: Processing certificate renewal for $DOMAIN"
-
-# Copy renewed certificates to application SSL directory
-if [[ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
-    cp /etc/letsencrypt/live/"$DOMAIN"/fullchain.pem "$SSL_DIR/fullchain.pem"
-    cp /etc/letsencrypt/live/"$DOMAIN"/privkey.pem "$SSL_DIR/privkey.pem"
-    chmod 644 "$SSL_DIR/fullchain.pem"
-    chmod 600 "$SSL_DIR/privkey.pem"
-    echo "Certificates copied to $SSL_DIR"
-fi
-
-# Signal nginx to reload certificates
-if docker ps --format '{{.Names}}' | grep -q "^${NGINX_CONTAINER}$"; then
-    docker exec "$NGINX_CONTAINER" nginx -s reload 2>/dev/null || {
-        docker exec "$NGINX_CONTAINER" sh -c "nginx -s reload" 2>/dev/null || echo "nginx reload attempted"
-    }
-    echo "nginx container reloaded"
-fi
-
-echo "Certificate renewal processed successfully"
-DEPLOY_HOOK
-    chmod +x /etc/letsencrypt/renewal-hooks/deploy/vooglaadija.sh
-
-    # Enable certbot timer for automatic renewal
-    log_info "Enabling certbot.timer for automatic renewal..."
-    systemctl enable certbot.timer || log_warn "Could not enable certbot.timer"
-    systemctl start certbot.timer || log_warn "Could not start certbot.timer"
-
-    # Verify timer is running
-    log_info "Checking certbot timer status..."
-    systemctl list-timers certbot* || true
-
-    # Verify certificates
+    # Verify certificate details
     log_info "Certificate details:"
-    openssl x509 -in "$SSL_DIR/fullchain.pem" -noout -subject -dates
+    openssl x509 -in "$LIVE_DIR/fullchain.pem" -noout -subject -dates
 
     log_info "Phase 4 complete - SSL certificates obtained"
 }
@@ -298,12 +324,31 @@ DEPLOY_HOOK
 # PHASE 5: Nginx Configuration
 # ===========================================
 phase5() {
-    log_step "=== Phase 5: Nginx Configuration (SKIPPED) ==="
+    log_step "=== Phase 5: Nginx Configuration ==="
 
-    # Host nginx is NOT used - the docker-compose nginx container handles TLS
-    # All SSL/TLS termination happens in the nginx container with Let's Encrypt certs
-    # See docker-compose.production.yml for the production nginx configuration
-    log_info "Phase 5 skipped - nginx container handles TLS (no host nginx needed)"
+    log_info "Ensuring host nginx is fully disabled (docker nginx handles TLS)..."
+
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        systemctl stop nginx
+        log_info "Host nginx stopped"
+    fi
+
+    if systemctl is-enabled --quiet nginx 2>/dev/null; then
+        systemctl disable nginx
+        log_info "Host nginx disabled"
+    fi
+
+    # Paranoid cleanup of any host-level config that could lead to accidental starts
+    if [[ -f "/etc/nginx/sites-enabled/$DOMAIN" ]]; then
+        rm -f "/etc/nginx/sites-enabled/$DOMAIN"
+        log_info "Removed old host nginx site config (sites-enabled)"
+    fi
+    if [[ -f "/etc/nginx/sites-available/$DOMAIN" ]]; then
+        rm -f "/etc/nginx/sites-available/$DOMAIN"
+        log_info "Removed old host nginx site config (sites-available)"
+    fi
+
+    log_info "Phase 5 complete - Host nginx disabled, docker nginx will handle traffic"
 }
 
 # ===========================================
@@ -362,6 +407,16 @@ STORAGE_PATH=/app/storage
 # Observability (disabled for production)
 FEATURE_METRICS_ENABLED=false
 FEATURE_TRACING_ENABLED=false
+
+# ===========================================
+# Cloudflare DNS Challenge Credentials
+# These must be exported as environment variables before running deploy.sh:
+#   export CLOUDFLARE_EMAIL=cloudflare@proksiabel.ee
+#   export CLOUDFLARE_API_KEY=<your-global-api-key>
+# Get your Global API Key from: https://dash.cloudflare.com/profile/api-tokens
+# ===========================================
+# CLOUDFLARE_EMAIL=
+# CLOUDFLARE_API_KEY=
 EOF
 
     chmod 600 "$DEPLOY_DIR/.env"
@@ -391,9 +446,10 @@ phase7() {
         return 1
     fi
 
-    # Verify SSL certificates exist
-    if [[ ! -f "infra/ssl/fullchain.pem" ]] || [[ ! -f "infra/ssl/privkey.pem" ]]; then
-        log_error "SSL certificates not found in infra/ssl/"
+    # Verify SSL certificates exist where the production nginx container mounts them
+    local LIVE_DIR="infra/letsencrypt/live/$DOMAIN"
+    if [[ ! -f "$LIVE_DIR/fullchain.pem" ]] || [[ ! -f "$LIVE_DIR/privkey.pem" ]]; then
+        log_error "SSL certificates not found in $LIVE_DIR"
         log_info "Run phase 4 to obtain certificates"
         return 1
     fi
@@ -405,13 +461,16 @@ phase7() {
     docker compose -f docker-compose.yml -f docker-compose.production.yml up -d db redis
 
     log_info "Waiting for database to be healthy..."
-    sleep 15
 
-    # Check database health
+    # Check database health (up to 60 seconds)
     for i in {1..30}; do
-        if docker compose -f docker-compose.yml -f docker-compose.production.yml exec db pg_isready -U postgres -d ytprocessor >/dev/null 2>&1; then
+        if docker compose -f docker-compose.yml -f docker-compose.production.yml exec -T db pg_isready -U postgres -d ytprocessor >/dev/null 2>&1; then
             log_info "Database is healthy"
             break
+        fi
+        if [[ $i -eq 30 ]]; then
+            log_error "Database did not become healthy within 60 seconds"
+            return 1
         fi
         log_info "Waiting for database... ($i/30)"
         sleep 2
@@ -468,10 +527,11 @@ phase8() {
     # Check SSL certificate
     log_info ""
     log_info "=== SSL Certificate Info ==="
-    if [[ -f "infra/ssl/fullchain.pem" ]]; then
-        openssl x509 -in infra/ssl/fullchain.pem -noout -subject -issuer -dates 2>/dev/null || log_warn "Could not display certificate info"
+    local LIVE_DIR="infra/letsencrypt/live/$DOMAIN"
+    if [[ -f "$LIVE_DIR/fullchain.pem" ]]; then
+        openssl x509 -in "$LIVE_DIR/fullchain.pem" -noout -subject -issuer -dates 2>/dev/null || log_warn "Could not display certificate info"
     else
-        log_warn "Certificate file not found"
+        log_warn "Certificate file not found in $LIVE_DIR"
     fi
 
     # Check container logs
@@ -511,9 +571,10 @@ status() {
 
     echo ""
     echo "SSL Certificates:"
-    if [[ -f "infra/ssl/fullchain.pem" ]]; then
+    local LIVE_DIR="infra/letsencrypt/live/$DOMAIN"
+    if [[ -f "$LIVE_DIR/fullchain.pem" ]]; then
         echo "  Certificate: VALID"
-        openssl x509 -in infra/ssl/fullchain.pem -noout -enddate 2>/dev/null || true
+        openssl x509 -in "$LIVE_DIR/fullchain.pem" -noout -enddate 2>/dev/null || true
     else
         echo "  Certificate: NOT FOUND"
     fi
