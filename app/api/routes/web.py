@@ -387,7 +387,7 @@ async def login_form(
 
     if not user.is_active:
         return _htmx_or_redirect(
-            request, 401, _error_html("Account is inactive"), "/web/login?error=1"
+            request, 401, _error_html("Account is inactive"), "/web/login?error=inactive"
         )
 
     access_token = create_access_token(user.id)
@@ -610,7 +610,7 @@ async def change_password(
     if not verify_password(current_password, current_user.password_hash):
         return _htmx_or_redirect(
             request,
-            401,
+            400,
             _error_html("Current password is incorrect"),
             "/web/settings?error=bad_current_password",
         )
@@ -703,7 +703,7 @@ async def delete_account(
     if not verify_password(password, current_user.password_hash):
         return _htmx_or_redirect(
             request,
-            401,
+            400,
             _error_html("Password is incorrect"),
             "/web/settings?error=bad_password",
         )
