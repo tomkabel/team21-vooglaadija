@@ -718,8 +718,10 @@ class TestDashboardPage:
         assert dashboard_response.status_code == 200
         assert 'id="download-list" class="download-list-loading"' in dashboard_response.text
         assert 'id="download-skeleton"' in dashboard_response.text
+        assert "downloadSkeletonFallback" in dashboard_response.text
         assert "clearDownloadSkeleton" in dashboard_response.text
         assert "htmx:sseOpen" in dashboard_response.text
+        assert "htmx:sseError" in dashboard_response.text
 
 
 class TestCreateDownloadForm:
