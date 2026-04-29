@@ -416,6 +416,16 @@ async def logout(request: Request):
     return redirect
 
 
+@router.get("/terms")
+async def terms_page(request: Request):
+    """Render terms of service page with copyright disclaimers and lawful-use requirements."""
+    return templates.TemplateResponse(
+        request,
+        "terms.html",
+        get_template_context(request, last_updated="April 26, 2026"),
+    )
+
+
 # ========================
 # PROTECTED ROUTES
 # ========================
