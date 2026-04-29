@@ -1861,7 +1861,7 @@ class TestLoginInactiveUser:
             )
 
         assert login_response.status_code == 303
-        assert login_response.headers["location"] == "/web/login?error=1"
+        assert login_response.headers["location"] == "/web/login?error=inactive"
 
 
 class TestRegisterIntegrityError:
