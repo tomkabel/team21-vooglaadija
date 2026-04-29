@@ -2216,8 +2216,9 @@ class TestDeleteAccount:
             access_token = login_resp.cookies.get("access_token", "")
 
             # Create a job with a file path that will fail path traversal check
-            from app.models.download_job import DownloadJob
             from sqlalchemy import select
+
+            from app.models.download_job import DownloadJob
 
             # Need to get user id first
             from app.models.user import User
@@ -2279,9 +2280,10 @@ class TestDeleteDownloadFormBranches:
             access_token = login_resp.cookies.get("access_token", "")
 
             # Create a processing job directly
+            from sqlalchemy import select
+
             from app.models.download_job import DownloadJob
             from app.models.user import User
-            from sqlalchemy import select
 
             async with TestingSessionLocal() as session:
                 result = await session.execute(select(User).where(User.email == email))
@@ -2330,9 +2332,10 @@ class TestDeleteDownloadFormBranches:
 
             access_token = login_resp.cookies.get("access_token", "")
 
+            from sqlalchemy import select
+
             from app.models.download_job import DownloadJob
             from app.models.user import User
-            from sqlalchemy import select
 
             async with TestingSessionLocal() as session:
                 result = await session.execute(select(User).where(User.email == email))
@@ -2389,9 +2392,10 @@ class TestDeleteDownloadFormBranches:
 
             access_token = login_resp.cookies.get("access_token", "")
 
+            from sqlalchemy import select
+
             from app.models.download_job import DownloadJob
             from app.models.user import User
-            from sqlalchemy import select
 
             async with TestingSessionLocal() as session:
                 result = await session.execute(select(User).where(User.email == email))
@@ -2414,7 +2418,9 @@ class TestDeleteDownloadFormBranches:
 
             with patch("app.api.routes.web.settings") as mock_settings:
                 mock_settings.storage_path = str(tmp_path)
-                with patch("app.api.routes.web.os.remove", side_effect=OSError("Permission denied")):
+                with patch(
+                    "app.api.routes.web.os.remove", side_effect=OSError("Permission denied")
+                ):
                     delete_response = await client.delete(
                         f"/web/downloads/{job_id}",
                         headers=headers,
@@ -2426,7 +2432,9 @@ class TestDeleteDownloadFormBranches:
 
         # Verify DB record was deleted
         async with TestingSessionLocal() as session:
-            result = await session.execute(select(DownloadJob).where(DownloadJob.id == uuid.UUID(job_id)))
+            result = await session.execute(
+                select(DownloadJob).where(DownloadJob.id == uuid.UUID(job_id))
+            )
             assert result.scalar_one_or_none() is None
 
 
@@ -2453,9 +2461,10 @@ class TestDownloadFileBranches:
 
             access_token = login_resp.cookies.get("access_token", "")
 
+            from sqlalchemy import select
+
             from app.models.download_job import DownloadJob
             from app.models.user import User
-            from sqlalchemy import select
 
             async with TestingSessionLocal() as session:
                 result = await session.execute(select(User).where(User.email == email))
@@ -2499,9 +2508,10 @@ class TestDownloadFileBranches:
 
             access_token = login_resp.cookies.get("access_token", "")
 
+            from sqlalchemy import select
+
             from app.models.download_job import DownloadJob
             from app.models.user import User
-            from sqlalchemy import select
 
             async with TestingSessionLocal() as session:
                 result = await session.execute(select(User).where(User.email == email))
@@ -2548,9 +2558,10 @@ class TestDownloadFileBranches:
 
             access_token = login_resp.cookies.get("access_token", "")
 
+            from sqlalchemy import select
+
             from app.models.download_job import DownloadJob
             from app.models.user import User
-            from sqlalchemy import select
 
             async with TestingSessionLocal() as session:
                 result = await session.execute(select(User).where(User.email == email))
@@ -2599,9 +2610,10 @@ class TestDownloadFileBranches:
 
             access_token = login_resp.cookies.get("access_token", "")
 
+            from sqlalchemy import select
+
             from app.models.download_job import DownloadJob
             from app.models.user import User
-            from sqlalchemy import select
 
             async with TestingSessionLocal() as session:
                 result = await session.execute(select(User).where(User.email == email))
@@ -2655,9 +2667,10 @@ class TestDownloadFileBranches:
 
             access_token = login_resp.cookies.get("access_token", "")
 
+            from sqlalchemy import select
+
             from app.models.download_job import DownloadJob
             from app.models.user import User
-            from sqlalchemy import select
 
             async with TestingSessionLocal() as session:
                 result = await session.execute(select(User).where(User.email == email))
@@ -2752,12 +2765,27 @@ class TestResolveErrorsHelpers:
         from app.api.routes.web import _resolve_settings_errors
 
         test_cases = {
-            "username_too_short": ("Username must be at least 3 characters", {"username": "Username must be at least 3 characters"}),
-            "bad_current_password": ("Current password is incorrect", {"current_password": "Current password is incorrect"}),
-            "password_mismatch": ("New passwords do not match", {"new_password_confirm": "New passwords do not match"}),
-            "password_too_short": ("New password must be at least 8 characters", {"new_password": "New password must be at least 8 characters"}),
+            "username_too_short": (
+                "Username must be at least 3 characters",
+                {"username": "Username must be at least 3 characters"},
+            ),
+            "bad_current_password": (
+                "Current password is incorrect",
+                {"current_password": "Current password is incorrect"},
+            ),
+            "password_mismatch": (
+                "New passwords do not match",
+                {"new_password_confirm": "New passwords do not match"},
+            ),
+            "password_too_short": (
+                "New password must be at least 8 characters",
+                {"new_password": "New password must be at least 8 characters"},
+            ),
             "bad_password": ("Password is incorrect", {"delete_password": "Password is incorrect"}),
-            "delete_confirmation": ("Please type DELETE to confirm account deletion", {"confirm_text": "Please type DELETE to confirm account deletion"}),
+            "delete_confirmation": (
+                "Please type DELETE to confirm account deletion",
+                {"confirm_text": "Please type DELETE to confirm account deletion"},
+            ),
             "file_cleanup": ("Unable to remove all downloaded files. Account was not deleted.", {}),
             "csrf": ("Invalid CSRF token", {}),
         }
