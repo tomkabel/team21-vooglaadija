@@ -1,0 +1,145 @@
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pre-deploy-checks:
+    name: Pre-deploy checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - name: Verify CI passed on this commit
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c379cacfc
+        with:
+          script: |
+            // These check-run names correspond to the jobs in fastapi-test.yml
+            // and docker-compose-test.yml. We poll until they all complete.
+            const requiredChecks = [
+              'Lint with ruff',
+              'Type check with mypy',
+              'Unit tests',
+              'Integration tests',
+              'Security scan',
+              'Docker build check',
+              'Test Docker Compose Stack'
+            ];
+
+            const maxAttempts = 30; // 30 * 20s = 10 minutes
+            const waitMs = 20000;
+
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+              const { data: { check_runs } } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: context.sha,
+              });
+
+              const pending = requiredChecks.filter(name => {
+                const check = check_runs.find(cr => cr.name === name);
+                return !check || check.status !== 'completed';
+              });
+
+              if (pending.length === 0) {
+                // All completed - verify conclusions
+                const failures = requiredChecks.map(name => {
+                  const check = check_runs.find(cr => cr.name === name);
+                  return { name, conclusion: check.conclusion };
+                }).filter(c => c.conclusion !== 'success');
+
+                if (failures.length > 0) {
+                  const details = failures.map(f => `- ${f.name}: ${f.conclusion}`).join('\n');
+                  core.setFailed(`Required checks did not pass:\n${details}`);
+                  return;
+                }
+
+                core.info('All required CI checks passed');
+                return;
+              }
+
+              core.info(`Waiting for checks to complete (attempt ${attempt}/${maxAttempts}): ${pending.join(', ')}`);
+              await new Promise(resolve => setTimeout(resolve, waitMs));
+            }
+
+            core.setFailed('Timeout waiting for required CI checks to complete');
+
+  deploy:
+    name: Deploy to production
+    needs: pre-deploy-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://youtube.tomabel.ee
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683a
+
+      - name: Setup SSH agent
+        uses: webfactory/ssh-agent@dc588b651fe13675773604f8950593fbcf303f58
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          log-public-key: false
+
+      - name: Add known hosts
+        run: echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy to server
+        env:
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          ENV_B64: ${{ secrets.ENV_FILE_PROD }}
+          IMAGE_TAG: ${{ github.sha }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+          GHCR_REPO: ${{ github.event.repository.name }}
+        run: |
+          ssh ubuntu@37.114.46.226 \
+            "GHCR_PAT='$GHCR_PAT' ENV_B64='$ENV_B64' IMAGE_TAG='$IMAGE_TAG' GHCR_OWNER='$GHCR_OWNER' GHCR_REPO='$GHCR_REPO' bash -s" \
+            < infra/deploy/remote-deploy.sh
+
+      - name: Post-deploy health check
+        run: |
+          for i in {1..12}; do
+            if curl -sf --max-time 10 https://youtube.tomabel.ee/api/v1/health; then
+              echo "Health check passed"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Health check failed after 60s"
+          exit 1
+
+      - name: Notify on failure
+        if: failure()
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c379cacfc
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `## Production Deployment Failed
+
+            Commit: \`${context.sha}\`
+            Workflow: [${context.runId}](${runUrl})
+
+            Please investigate and retry if appropriate.`;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Production deployment failed for ${context.sha.substring(0, 7)}`,
+              body: body,
+              labels: ['deployment', 'failed']
+            });
