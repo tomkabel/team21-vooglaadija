@@ -714,6 +714,39 @@ class TestDashboardPage:
 
         assert dashboard_response.status_code == 200
 
+    @pytest.mark.asyncio
+    async def test_dashboard_renders_initial_download_skeleton_state(self):
+        """Test dashboard includes skeleton/loading state before SSE updates."""
+        email = f"dashskeleton_{uuid.uuid4().hex[:8]}@example.com"
+        password = "securepassword123"
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+        ) as client:
+            await do_register(client, email, password)
+            csrf_token = await do_login(client, email, password)
+
+            login_resp = await client.post(
+                "/web/login",
+                data={"email": email, "password": password},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+
+            access_token = login_resp.cookies.get("access_token", "")
+
+            dashboard_response = await client.get(
+                "/web/downloads",
+                cookies={"access_token": access_token},
+            )
+
+        assert dashboard_response.status_code == 200
+        assert 'id="download-list" class="download-list-loading"' in dashboard_response.text
+        assert 'id="download-skeleton"' in dashboard_response.text
+        assert "downloadSkeletonFallback" in dashboard_response.text
+        assert "clearDownloadSkeleton" in dashboard_response.text
+        assert "htmx:sseOpen" in dashboard_response.text
+        assert "htmx:sseError" in dashboard_response.text
+
 
 class TestCreateDownloadForm:
     """Tests for POST /web/downloads (HTMX endpoint)."""

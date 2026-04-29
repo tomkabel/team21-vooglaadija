@@ -163,7 +163,9 @@
         <div class="live-indicator">Live</div>
       </div>
 
-      <div id="download-list">{% include 'partials/_download_list.html' %}</div>
+      <div id="download-list" class="download-list-loading">
+        {% include 'partials/_download_list.html' %}
+      </div>
     </div>
   </div>
 
@@ -283,6 +285,36 @@
 </div>
 
 <script nonce="{{ nonce }}">
+  const downloadSkeletonFallback = window.setTimeout(clearDownloadSkeleton, 5000);
+
+  function clearDownloadSkeletonFallback() {
+    window.clearTimeout(downloadSkeletonFallback);
+  }
+
+  function clearDownloadSkeleton() {
+    const list = document.getElementById("download-list");
+    if (!list) return;
+
+    list.classList.remove("download-list-loading");
+
+    const skeleton = document.getElementById("download-skeleton");
+    if (skeleton) {
+      skeleton.remove();
+    }
+  }
+
+  // If SSE opens without immediate data (empty account), do not keep skeleton forever.
+  document.body.addEventListener("htmx:sseOpen", function () {
+    clearDownloadSkeletonFallback();
+    window.setTimeout(clearDownloadSkeleton, 200);
+  });
+
+  // If SSE fails to connect, reveal server-rendered content instead of keeping skeleton forever.
+  document.body.addEventListener("htmx:sseError", function () {
+    clearDownloadSkeletonFallback();
+    clearDownloadSkeleton();
+  });
+
   // Update stats by counting current job rows
   function updateStats() {
     const rows = document.querySelectorAll(".download-row");
@@ -309,6 +341,9 @@
   }
 
   document.body.addEventListener("sse:job_update", function (evt) {
+    clearDownloadSkeletonFallback();
+    clearDownloadSkeleton();
+
     let data;
     try {
       data = JSON.parse(evt.detail.data);
@@ -345,6 +380,8 @@
 
   // Also update stats after HTMX swaps (form submissions, deletes)
   document.body.addEventListener("htmx:afterSwap", function (evt) {
+    clearDownloadSkeletonFallback();
+    clearDownloadSkeleton();
     updateStats();
   });
 
