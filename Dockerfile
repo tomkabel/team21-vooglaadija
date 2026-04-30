@@ -1,19 +1,20 @@
+# syntax=docker/dockerfile:1.7
 # ============================================
-# A++ Production Dockerfile - 2026 Best Practices
-# Distroless, SBOM, Sigstore, SLSA, Reproducible, Non-root, Observability
+# Optimized Production Dockerfile - BuildKit 1.7+
+# UV-based builds, native SBOM, non-root, cache mounts
 # ============================================
 
 # ============================================
-# Stage 2: Python Dependency Builder
+# Stage 1: Python Dependency Builder
 # ============================================
 FROM python:3.12-slim AS python-builder
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PYTHONUNBUFFERED=1
 
-# Install system build dependencies and curl for HTMX download
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system build dependencies with apt cache mount
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -22,26 +23,32 @@ WORKDIR /app
 
 # Create virtual environment
 RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+ENV PATH="/opt/venv/bin:$PATH" \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1
 
-# Install build dependencies (cached layer)
-COPY pyproject.toml .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip setuptools wheel && \
-    pip install hatchling hatch-uv
+# Install uv binary (single static binary, ~25MB, not copied to final image)
+COPY --from=ghcr.io/astral-sh/uv:0.6 /uv /bin/uv
+
+# Copy manifest and lockfile first → cacheable dependency layer
+COPY pyproject.toml uv.lock ./
+
+# Install runtime dependencies ONLY (no project code yet)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project
 
 # ============================================
-# Stage 3: Frontend Builder
+# Stage 2: Frontend Builder
 # ============================================
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app
 
 # Install pnpm for package management (version pinned in package.json packageManager field)
-# Note: we use plain version here; integrity hash is enforced via lockfile
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 
 # Copy frontend package files and pnpm lockfile to frontend subdirectory
-COPY frontend/package*.json pnpm-lock.yaml ./frontend/
+COPY frontend/package*.json frontend/pnpm-lock.yaml ./frontend/
 
 # Install frontend dependencies using pnpm from the frontend directory
 WORKDIR /app/frontend
@@ -62,55 +69,40 @@ COPY frontend/css ./css
 RUN pnpm run build
 
 # ============================================
-# Stage 4: Application Builder
+# Stage 3: Application Builder
 # ============================================
 FROM python-builder AS app-builder
-# Copy source code and Alembic configuration
+
+# Copy source code (this invalidates frequently, but deps are already cached)
 COPY app ./app
 COPY worker ./worker
-COPY pyproject.toml .
 COPY alembic.ini .
 COPY alembic ./alembic
 
-# Install the package (production deps only)
-RUN pip install .
+# Install the local package (wheel build only, no dependency resolution)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen
 
-# Copy built frontend assets to the app static directory.
-# Note: These files are placed at /app/app/static/ in the container filesystem
-# but are NOT packaged into the installed wheel - they exist only on the
-# filesystem at the specified path after this COPY command runs.
-COPY --from=frontend-builder /app/frontend/css/dist/styles.css /app/app/static/css/styles.css
-COPY --from=frontend-builder /app/frontend/node_modules/htmx.org/dist/htmx.min.js /app/app/static/js/htmx.min.js
+# Copy built frontend assets
+COPY --link --from=frontend-builder /app/frontend/css/dist/styles.css /app/app/static/css/styles.css
+COPY --link --from=frontend-builder /app/frontend/node_modules/htmx.org/dist/htmx.min.js /app/app/static/js/htmx.min.js
 
-# Download Swagger UI assets for self-hosting
+# Download Swagger UI assets
 RUN mkdir -p /app/app/static/swagger && \
     curl -o /app/app/static/swagger/swagger-ui-bundle.js https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js && \
     curl -o /app/app/static/swagger/swagger-ui.css https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css
 
-# Generate SBOM from installed dependencies
-# Uses pip freeze to get exact versions, then generates CycloneDX SBOM
-# Uses modern subcommand form: cyclonedx-py requirements <file>
-RUN pip install 'cyclonedx-bom==5.*' && \
-    pip freeze > /tmp/requirements.txt && \
-    cyclonedx-py requirements /tmp/requirements.txt --output-format XML --output-file /tmp/sbom.xml && \
-    cyclonedx-py requirements /tmp/requirements.txt --output-format JSON --output-file /tmp/sbom.json
-
-# Generate SLSA provenance metadata (simplified for this example)
-# In production, use slsa-framework/github-actions-slsa-generator or similar
-RUN echo '{"buildType": "https://slsa-framework.fr.dev/build-types/1.0", "invocation": {"configSource": {"uri": "git+https://github.com/team21/vooglaadija.git"}, "entryPoint": "hatch build"}}' > /tmp/slsa-provenance.json
-
 # ============================================
-# Stage 5: Runtime Base
+# Stage 4: Runtime Base
 # ============================================
-# Use python:slim as base for runtime (distroless lacks ffmpeg dependencies)
 FROM python:3.12-slim AS runtime-base
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Install ffmpeg for yt-dlp media merging, redis-tools for migrate.sh, and gosu for privilege dropping
-# Also install redis-tools for migrate.sh's redis-cli commands
+# Install runtime dependencies with apt cache mounts
 # Node.js is required for yt-dlp to solve YouTube video signatures (JS-based decryption)
-# Use NodeSource repository to get LTS Node.js 20 instead of distro's EOL Node.js 18
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     redis-tools \
     gosu \
@@ -126,16 +118,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy Python runtime from builder (with dependencies installed)
 COPY --from=app-builder /opt/venv /opt/venv
 
-# Copy application code - ownership will be handled by distroless default user
+# Copy application code
 COPY --from=app-builder /app/app ./app
 COPY --from=app-builder /app/pyproject.toml ./pyproject.toml
 COPY --from=app-builder /app/worker ./worker
-# Copy Alembic configuration and migration files
 COPY --from=app-builder /app/alembic.ini /app/alembic.ini
 COPY --from=app-builder /app/alembic /app/alembic
-COPY --from=app-builder /tmp/sbom.xml ./sbom.xml
-COPY --from=app-builder /tmp/sbom.json ./sbom.json
-COPY --from=app-builder /tmp/slsa-provenance.json ./slsa-provenance.json
 
 # Create non-root user
 RUN groupadd -r appuser -g 1000 && \
@@ -146,83 +134,65 @@ RUN mkdir -p /app/storage && \
     chown -R appuser:appuser /app /opt/venv
 
 # ============================================
-# Stage 6: API Service
+# Stage 5: API Service
 # ============================================
 FROM runtime-base AS api
-# Set working directory so Alembic and other tools find config files correctly
 WORKDIR /app
-# Set environment
 ENV PYTHONPATH=/app \
     PATH=/opt/venv/bin:$PATH \
     STORAGE_PATH=/app/storage
 
-# Copy entrypoint script and migrator
 COPY entrypoint.sh /app/entrypoint.sh
 COPY migrate.sh /app/migrate.sh
 RUN chmod +x /app/entrypoint.sh /app/migrate.sh && \
     chown appuser:appuser /app/entrypoint.sh /app/migrate.sh
 
-# Health check - internal TCP check (no external deps)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ["python", "-c", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 8000)); s.close()"]
+    CMD ["curl", "-fsS", "-o", "/dev/null", "http://localhost:8000/health"]
 
-# Expose port
 EXPOSE 8000
 
-# Build argument for git SHA
 ARG GIT_SHA
-
-# Metadata for observability and supply chain security
 LABEL org.opencontainers.image.source="https://github.com/team21/vooglaadija" \
       org.opencontainers.image.version="1.0.0" \
       org.opencontainers.image.description="YouTube Link Processor API" \
       org.opencontainers.image.licenses="GPL-3.0" \
-      org.opencontainers.image.revision=${GIT_SHA:-unknown} \
-      io.buildkit.sbom="true" \
-      io.sigstore.cosign.signature="true"
+      org.opencontainers.image.revision=${GIT_SHA:-unknown}
 
-# Keep root so entrypoint can fix ownership of mounted volumes
-# The entrypoint script will exec to appuser after setup
-USER root
-
-# Run application via entrypoint script
+# Note: When using bind mounts (not named volumes), the host directory must be
+# pre-created with UID/GID 1000 ownership, or the container will fail to write.
+# docker-compose.yml uses named volumes which correctly inherit image ownership.
+USER appuser
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["/opt/venv/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 
 # ============================================
-# Stage 7: Worker Service
+# Stage 6: Worker Service
 # ============================================
 FROM runtime-base AS worker
-# Set working directory for consistency with API stage
 WORKDIR /app
-# Build argument for git SHA
 ARG GIT_SHA
-# Set environment - WORKER_ID is set at runtime via docker-compose
 ENV PYTHONPATH=/app \
     PATH=/opt/venv/bin:$PATH \
     STORAGE_PATH=/app/storage
 
-# Health check - HTTP check using worker's health endpoint on port 8082
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=5)"]
+    CMD ["curl", "-fsS", "-o", "/dev/null", "http://localhost:8082/health"]
 
-# Copy worker entrypoint
 COPY --from=app-builder /app/worker/entrypoint-worker.sh ./entrypoint-worker.sh
 COPY migrate.sh /app/migrate.sh
 RUN chmod +x ./entrypoint-worker.sh /app/migrate.sh && \
     chown appuser:appuser ./entrypoint-worker.sh /app/migrate.sh
 
-# Run as non-root user (storage ownership is already set in the image)
+# Note: When using bind mounts (not named volumes), the host directory must be
+# pre-created with UID/GID 1000 ownership, or the container will fail to write.
+# docker-compose.yml uses named volumes which correctly inherit image ownership.
 USER appuser
 
-# Metadata for observability and supply chain security
 LABEL org.opencontainers.image.source="https://github.com/team21/vooglaadija" \
       org.opencontainers.image.version="1.0.0" \
       org.opencontainers.image.description="YouTube Link Processor Worker" \
       org.opencontainers.image.licenses="GPL-3.0" \
-      org.opencontainers.image.revision=${GIT_SHA:-unknown} \
-      io.buildkit.sbom="true" \
-      io.sigstore.cosign.signature="true"
+      org.opencontainers.image.revision=${GIT_SHA:-unknown}
 
-# Run worker via entrypoint script
 ENTRYPOINT ["./entrypoint-worker.sh"]
