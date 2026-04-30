@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Fix ownership of storage directory (needed when volume is mounted from host as root)
-echo "Ensuring storage directory ownership..."
-chown -R appuser:appuser /app/storage 2>/dev/null || true
-
-# Ensure non-root user can still access everything under /app
-chown -R appuser:appuser /app 2>/dev/null || true
-
+# Storage directory ownership is already set at build time.
 # Migrations are handled by the API service, skipping here.
 
 echo "Starting worker..."
 exec python -m worker.main
+

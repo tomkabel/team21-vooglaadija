@@ -30,6 +30,7 @@ venv/
 ENV/
 env/
 .venv
+.venv_manual/
 
 # IDE
 .idea/
@@ -40,6 +41,14 @@ env/
 .DS_Store
 desktop.ini
 
+# Agent/AI tool configurations
+.kilo/
+.kilocode/
+.agents/
+.opencode/
+.openchange/
+.kilocodemodes
+
 # Testing
 tests/
 .pytest_cache/
@@ -47,6 +56,11 @@ tests/
 htmlcov/
 .tox/
 .nox/
+
+# Cache/artifact directories
+.mypy_cache/
+.ruff_cache/
+.rumdl_cache/
 
 # Documentation
 docs/
@@ -70,6 +84,27 @@ docker-compose*.yml
 !.env.example
 *.log
 cookies.json
+
+# Development/runtime artifacts
+logs/
+test-data/
+research/
+research-analysis/
+course-resources/
+element_clones/
+presentation/
+scripts-local/
+test_gw*.db
+
+# Nested source clone — contains a full project copy (app/, worker/, alembic/)
+# that must not be copied into the Docker build context
+src/
+
+# Node.js artifacts at root
+package-lock.json
+package.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
 
 # Node (if any frontend)
 node_modules/
