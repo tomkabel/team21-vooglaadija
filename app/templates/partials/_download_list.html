@@ -1,3 +1,23 @@
+<div id="download-skeleton" aria-hidden="true" class="download-skeleton-wrap">
+  {% for _ in range(3) %}
+  <div class="download-row skeleton-row">
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-3">
+        <div class="skeleton-icon"></div>
+        <div class="skeleton-text-wrap">
+          <div class="skeleton-text skeleton-text-long"></div>
+          <div class="skeleton-text skeleton-text-short"></div>
+        </div>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="skeleton-pill"></div>
+      <div class="skeleton-action"></div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
 {% if jobs %}
 <div id="download-rows">
   {% for job in jobs %}

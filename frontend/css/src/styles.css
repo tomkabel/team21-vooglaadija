@@ -206,6 +206,22 @@
         box-shadow: 0 0 30px rgba(244, 63, 94, 0.08);
     }
 
+    .success-box {
+        @apply mt-2 bg-jade-500/10 border border-jade-500/25 text-jade-300 px-5 py-4 rounded-xl;
+
+        box-shadow: 0 0 30px rgba(52, 211, 153, 0.1);
+    }
+
+    .error {
+        @apply bg-coral-500/10 border border-coral-500/30 text-coral-300 px-5 py-4 rounded-xl;
+
+        box-shadow: 0 0 24px rgba(244, 63, 94, 0.1);
+    }
+
+    .field-error {
+        @apply mt-2 text-sm font-body text-coral-300 min-h-[1.25rem];
+    }
+
     .live-indicator {
         @apply inline-flex items-center gap-2 text-xs font-display font-medium text-jade-400;
     }
@@ -235,6 +251,95 @@
 
     .download-row + .download-row {
         @apply border-t border-white/[0.04];
+    }
+
+    .download-skeleton-wrap {
+        @apply space-y-0;
+    }
+
+    .download-list-loading #download-rows {
+        display: none;
+    }
+
+    #download-list:not(.download-list-loading) .download-skeleton-wrap {
+        display: none;
+    }
+
+    .skeleton-row {
+        @apply pointer-events-none;
+    }
+
+    .skeleton-row + .skeleton-row {
+        @apply border-t border-white/[0.04];
+    }
+
+    .skeleton-icon,
+    .skeleton-text,
+    .skeleton-pill,
+    .skeleton-action {
+        position: relative;
+        overflow: hidden;
+        background-color: rgba(255, 255, 255, 0.07);
+    }
+
+    .skeleton-icon {
+        @apply h-10 w-10 rounded-xl border border-white/[0.08] flex-shrink-0;
+    }
+
+    .skeleton-text-wrap {
+        @apply space-y-2;
+    }
+
+    .skeleton-text {
+        @apply rounded-md;
+        height: 0.875rem;
+    }
+
+    .skeleton-text-long {
+        width: min(30rem, 62vw);
+    }
+
+    .skeleton-text-short {
+        width: min(12rem, 30vw);
+    }
+
+    .skeleton-pill {
+        @apply rounded-full border border-white/[0.08];
+        width: 5.5rem;
+        height: 1.75rem;
+    }
+
+    .skeleton-action {
+        @apply rounded-xl border border-white/[0.08];
+        width: 2.5rem;
+        height: 2.5rem;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+        .skeleton-icon::before,
+        .skeleton-text::before,
+        .skeleton-pill::before,
+        .skeleton-action::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            transform: translateX(-100%);
+            background: linear-gradient(
+                90deg,
+                transparent 0%,
+                rgba(255, 255, 255, 0.04) 40%,
+                rgba(255, 255, 255, 0.2) 50%,
+                rgba(255, 255, 255, 0.04) 60%,
+                transparent 100%
+            );
+            animation: shimmer 1.5s linear infinite;
+        }
+    }
+
+    @keyframes shimmer {
+        100% {
+            transform: translateX(100%);
+        }
     }
 
     .url-text {
