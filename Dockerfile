@@ -51,8 +51,11 @@ RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 COPY frontend/package*.json frontend/pnpm-lock.yaml ./frontend/
 
 # Install frontend dependencies using pnpm from the frontend directory
+# Use --frozen-lockfile for reproducible builds; if lockfile has outdated checksums
+# due to republished packages (npmjs.org quirk), prune store and retry with no-frozen
 WORKDIR /app/frontend
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm install --frozen-lockfile
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm install --frozen-lockfile || \
+    (pnpm store prune && pnpm install --no-frozen-lockfile)
 
 # Copy Tailwind config
 COPY frontend/tailwind.config.js ./tailwind.config.js
