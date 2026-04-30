@@ -4,13 +4,21 @@ import os
 os.environ["TESTING"] = "1"
 os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-not-for-production-use-32chars"
 
-# Determine unique database URL per xdist worker to avoid race conditions
-_worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
-_test_db_path = os.path.abspath(f"test_{_worker_id}.db")
-_test_db_url = f"sqlite+aiosqlite:///{_test_db_path}"
+# Support running integration tests against real PostgreSQL via docker-compose.test.yml.
+# Usage:
+#   TEST_DATABASE_URL=postgresql+asyncpg://test_user:test_pass@localhost:5433/test_db \
+#     pytest tests/ -v
+# If unset, fallback to per-worker SQLite for fast parallel unit tests.
+_test_db_url = os.environ.get("TEST_DATABASE_URL")
+_using_postgres = _test_db_url is not None
+
+if not _using_postgres:
+    # Determine unique database URL per xdist worker to avoid race conditions
+    _worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
+    _test_db_path = os.path.abspath(f"test_{_worker_id}.db")
+    _test_db_url = f"sqlite+aiosqlite:///{_test_db_path}"
 
 # Force reconfigure the database URL before any app imports
-# This ensures the app uses SQLite instead of PostgreSQL
 import app.config  # noqa: E402
 
 app.config.settings.database_url = _test_db_url
@@ -28,16 +36,18 @@ from sqlalchemy.pool import NullPool  # noqa: E402
 import app.models  # noqa: E402
 from app.database import Base, get_db  # noqa: E402
 
-# Now import app - it will use the SQLite URL we set above
+# Now import app - it will use the database URL we set above
 from app.main import app as fastapi_app  # noqa: E402
 
 TEST_DATABASE_URL = _test_db_url
 
+_engine_kwargs = {"poolclass": NullPool}
+if not _using_postgres:
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
 
 test_engine = create_async_engine(
     TEST_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=NullPool,
+    **_engine_kwargs,
 )
 
 # Use async_sessionmaker for proper async session support

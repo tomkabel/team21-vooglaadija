@@ -168,6 +168,85 @@ services:
   #   container_name: ytprocessor-redis-exporter
   #   restart: unless-stopped
   #   environment:
+  #     REDIS_ADDR: "redis://:${REDIS_PASSWORD}@redis:6379"
+  #   ports:
+  #     - "9121:9121"
+  #   networks:
+  #     - ytprocessor-network
+  #   depends_on:
+  #     - redis
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "wget -q --spider http://localhost:9121 || exit 1"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+
+  # ============================================
+  # Prometheus Metrics Server
+  # ============================================
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    container_name: ytprocessor-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    networks:
+      - ytprocessor-network
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q --spider http://localhost:9090/-/healthy || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # Grafana Dashboards
+  # ============================================
+  grafana:
+    image: grafana/grafana:10.3.1
+    container_name: ytprocessor-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./infra/grafana/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+      - ./infra/grafana/dashboard-provider.yml:/etc/grafana/provisioning/dashboards/dashboard-provider.yml:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - ytprocessor-network
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # Redis Exporter for Prometheus (optional)
+  # ============================================
+  # Uncomment if you want Redis metrics in Prometheus:
+  #
+  # redis-exporter:
+  #   image: oliver006/redis_exporter:latest
+  #   container_name: ytprocessor-redis-exporter
+  #   restart: unless-stopped
+  #   environment:
   #     REDIS_ADDR: "redis://:$${REDIS_PASSWORD}@redis:6379"
   #   ports:
   #     - "9121:9121"
@@ -199,6 +278,10 @@ volumes:
     name: ytprocessor-netdata-redis-lib
   netdata-redis-cache:
     name: ytprocessor-netdata-redis-cache
+  prometheus-data:
+    name: ytprocessor-prometheus-data
+  grafana-data:
+    name: ytprocessor-grafana-data
 
 # Shared network - uncomment if standalone NetData Parent is enabled
 # networks:

@@ -12,9 +12,15 @@ if TYPE_CHECKING:
 ALGORITHM = "HS256"
 
 
-def create_access_token(subject: UUID | str) -> str:
+def create_access_token(subject: UUID | str, email: str | None = None) -> str:
     expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_expire_minutes)
-    payload = {"sub": str(subject), "exp": expire}
+    payload = {
+        "sub": str(subject),
+        "exp": expire,
+        "user_id": str(subject),
+    }
+    if email:
+        payload["email"] = email
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 

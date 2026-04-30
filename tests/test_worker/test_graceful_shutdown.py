@@ -197,7 +197,7 @@ class TestGracefulShutdownBehavior:
             patch("worker.main.stop_health_server"),
             patch("worker.main.sync_outbox_to_queue", new_callable=AsyncMock),
             patch("worker.main.cleanup_expired_jobs", new_callable=AsyncMock, return_value=0),
-            patch("worker.main.reset_stuck_jobs", new_callable=AsyncMock, return_value=0),
+            patch("worker.main.requeue_stuck_jobs", new_callable=AsyncMock, return_value=0),
             patch("worker.main.write_health_async", new_callable=AsyncMock),
             patch("worker.main.update_worker_state"),
         ):
