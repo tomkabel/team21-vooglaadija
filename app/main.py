@@ -267,15 +267,29 @@ async def custom_docs(request: Request):
         )
         html = html.replace(
             '<link rel="stylesheet" type="text/css" href="/static/swagger/swagger-ui.css">',
-            '<link rel="stylesheet" type="text/css" href="/static/swagger/swagger-ui.css" integrity="sha384-f50d9fa52fb1792e1f7c9cba09a827c28525fb895d01884eb3da6066e10ac72a5532876199917378c96f56c0237fbb93" crossorigin="anonymous">',
+            '<link rel="stylesheet" type="text/css" href="/static/swagger/swagger-ui.css" integrity="sha384-f50d9fa52fb1792e1f7c9ba09a827c28525fb895d01884eb3da6066e10ac72a5532876199917378c96f56c0237fbb93" crossorigin="anonymous">',
         )
     html = html.replace("<script>\nconst ui =", f'<script nonce="{nonce}">\nconst ui =')
-    return HTMLResponse(html)
+    # Add jsDelivr to CSP for Swagger UI CDN fallback
+    response = HTMLResponse(html)
+    response.headers["Content-Security-Policy"] = (
+        f"default-src 'self'; "
+        f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+        f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline' https://cdn.jsdelivr.net; "
+        f"font-src 'self' https://fonts.gstatic.com; "
+        f"img-src 'self' data: blob:; "
+        f"connect-src 'self'; "
+        f"frame-ancestors 'none'; "
+        f"base-uri 'self'; "
+        f"form-action 'self'"
+    )
+    return response
 
 
 # Custom /redoc route with self-hosted assets and nonce
 @app.get("/redoc", include_in_schema=False)
 async def custom_redoc(request: Request):
+    nonce = request.state.nonce
     redoc_dir = Path(__file__).resolve().parent / "static" / "redoc"
     if redoc_dir.exists():
         response = get_redoc_html(
@@ -283,17 +297,36 @@ async def custom_redoc(request: Request):
             title=app.title + " - ReDoc",
             redoc_js_url="/static/redoc/redoc.standalone.js",
         )
+        # Self-hosted: return with nonce only
+        html = bytes(response.body).decode()
+        html = html.replace(
+            "<script>\nconst ui =", f'<script nonce="{nonce}">\nconst ui ='
+        )
+        return HTMLResponse(html)
     else:
         response = get_redoc_html(
             openapi_url=app.openapi_url or "/openapi.json",
             title=app.title + " - ReDoc",
-            redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@latest/bundles/redoc.standalone.js",
+            redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@2.0.0-rc.70/bundles/redoc.standalone.js",
         )
-    html = bytes(response.body).decode()
-    html = html.replace(
-        "<script>\nconst ui =", f'<script nonce="{request.state.nonce}">\nconst ui ='
-    )
-    return HTMLResponse(html)
+        # CDN fallback: add jsdelivr to CSP
+        html = bytes(response.body).decode()
+        html = html.replace(
+            "<script>\nconst ui =", f'<script nonce="{nonce}">\nconst ui ='
+        )
+        response = HTMLResponse(html)
+        response.headers["Content-Security-Policy"] = (
+            f"default-src 'self'; "
+            f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+            f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline' https://cdn.jsdelivr.net; "
+            f"font-src 'self' https://fonts.gstatic.com; "
+            f"img-src 'self' data: blob:; "
+            f"connect-src 'self'; "
+            f"frame-ancestors 'none'; "
+            f"base-uri 'self'; "
+            f"form-action 'self'"
+        )
+        return response
 
 
 app.add_middleware(PrometheusMiddleware)
@@ -314,8 +347,8 @@ async def add_security_headers(request: Request, call_next: Any) -> Any:
     # CSP: Allow same-origin scripts with nonce for inline scripts, allow Google Fonts CDN
     response.headers["Content-Security-Policy"] = (
         f"default-src 'self'; "
-        f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
-        f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline' https://cdn.jsdelivr.net; "
+        f"script-src 'self' 'nonce-{nonce}'; "
+        f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
         f"font-src 'self' https://fonts.gstatic.com; "
         f"img-src 'self' data: blob:; "
         f"connect-src 'self'; "

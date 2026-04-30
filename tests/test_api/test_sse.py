@@ -240,9 +240,9 @@ class TestEventGenerator:
 
         mock_request = MagicMock(spec=Request)
         # is_disconnected sequence:
-        # 1. pubsub_event_generator while check (1st retry) -> False
-        # 2. pubsub_event_generator while check (2nd retry) -> False
-        # 3. pubsub_event_generator while check (3rd retry) -> False
+        # 1. initial DB query phase -> False
+        # 2. pubsub buffer task -> False (for multiple attempts)
+        # 3. fallback_polling_generator check -> False (to get at least one poll)
         # 4. fallback_polling_generator check -> True (break)
         mock_request.is_disconnected = AsyncMock(side_effect=[False, False, False, True])
 
@@ -256,7 +256,8 @@ class TestEventGenerator:
         mock_job.updated_at = datetime.now(UTC)
 
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [mock_job]
+        # Return empty list for initial DB query to test fallback path
+        mock_result.scalars.return_value.all.return_value = []
 
         mock_session = MagicMock()
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -278,6 +279,7 @@ class TestEventGenerator:
                 if len(events) >= 1:
                     break
 
+        # Should get at least one event from the fallback polling path
         assert len(events) >= 1
         assert events[0].event == "job_update"
 
