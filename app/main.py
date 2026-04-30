@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import structlog.contextvars
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -263,15 +264,19 @@ async def add_security_headers(request: Request, call_next: Any) -> Any:
     return response
 
 
-# Request ID middleware for debugging
+# Request ID / correlation ID middleware for observability
 @app.middleware("http")
 async def add_request_id(request: Request, call_next: Any) -> Any:
-    """Add a unique request ID to each request for debugging."""
+    """Add a unique request ID to each request and bind it to structured logs."""
     request_id = str(uuid.uuid4())
     request.state.request_id = request_id
+    # Bind correlation ID to structlog so every log in this request includes it
+    structlog.contextvars.bind_contextvars(request_id=request_id)
 
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
+    # Unbind after request to avoid leaking across async boundaries
+    structlog.contextvars.unbind_contextvars("request_id")
     return response
 
 
