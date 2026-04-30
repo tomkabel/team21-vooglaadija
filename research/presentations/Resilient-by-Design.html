@@ -1,0 +1,1056 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vooglaadija: Resilient by Design</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0a0a0f;
+        --text: #e2e8f0;
+        --text-muted: #94a3b8;
+        --accent: #f59e0b;
+        --success: #10b981;
+        --error: #ef4444;
+        --code-bg: #13131f;
+        --card-bg: #111118;
+        --border: #1e1e2e;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+        font-family:
+          "Inter",
+          -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        overflow: hidden;
+      }
+
+      .deck {
+        width: 100vw;
+        height: 100vh;
+        position: relative;
+      }
+
+      .slide {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 4rem 5rem;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(20px);
+        transition:
+          opacity 0.5s ease,
+          transform 0.5s ease;
+        overflow-y: auto;
+      }
+
+      .slide.active {
+        opacity: 1;
+        pointer-events: all;
+        transform: translateY(0);
+      }
+
+      h1 {
+        font-size: 3.5rem;
+        font-weight: 700;
+        line-height: 1.1;
+        margin-bottom: 1rem;
+        letter-spacing: -0.02em;
+      }
+
+      h2 {
+        font-size: 2.25rem;
+        font-weight: 700;
+        line-height: 1.2;
+        margin-bottom: 1.5rem;
+        color: var(--text);
+      }
+
+      h3 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--accent);
+        margin-bottom: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      p {
+        font-size: 1.125rem;
+        line-height: 1.7;
+        color: var(--text-muted);
+        max-width: 65ch;
+      }
+
+      .subtitle {
+        font-size: 1.5rem;
+        color: var(--text-muted);
+        margin-bottom: 2rem;
+      }
+
+      .label {
+        display: inline-block;
+        background: var(--accent);
+        color: var(--bg);
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.875rem;
+        font-weight: 500;
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        margin-bottom: 2rem;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 2rem;
+        width: 100%;
+        max-width: 1100px;
+        margin-top: 2rem;
+      }
+
+      .grid-2 {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 2rem;
+      }
+
+      .card h4 {
+        font-size: 0.875rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-muted);
+        margin-bottom: 0.5rem;
+      }
+
+      .stat {
+        font-size: 3rem;
+        font-weight: 700;
+        color: var(--accent);
+        line-height: 1;
+        margin-bottom: 0.5rem;
+      }
+
+      .stat.success {
+        color: var(--success);
+      }
+      .stat.error {
+        color: var(--error);
+      }
+
+      code,
+      pre {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.875rem;
+      }
+
+      pre {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 1.5rem;
+        overflow-x: auto;
+        line-height: 1.6;
+        color: var(--text);
+        max-width: 800px;
+        width: 100%;
+      }
+
+      .code-block {
+        margin-top: 1.5rem;
+        width: 100%;
+        display: flex;
+        justify-content: center;
+      }
+
+      .highlight {
+        color: var(--accent);
+      }
+      .comment {
+        color: #64748b;
+      }
+      .string {
+        color: var(--success);
+      }
+
+      table {
+        width: 100%;
+        max-width: 900px;
+        border-collapse: collapse;
+        margin-top: 1.5rem;
+        font-size: 0.95rem;
+      }
+
+      th,
+      td {
+        padding: 0.875rem 1.25rem;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+      }
+
+      th {
+        color: var(--text-muted);
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+      }
+
+      td {
+        color: var(--text);
+      }
+
+      tr:hover td {
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4rem;
+        width: 100%;
+        max-width: 1100px;
+        align-items: start;
+      }
+
+      .feature-list {
+        list-style: none;
+        margin-top: 1rem;
+      }
+
+      .feature-list li {
+        padding: 0.5rem 0;
+        padding-left: 1.5rem;
+        position: relative;
+        color: var(--text-muted);
+      }
+
+      .feature-list li::before {
+        content: "›";
+        position: absolute;
+        left: 0;
+        color: var(--accent);
+        font-weight: 700;
+      }
+
+      .nav {
+        position: fixed;
+        bottom: 2rem;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 1rem;
+        z-index: 100;
+        background: rgba(10, 10, 15, 0.8);
+        backdrop-filter: blur(10px);
+        padding: 0.75rem 1.5rem;
+        border-radius: 100px;
+        border: 1px solid var(--border);
+      }
+
+      .nav button {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        font-size: 1rem;
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        transition: all 0.2s;
+        font-family: inherit;
+      }
+
+      .nav button:hover {
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .nav .counter {
+        color: var(--text-muted);
+        font-size: 0.875rem;
+        display: flex;
+        align-items: center;
+        padding: 0 0.5rem;
+        font-family: "JetBrains Mono", monospace;
+      }
+
+      .progress {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 3px;
+        background: var(--accent);
+        transition: width 0.3s ease;
+        z-index: 100;
+      }
+
+      .closing-quote {
+        font-size: 1.75rem;
+        font-weight: 600;
+        line-height: 1.5;
+        text-align: center;
+        max-width: 50ch;
+      }
+
+      .closing-quote em {
+        color: var(--accent);
+        font-style: normal;
+      }
+
+      .team {
+        display: flex;
+        gap: 2rem;
+        margin-top: 1.5rem;
+      }
+
+      .team-member {
+        color: var(--text-muted);
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.95rem;
+      }
+
+      .links {
+        margin-top: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+
+      .links a {
+        color: var(--accent);
+        text-decoration: none;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.875rem;
+      }
+
+      .links a:hover {
+        text-decoration: underline;
+      }
+
+      .tech-stack {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.875rem;
+        color: var(--text-muted);
+        margin-top: 1.5rem;
+        text-align: center;
+        max-width: 70ch;
+        line-height: 1.8;
+      }
+
+      .row {
+        display: flex;
+        gap: 2rem;
+        width: 100%;
+        max-width: 1100px;
+        margin-top: 1.5rem;
+      }
+
+      .col {
+        flex: 1;
+      }
+
+      .tag {
+        display: inline-block;
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        padding: 0.25rem 0.75rem;
+        border-radius: 4px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.8rem;
+        color: var(--accent);
+        margin-top: 0.5rem;
+      }
+
+      @media (max-width: 900px) {
+        .slide {
+          padding: 2rem;
+        }
+        h1 {
+          font-size: 2rem;
+        }
+        h2 {
+          font-size: 1.5rem;
+        }
+        .grid,
+        .two-col {
+          grid-template-columns: 1fr;
+          gap: 1rem;
+        }
+        .row {
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="progress" id="progress"></div>
+
+    <div class="deck">
+      <!-- Slide 1: Title -->
+      <div class="slide active">
+        <div class="label">JOB #4473</div>
+        <h1>Resilient by Design</h1>
+        <p class="subtitle">A Crash-Proof Distributed YouTube Processor</p>
+        <p>
+          A single download job. Four services. Six coordinated steps. Three
+          catastrophic failures. One successful recovery.
+        </p>
+        <p style="margin-top: 1rem; font-weight: 600; color: var(--text)">
+          Production systems fail. This one recovers.
+        </p>
+      </div>
+
+      <!-- Slide 2: The Promise -->
+      <div class="slide">
+        <h2>This Is Job #4473</h2>
+        <p>
+          A user pasted a YouTube link. What they saw was a progress bar. What
+          actually happened was a distributed system executing six coordinated
+          steps across four services. Then the API crashed. Then Redis went
+          down. Then the worker was killed mid-download.
+        </p>
+        <p
+          style="
+            margin-top: 1.5rem;
+            font-size: 1.25rem;
+            color: var(--text);
+            font-weight: 600;
+          "
+        >
+          Job #4473 still finished.
+        </p>
+        <div class="grid" style="margin-top: 2.5rem">
+          <div class="card">
+            <h4>Step 1</h4>
+            <p style="font-size: 1rem; color: var(--text)">
+              User submits URL → API receives request
+            </p>
+          </div>
+          <div class="card">
+            <h4>Step 2</h4>
+            <p style="font-size: 1rem; color: var(--text)">
+              API writes job + outbox event in
+              <strong style="color: var(--accent)">atomic transaction</strong>
+            </p>
+          </div>
+          <div class="card">
+            <h4>Step 3</h4>
+            <p style="font-size: 1rem; color: var(--text)">
+              Outbox relay publishes to Redis queue
+            </p>
+          </div>
+          <div class="card">
+            <h4>Step 4</h4>
+            <p style="font-size: 1rem; color: var(--text)">
+              Worker
+              <strong style="color: var(--accent)"
+                >claims job atomically</strong
+              >
+              from database
+            </p>
+          </div>
+          <div class="card">
+            <h4>Step 5</h4>
+            <p style="font-size: 1rem; color: var(--text)">
+              Worker downloads via yt-dlp with circuit breaker protection
+            </p>
+          </div>
+          <div class="card">
+            <h4>Step 6</h4>
+            <p style="font-size: 1rem; color: var(--text)">
+              File delivered. Metrics recorded. Logs prove it.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 3: The Gap -->
+      <div class="slide">
+        <h2>Why Scripts Fail in Production</h2>
+        <div class="grid">
+          <div class="card">
+            <h4>Average API Downtime</h4>
+            <div class="stat error">55 min</div>
+            <p style="font-size: 0.875rem">
+              per week, Q1 2025. Source: Uptrends State of API Reliability 2025
+            </p>
+          </div>
+          <div class="card">
+            <h4>YoY Increase</h4>
+            <div class="stat error">+60%</div>
+            <p style="font-size: 0.875rem">
+              Year-over-year increase in API downtime
+            </p>
+          </div>
+          <div class="card">
+            <h4>Bot Traffic Share</h4>
+            <div class="stat">51%</div>
+            <p style="font-size: 0.875rem">
+              Automated bot traffic in 2024. Source: Imperva Bad Bot Report 2025
+            </p>
+          </div>
+        </div>
+        <p
+          style="
+            margin-top: 2.5rem;
+            text-align: center;
+            font-size: 1.25rem;
+            color: var(--text);
+          "
+        >
+          A script handles the happy path. A system handles reality.
+        </p>
+        <p style="margin-top: 1rem; text-align: center">
+          We did not build a script. We built a system that
+          <strong style="color: var(--accent)">expects failure</strong>.
+        </p>
+      </div>
+
+      <!-- Slide 4: Outbox Pattern -->
+      <div class="slide">
+        <h3>The Architecture</h3>
+        <h2>The Birth &amp; The Bridge</h2>
+        <div class="two-col">
+          <div>
+            <p style="margin-bottom: 1.5rem">
+              When Job #4473 is born, it is written to the database
+              <strong style="color: var(--text)">twice</strong> — once as a job
+              record, once as an outbox event — inside a single transaction.
+            </p>
+            <p style="margin-bottom: 1.5rem">
+              If the API crashes one millisecond after commit, both records
+              survive. If it crashes before commit, both disappear.
+            </p>
+            <p style="font-size: 1.25rem; color: var(--text); font-weight: 600">
+              There is no partial state.
+            </p>
+            <ul class="feature-list">
+              <li>Job record + outbox event are always in sync</li>
+              <li>Idempotent: duplicate outbox entries are silently skipped</li>
+              <li>No compensating transactions needed</li>
+            </ul>
+          </div>
+          <div>
+            <div class="code-block">
+              <pre>job = DownloadJob(
+    id=job_id,
+    user_id=current_user.id,
+    url=data.url,
+    status=<span class="string">"pending"</span>
+)
+db.add(job)
+<span class="highlight">await</span> write_job_to_outbox(db, job_id)
+<span class="comment"># Same session, same transaction</span>
+<span class="highlight">await</span> db.commit()
+<span class="comment"># Atomic: both or neither</span></pre>
+            </div>
+            <p
+              style="margin-top: 1rem; font-size: 0.875rem; text-align: center"
+            >
+              File: <code>app/api/routes/downloads.py:160-162</code>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 5: Outbox Relay -->
+      <div class="slide">
+        <h3>The Architecture</h3>
+        <h2>The Outbox Relay: A Bridge, Not a Warehouse</h2>
+        <p>
+          Every 30 seconds, the outbox relay queries PostgreSQL for pending
+          entries — skipping anything another relay instance is already
+          handling. After publishing to Redis, entries are
+          <strong style="color: var(--text)">deleted</strong>. The table stays
+          empty. No bloat. No archive.
+        </p>
+        <div class="code-block">
+          <pre><span class="highlight">async def</span> sync_outbox_to_queue(batch_size: int = <span class="string">100</span>) -> int:
+    claim_result = <span class="highlight">await</span> db.execute(
+        select(Outbox)
+        .where(Outbox.status == <span class="string">"pending"</span>)
+        .order_by(Outbox.created_at)
+        .limit(batch_size)
+        .with_for_update(<span class="highlight">skip_locked=True</span>)
+    )
+    entries = claim_result.scalars().all()
+
+    <span class="highlight">for</span> entry <span class="highlight">in</span> entries:
+        <span class="highlight">await</span> redis_client.lpush(<span class="string">"download_queue"</span>, str(entry.job_id))
+        <span class="highlight">await</span> db.execute(delete(Outbox).where(Outbox.id == entry.id))
+    <span class="highlight">await</span> db.commit()</pre>
+        </div>
+        <p style="margin-top: 1rem; font-size: 0.875rem; text-align: center">
+          File: <code>worker/processor.py:348-414</code>
+        </p>
+      </div>
+
+      <!-- Slide 6: Atomic Claims -->
+      <div class="slide">
+        <h3>The Architecture</h3>
+        <h2>Exactly-Once Delivery Is a Myth</h2>
+        <p>
+          Redis can deliver the same job to two workers simultaneously. So
+          workers do not ask permission — they
+          <strong style="color: var(--text)">claim</strong> the job with a
+          guarded atomic update that only succeeds if status is still
+          <code
+            style="
+              background: var(--code-bg);
+              padding: 0.2rem 0.5rem;
+              border-radius: 4px;
+            "
+            >pending</code
+          >.
+        </p>
+        <div class="code-block">
+          <pre>result = <span class="highlight">await</span> db.execute(
+    update(DownloadJob)
+    .where(
+        DownloadJob.id == job_id,
+        DownloadJob.status == <span class="string">"pending"</span>
+    )
+    .values(status=<span class="string">"processing"</span>, updated_at=datetime.now(UTC))
+)
+<span class="highlight">await</span> db.commit()
+
+claimed = result.rowcount == <span class="string">1</span>
+<span class="highlight">if not</span> claimed:
+    <span class="highlight">return</span> False  <span class="comment"># Expected — not an error</span></pre>
+        </div>
+        <p
+          style="
+            margin-top: 1.5rem;
+            text-align: center;
+            font-size: 1.125rem;
+            color: var(--text);
+          "
+        >
+          At-least-once delivery + idempotent state transitions = effective
+          exactly-once processing.
+        </p>
+      </div>
+
+      <!-- Slide 7: Rate Limits & Backoff -->
+      <div class="slide">
+        <h3>The Storm</h3>
+        <h2>Rate Limits &amp; Full Jitter Backoff</h2>
+        <p>
+          The YouTube API returns HTTP 429. We do not panic. We calculate an
+          <strong style="color: var(--text)"
+            >AWS-standard full jitter backoff</strong
+          >
+          — statistically dispersing retries across a growing window.
+        </p>
+        <div class="code-block">
+          <pre><span class="highlight">delay = random.uniform(0, min(cap, base * 2^attempt))</span></pre>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Attempt</th>
+              <th>Max Delay</th>
+              <th>Example Actual</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>60s</td>
+              <td>18s</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>120s</td>
+              <td>73s</td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>240s</td>
+              <td>195s</td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td>480s</td>
+              <td>421s</td>
+            </tr>
+            <tr>
+              <td>5+</td>
+              <td>600s (cap)</td>
+              <td>0–600s</td>
+            </tr>
+          </tbody>
+        </table>
+        <p style="margin-top: 1.5rem; font-size: 0.95rem; text-align: center">
+          Formula:
+          <code
+            style="
+              background: var(--code-bg);
+              padding: 0.25rem 0.75rem;
+              border-radius: 4px;
+            "
+            >delay = random.uniform(0, min(cap, base × 2^attempt))</code
+          >
+        </p>
+      </div>
+
+      <!-- Slide 8: Catastrophic Recovery -->
+      <div class="slide">
+        <h3>The Storm</h3>
+        <h2>SIGKILL &amp; SIGTERM: Two Failures, One Recovery</h2>
+        <div class="two-col">
+          <div>
+            <h4
+              style="
+                color: var(--error);
+                margin-bottom: 1rem;
+                font-size: 1rem;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+              "
+            >
+              SIGKILL — When Graceful Shutdown Is Impossible
+            </h4>
+            <p>
+              We kill the worker — not gracefully. <code>SIGKILL</code>, like an
+              OOM kill in Kubernetes. The shutdown handler never runs. Job #4473
+              is stranded in <code>processing</code> state.
+            </p>
+            <p style="margin-top: 1rem">
+              Fifteen minutes later, the zombie sweeper finds it, marks it
+              <code>pending</code>, and another worker picks it up.
+            </p>
+            <p style="margin-top: 1rem; color: var(--accent); font-weight: 600">
+              Critical fix: recovery now routes through the transactional outbox
+              — not a naked dual-write.
+            </p>
+          </div>
+          <div>
+            <h4
+              style="
+                color: var(--success);
+                margin-bottom: 1rem;
+                font-size: 1rem;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+              "
+            >
+              SIGTERM — The Polite Failure
+            </h4>
+            <p>
+              For planned shutdowns, we handle <code>SIGTERM</code> with a
+              25-second grace period.
+            </p>
+            <ul class="feature-list" style="margin-top: 1rem">
+              <li>
+                <strong>t=0</strong> — SIGTERM received; shutdown_event.set()
+              </li>
+              <li>
+                <strong>t=0–25</strong> — Current job completes OR is requeued
+                via outbox
+              </li>
+              <li><strong>t=25</strong> — Worker exits cleanly</li>
+              <li>
+                <strong>t=30</strong> — Kubernetes sends SIGKILL (5s runway)
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 9: Observability -->
+      <div class="slide">
+        <h3>The Operator's View</h3>
+        <h2>Observability: Three in the Morning Engineering</h2>
+        <div class="row">
+          <div class="col">
+            <h4
+              style="
+                color: var(--accent);
+                font-size: 1rem;
+                text-transform: uppercase;
+                margin-bottom: 1rem;
+              "
+            >
+              Custom Histogram Buckets
+            </h4>
+            <p>
+              Default Prometheus buckets top out at 10s. Without custom buckets,
+              p99 for video downloads would be mathematically invalid.
+            </p>
+            <div class="code-block">
+              <pre>JOB_DURATION_SECONDS = Histogram(
+    <span class="string">"ytprocessor_job_duration_seconds"</span>,
+    <span class="string">"Time spent processing a job"</span>,
+    buckets=[<span class="string">10</span>, <span class="string">30</span>, <span class="string">60</span>, <span class="string">120</span>, <span class="string">300</span>, <span class="string">600</span>],
+)</pre>
+            </div>
+          </div>
+          <div class="col">
+            <h4
+              style="
+                color: var(--accent);
+                font-size: 1rem;
+                text-transform: uppercase;
+                margin-bottom: 1rem;
+              "
+            >
+              Structured Logging + Correlation IDs
+            </h4>
+            <p>
+              Every log carries a <code>request_id</code>. Reconstruct Job
+              #4473's entire lifecycle in one <code>jq</code> query.
+            </p>
+            <div class="code-block">
+              <pre>jq <span class="string">'select(.job_id == "4473")'</span> logs.jsonl</pre>
+            </div>
+            <h4
+              style="
+                color: var(--accent);
+                font-size: 1rem;
+                text-transform: uppercase;
+                margin-top: 1.5rem;
+                margin-bottom: 1rem;
+              "
+            >
+              Health vs. Readiness
+            </h4>
+            <p>
+              <code>GET /health</code> confirms alive.
+              <code>GET /health/ready</code> confirms dependencies reachable —
+              returns HTTP 503 to remove pod from service if not.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 10: Trade-Offs -->
+      <div class="slide">
+        <h2>Engineering Maturity: Owning the Decisions</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Decision</th>
+              <th>What We Chose</th>
+              <th>What We Sacrificed</th>
+              <th>Future</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>JWT Algorithm</strong></td>
+              <td>HS256 (sub, user_id, email)</td>
+              <td>Secret sharing burden</td>
+              <td>RS256 (asymmetric rotation)</td>
+            </tr>
+            <tr>
+              <td><strong>Outbox Latency</strong></td>
+              <td>30s sync interval</td>
+              <td>Real-time immediacy</td>
+              <td>PostgreSQL LISTEN/NOTIFY</td>
+            </tr>
+            <tr>
+              <td><strong>Test Database</strong></td>
+              <td>SQLite per-worker (fast); PG via docker-compose.test.yml</td>
+              <td>5s vs SQLite speed</td>
+              <td>SKIP LOCKED fidelity</td>
+            </tr>
+            <tr>
+              <td><strong>Circuit Breaker</strong></td>
+              <td>5 failures / 30s reset / 3 successes</td>
+              <td>Potential false positives</td>
+              <td>Tuned per endpoint</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="two-col" style="margin-top: 2.5rem">
+          <div>
+            <h4
+              style="
+                color: var(--accent);
+                font-size: 1rem;
+                text-transform: uppercase;
+                margin-bottom: 1rem;
+              "
+            >
+              Security Grid
+            </h4>
+            <table style="margin-top: 0">
+              <tbody>
+                <tr>
+                  <td><strong>Password hashing</strong></td>
+                  <td>bcrypt, cost factor 12</td>
+                </tr>
+                <tr>
+                  <td><strong>JWT tokens</strong></td>
+                  <td>HS256, 15-min access, 7-day refresh, HttpOnly cookies</td>
+                </tr>
+                <tr>
+                  <td><strong>IDOR protection</strong></td>
+                  <td>WHERE id = :id AND user_id = :current_user</td>
+                </tr>
+                <tr>
+                  <td><strong>Rate limiting</strong></td>
+                  <td>10/minute per IP (SlowAPI)</td>
+                </tr>
+                <tr>
+                  <td><strong>Security headers</strong></td>
+                  <td>CSP, X-Content-Type-Options, X-Frame-Options</td>
+                </tr>
+                <tr>
+                  <td><strong>Path traversal</strong></td>
+                  <td>os.path.realpath prefix validation</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <h4
+              style="
+                color: var(--error);
+                font-size: 1rem;
+                text-transform: uppercase;
+                margin-bottom: 1rem;
+              "
+            >
+              Honest Gaps
+            </h4>
+            <p>
+              What we explicitly did
+              <em style="color: var(--text)">not</em> build:
+            </p>
+            <ul class="feature-list">
+              <li>RS256 JWT rotation</li>
+              <li>Bulkhead isolation</li>
+              <li>LISTEN/NOTIFY sub-second latency</li>
+              <li>Multi-region failover</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 11: Closing -->
+      <div class="slide">
+        <p class="closing-quote">
+          Through rate limits. Through a dead Redis. Through a killed worker.
+        </p>
+        <p style="text-align: center; margin-top: 1.5rem; color: var(--text)">
+          The file is on disk. The metrics confirm it. The logs prove it.
+        </p>
+        <p
+          style="
+            text-align: center;
+            margin-top: 2rem;
+            font-size: 1.5rem;
+            font-weight: 600;
+          "
+        >
+          We did not build this to handle the happy path.<br />We built it
+          because <em style="color: var(--accent)">the happy path is a lie</em>.
+        </p>
+        <p
+          style="
+            text-align: center;
+            margin-top: 2rem;
+            font-size: 1.25rem;
+            color: var(--text-muted);
+          "
+        >
+          Production systems fail.<br />The question is not whether yours will
+          survive.<br />It is whether you
+          <strong style="color: var(--text)">designed it to recover</strong>.
+        </p>
+      </div>
+
+      <!-- Slide 12: Credits -->
+      <div class="slide">
+        <h1 style="font-size: 3rem">Vooglaadija</h1>
+        <p class="subtitle">Resilient by Design</p>
+        <div class="team">
+          <span class="team-member">@tomkabel</span>
+          <span class="team-member">@Kevindaman</span>
+          <span class="team-member">@triinum</span>
+        </div>
+        <p style="margin-top: 1.5rem">
+          Junior to Senior Developer (TalTech) · April 2026 · v1.0.0
+        </p>
+        <div class="links">
+          <a href="https://github.com/tomkabel/team21-vooglaadija"
+            >github.com/tomkabel/team21-vooglaadija</a
+          >
+        </div>
+        <p class="tech-stack">
+          Python 3.12 · FastAPI · PostgreSQL · Redis · yt-dlp · Docker ·
+          Prometheus · Grafana · OpenTelemetry · Sentry
+        </p>
+      </div>
+    </div>
+
+    <div class="nav">
+      <button onclick="prevSlide()">← Prev</button>
+      <span class="counter"
+        ><span id="current">1</span> / <span id="total">12</span></span
+      >
+      <button onclick="nextSlide()">Next →</button>
+    </div>
+
+    <script>
+      const slides = document.querySelectorAll(".slide");
+      let current = 0;
+
+      function updateSlide() {
+        slides.forEach((s, i) => {
+          s.classList.toggle("active", i === current);
+        });
+        document.getElementById("current").textContent = current + 1;
+        document.getElementById("progress").style.width =
+          ((current + 1) / slides.length) * 100 + "%";
+      }
+
+      function nextSlide() {
+        if (current < slides.length - 1) {
+          current++;
+          updateSlide();
+        }
+      }
+
+      function prevSlide() {
+        if (current > 0) {
+          current--;
+          updateSlide();
+        }
+      }
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowRight" || e.key === " ") nextSlide();
+        if (e.key === "ArrowLeft") prevSlide();
+      });
+
+      updateSlide();
+    </script>
+  </body>
+</html>

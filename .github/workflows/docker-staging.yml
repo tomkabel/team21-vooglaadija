@@ -31,6 +31,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Verify uv lockfile is up to date
+        run: uv lock --check
+
       - name: Extract version
         id: version
         run: |
@@ -49,7 +55,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-staging
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
           provenance: true
           sbom: true
           build-args: GIT_SHA=${{ github.sha }}
@@ -66,7 +72,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-worker:staging
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-worker:${{ steps.version.outputs.version }}-staging
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
           provenance: true
           sbom: true
           build-args: GIT_SHA=${{ github.sha }}
