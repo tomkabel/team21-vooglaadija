@@ -202,13 +202,15 @@ dependency-groups = ["test"]
 # Matrix configuration for testing different Python versions and configurations
 [[tool.hatch.envs.test.matrix]]
 python = ["3.12"]
-db = ["sqlite"]
+db = ["sqlite", "postgres"]
 
 [tool.hatch.envs.test.scripts]
 unit = "python -c \"import glob,os;[os.remove(f) for f in glob.glob('.coverage.*')+['.coverage'] if os.path.exists(f)]\" && pytest tests/ --ignore=tests/test_api -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 integration = "python -c \"import glob,os;[os.remove(f) for f in glob.glob('.coverage.*')+['.coverage'] if os.path.exists(f)]\" && pytest tests/test_api/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 # Run all tests (both unit and integration)
 all = "python -c \"import glob,os;[os.remove(f) for f in glob.glob('.coverage.*')+['.coverage'] if os.path.exists(f)]\" && pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
+# PostgreSQL integration tests (requires docker-compose.test.yml services)
+postgres = "python -c \"import glob,os;[os.remove(f) for f in glob.glob('.coverage.*')+['.coverage'] if os.path.exists(f)]\" && TEST_DATABASE_URL=postgresql+asyncpg://test_user:test_pass@localhost:5433/test_db pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing -n auto"
 # Coverage scripts
 cov = "pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing"
 "cov-report" = "coverage report --format=terminal --show-missing"

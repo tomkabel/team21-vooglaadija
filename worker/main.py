@@ -18,7 +18,8 @@ from worker.health import (
     update_worker_state,
     write_health_async,
 )
-from worker.processor import process_next_job, reset_stuck_jobs, sync_outbox_to_queue
+from worker.processor import process_next_job, sync_outbox_to_queue
+from worker.zombie_sweeper import requeue_stuck_jobs
 from worker.queue import redis_client
 
 # Initialize structured logging
@@ -110,7 +111,9 @@ async def cleanup_expired_jobs() -> int:
                     await db.delete(job)
                     cleanup_count += 1
                 except Exception as db_err:
-                    logger.warning("failed_to_delete_db_row", job_id=job.id, error=str(db_err), exc_info=True)
+                    logger.warning(
+                        "failed_to_delete_db_row", job_id=job.id, error=str(db_err), exc_info=True
+                    )
 
         # Batch commit after processing all jobs
         try:
@@ -165,6 +168,12 @@ async def main() -> None:
     cleanup_interval_minutes: int = int(os.environ.get("CLEANUP_INTERVAL_MINUTES", "5"))
     cleanup_interval = timedelta(minutes=cleanup_interval_minutes)
     last_cleanup = datetime.now(UTC) - cleanup_interval
+
+    # Outbox sync runs independently of cleanup for lower latency (default: 30s)
+    outbox_sync_interval_seconds: int = int(os.environ.get("OUTBOX_SYNC_INTERVAL_SECONDS", "30"))
+    outbox_sync_interval = timedelta(seconds=outbox_sync_interval_seconds)
+    last_outbox_sync = datetime.now(UTC) - outbox_sync_interval
+
     heartbeat_counter = 0
     heartbeat_interval = (
         10  # Write heartbeat every 10 iterations (~20 seconds, since brpop_timeout=2)
@@ -230,16 +239,26 @@ async def main() -> None:
             await asyncio.sleep(1)
 
         now = datetime.now(UTC)
+
+        # Independent outbox sync (30s default) — lower latency than cleanup
+        if now - last_outbox_sync >= outbox_sync_interval:
+            try:
+                synced = await sync_outbox_to_queue()
+                if synced > 0:
+                    logger.info("outbox_sync_completed", synced=synced)
+                last_outbox_sync = now
+            except Exception as e:
+                logger.error("outbox_sync_error", error=str(e))
+
         if now - last_cleanup >= cleanup_interval:
             try:
-                # Sync outbox to queue during cleanup (handles crash recovery)
-                await sync_outbox_to_queue()
                 cleanup_count = await cleanup_expired_jobs()
-                stuck_count = await reset_stuck_jobs(timeout_minutes=10)
+                # Zombie sweeper: requeue jobs stuck in processing (SIGKILL/OOM recovery)
+                stuck_count = await requeue_stuck_jobs(timeout_minutes=15)
                 logger.info(
                     "cleanup_cycle_completed",
                     expired_jobs_cleaned=cleanup_count,
-                    stuck_jobs_reset=stuck_count,
+                    stuck_jobs_requeued=stuck_count,
                 )
                 last_cleanup = now
                 update_worker_state(last_cleanup=last_cleanup.isoformat())
