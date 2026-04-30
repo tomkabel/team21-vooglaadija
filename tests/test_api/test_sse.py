@@ -133,7 +133,13 @@ class TestEventGenerator:
         # 2. first pubsub async-for iteration -> False
         # 3. second pubsub async-for iteration -> False
         # 4. fallback_polling_generator check -> True (break)
-        mock_request.is_disconnected = AsyncMock(side_effect=[False, False, False, True])
+        call_count = [0]
+        async def mock_is_disconnected():
+            call_count[0] += 1
+            if call_count[0] >= 15:  # Allow enough calls for all retry loops
+                return True
+            return False
+        mock_request.is_disconnected = mock_is_disconnected
 
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = []
@@ -233,18 +239,21 @@ class TestEventGenerator:
         """Test that event generator falls back to polling when pub/sub is unavailable."""
         from datetime import UTC, datetime
 
-        from fastapi import Request
-
         from app.api.routes.sse import event_generator
         from app.models.download_job import DownloadJob
 
-        mock_request = MagicMock(spec=Request)
-        # is_disconnected sequence:
-        # 1. initial DB query phase -> False
-        # 2. pubsub buffer task -> False (for multiple attempts)
-        # 3. fallback_polling_generator check -> False (to get at least one poll)
-        # 4. fallback_polling_generator check -> True (break)
-        mock_request.is_disconnected = AsyncMock(side_effect=[False, False, False, True])
+        # Create proper mock request
+        class MockRequest:
+            def __init__(self):
+                self._disconnect_count = 0
+                self.state = MagicMock()
+
+            async def is_disconnected(self):
+                self._disconnect_count += 1
+                # Return False for first 20 calls, then True
+                return self._disconnect_count >= 20
+
+        mock_request = MockRequest()
 
         mock_job = MagicMock(spec=DownloadJob)
         mock_job.id = uuid.uuid4()
@@ -256,18 +265,33 @@ class TestEventGenerator:
         mock_job.updated_at = datetime.now(UTC)
 
         mock_result = MagicMock()
-        # Return empty list for initial DB query to test fallback path
-        mock_result.scalars.return_value.all.return_value = []
+        # Return a job for DB queries so polling can yield an event
+        mock_result.scalars.return_value.all.return_value = [mock_job]
 
-        mock_session = MagicMock()
-        mock_session.execute = AsyncMock(return_value=mock_result)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock()
+        # Create proper async context manager for session
+        class MockSession:
+            def __init__(self, mock_result):
+                self.mock_result = mock_result
 
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+            async def execute(self, *args, **kwargs):
+                return self.mock_result
+
+        mock_session = MockSession(mock_result)
         mock_session_factory = MagicMock(return_value=mock_session)
 
+        # Create a proper async generator mock that raises ConnectionError
+        async def mock_subscribe(user_id):
+            raise ConnectionError("Redis down")
+            yield  # Make it an async generator
+
         mock_pubsub_service = MagicMock()
-        mock_pubsub_service.subscribe = AsyncMock(side_effect=ConnectionError("Redis down"))
+        mock_pubsub_service.subscribe = mock_subscribe
 
         with (
             patch("app.api.routes.sse.get_pubsub_service", return_value=mock_pubsub_service),
