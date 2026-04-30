@@ -290,7 +290,9 @@ async def custom_redoc(request: Request):
             redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@latest/bundles/redoc.standalone.js",
         )
     html = bytes(response.body).decode()
-    html = html.replace("<script>\nconst ui =", f'<script nonce="{request.state.nonce}">\nconst ui =')
+    html = html.replace(
+        "<script>\nconst ui =", f'<script nonce="{request.state.nonce}">\nconst ui ='
+    )
     return HTMLResponse(html)
 
 
