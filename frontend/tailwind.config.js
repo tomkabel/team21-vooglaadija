@@ -32,6 +32,7 @@ module.exports = {
     'card',
     'btn-download',
     'hover-lift',
+    'success-box',
     // Animation utilities
     'opacity-0',
     'opacity-100',

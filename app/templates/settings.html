@@ -14,12 +14,23 @@
 
 {% block content %}
 <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+    {% set field_errors = field_errors or {} %}
     <div class="mb-8 slide-up opacity-0-initial animate-fill-forwards">
         <h1 class="text-3xl sm:text-4xl font-display font-bold text-white tracking-tight">
             Account <span class="text-gradient">Settings</span>
         </h1>
         <p class="mt-2 text-gray-500 font-body text-lg">Manage your profile details and account security</p>
     </div>
+    {% if error %}
+    <div class="mb-6 error-box" role="alert" aria-live="assertive">
+        <div class="flex items-center gap-3">
+            <svg class="h-5 w-5 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <span>{{ error }}</span>
+        </div>
+    </div>
+    {% endif %}
 
     <div class="space-y-6">
         <section class="card-glow p-6 sm:p-8 slide-up animate-stagger-1 opacity-0-initial animate-fill-forwards">
@@ -42,8 +53,12 @@
                            minlength="3"
                            maxlength="64"
                            required
+                           aria-invalid="{{ 'true' if field_errors.get('username') else 'false' }}"
+                           aria-describedby="username-error"
+                           aria-errormessage="username-error"
                            class="form-input"
                            placeholder="Your username">
+                    <p id="username-error" class="field-error" role="alert">{{ field_errors.get("username", "") }}</p>
                 </div>
 
                 <div>
@@ -82,7 +97,11 @@
                            type="password"
                            autocomplete="current-password"
                            required
+                           aria-invalid="{{ 'true' if field_errors.get('current_password') else 'false' }}"
+                           aria-describedby="current-password-error"
+                           aria-errormessage="current-password-error"
                            class="form-input">
+                    <p id="current-password-error" class="field-error" role="alert">{{ field_errors.get("current_password", "") }}</p>
                 </div>
 
                 <div>
@@ -93,7 +112,11 @@
                            autocomplete="new-password"
                            minlength="8"
                            required
+                           aria-invalid="{{ 'true' if field_errors.get('new_password') else 'false' }}"
+                           aria-describedby="new-password-error"
+                           aria-errormessage="new-password-error"
                            class="form-input">
+                    <p id="new-password-error" class="field-error" role="alert">{{ field_errors.get("new_password", "") }}</p>
                 </div>
 
                 <div>
@@ -104,7 +127,11 @@
                            autocomplete="new-password"
                            minlength="8"
                            required
+                           aria-invalid="{{ 'true' if field_errors.get('new_password_confirm') else 'false' }}"
+                           aria-describedby="new-password-confirm-error"
+                           aria-errormessage="new-password-confirm-error"
                            class="form-input">
+                    <p id="new-password-confirm-error" class="field-error" role="alert">{{ field_errors.get("new_password_confirm", "") }}</p>
                 </div>
 
                 <div class="pt-1">
@@ -135,7 +162,11 @@
                            type="password"
                            autocomplete="current-password"
                            required
+                           aria-invalid="{{ 'true' if field_errors.get('delete_password') else 'false' }}"
+                           aria-describedby="delete-password-error"
+                           aria-errormessage="delete-password-error"
                            class="form-input">
+                    <p id="delete-password-error" class="field-error" role="alert">{{ field_errors.get("delete_password", "") }}</p>
                 </div>
 
                 <div>
@@ -144,8 +175,12 @@
                            name="confirm_text"
                            type="text"
                            required
+                           aria-invalid="{{ 'true' if field_errors.get('confirm_text') else 'false' }}"
+                           aria-describedby="confirm-text-error"
+                           aria-errormessage="confirm-text-error"
                            class="form-input"
                            placeholder="DELETE">
+                    <p id="confirm-text-error" class="field-error" role="alert">{{ field_errors.get("confirm_text", "") }}</p>
                 </div>
 
                 <div class="pt-1">

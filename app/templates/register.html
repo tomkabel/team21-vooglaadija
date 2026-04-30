@@ -32,8 +32,9 @@
 
             <!-- Form Card -->
             <div class="card-glow p-8">
+                {% set field_errors = field_errors or {} %}
                 {% if error %}
-                <div class="mb-6 error-box" role="alert">
+                <div class="mb-6 error-box" role="alert" aria-live="assertive">
                     <div class="flex items-center gap-3">
                         <svg class="h-5 w-5 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -60,9 +61,13 @@
                                    type="email"
                                    autocomplete="email"
                                    required
+                                   aria-invalid="{{ 'true' if field_errors.get('email') else 'false' }}"
+                                   aria-describedby="email-error"
+                                   aria-errormessage="email-error"
                                    class="form-input"
                                    placeholder="you@example.com">
                         </div>
+                        <p id="email-error" class="field-error" role="alert">{{ field_errors.get("email", "") }}</p>
                     </div>
 
                     <div>
@@ -77,9 +82,13 @@
                                    autocomplete="new-password"
                                    required
                                    minlength="8"
+                                   aria-invalid="{{ 'true' if field_errors.get('password') else 'false' }}"
+                                   aria-describedby="password-error password-help"
+                                   aria-errormessage="password-error"
                                    class="form-input"
                                    placeholder="At least 8 characters">
                         </div>
+                        <p id="password-error" class="field-error" role="alert">{{ field_errors.get("password", "") }}</p>
                         <div class="mt-3 password-strength" aria-live="polite">
                             <div class="password-strength-meter" role="presentation" aria-hidden="true">
                                 <div id="password-strength-fill" class="password-strength-fill"></div>
@@ -88,7 +97,7 @@
                                 Start typing to check password strength
                             </p>
                         </div>
-                        <p class="mt-2 text-xs text-gray-600 font-body">
+                        <p id="password-help" class="mt-2 text-xs text-gray-600 font-body">
                             Minimum 8 characters. Include at least one number and a special character to get a strong password.
                         </p>
                     </div>
@@ -105,9 +114,13 @@
                                    autocomplete="new-password"
                                    required
                                    minlength="8"
+                                   aria-invalid="{{ 'true' if field_errors.get('password_confirm') else 'false' }}"
+                                   aria-describedby="password-confirm-error"
+                                   aria-errormessage="password-confirm-error"
                                    class="form-input"
                                    placeholder="Enter password again">
                         </div>
+                        <p id="password-confirm-error" class="field-error" role="alert">{{ field_errors.get("password_confirm", "") }}</p>
                     </div>
 
                     <div class="pt-2">
