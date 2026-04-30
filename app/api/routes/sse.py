@@ -43,6 +43,59 @@ async def _job_to_sse_data(job: DownloadJob) -> dict:
     }
 
 
+async def _emit_initial_snapshot(
+    session_factory,
+    user_id: uuid.UUID,
+    seen_initial: OrderedDict[str, str],
+) -> list[ServerSentEvent]:
+    """Emit initial job state from database."""
+    events = []
+    try:
+        async with session_factory() as db:
+            query = (
+                select(DownloadJob)
+                .where(DownloadJob.user_id == user_id)
+                .order_by(DownloadJob.created_at.desc())
+                .limit(50)
+            )
+            result = await db.execute(query)
+            jobs = result.scalars().all()
+
+            for job in jobs:
+                job_id_str = str(job.id)
+                job_updated_at = job.updated_at.isoformat() if job.updated_at else None
+                status_key = f"{job_id_str}:{job_updated_at}"
+                seen_initial[job_id_str] = status_key
+                events.append(
+                    ServerSentEvent(
+                        event="job_update",
+                        data=json.dumps(await _job_to_sse_data(job)),
+                    )
+                )
+    except Exception as e:
+        logger.warning("sse_initial_state_failed", user_id=str(user_id), error=str(e))
+    return events
+
+
+async def _replay_buffered_events(
+    buffered_events: list[dict],
+    seen_initial: OrderedDict[str, str],
+) -> AsyncGenerator[ServerSentEvent, None]:
+    """Replay buffered events, skipping ones already in seen_initial."""
+    for buffered in buffered_events:
+        key = buffered["key"]
+        job_data = buffered["data"]
+        job_id = job_data.get("id")
+        if job_id and key not in seen_initial.values():
+            seen_initial[job_id] = key
+            while len(seen_initial) > MAX_SEEN_JOBS:
+                seen_initial.popitem(last=False)
+            yield ServerSentEvent(
+                event="job_update",
+                data=json.dumps(job_data),
+            )
+
+
 async def _subscribe_to_pubsub(
     pubsub,
     user_id: uuid.UUID,
@@ -73,15 +126,7 @@ async def pubsub_event_generator(
     user_id: uuid.UUID,
     last_seen_job_ids: OrderedDict[str, str] | None = None,
 ) -> AsyncGenerator[ServerSentEvent, None]:
-    """SSE event generator that subscribes to Redis Pub/Sub for real-time updates.
-
-    This generator subscribes to the user's Redis pub/sub channel and yields
-    SSE events as job status updates are received. It includes reconnection
-    logic to handle transient disconnections.
-
-    Yields:
-        ServerSentEvent objects with job_update events.
-    """
+    """SSE event generator that subscribes to Redis Pub/Sub for real-time updates."""
     pubsub = get_pubsub_service()
     reconnect_attempts = 0
     last_seen_job_ids = last_seen_job_ids if last_seen_job_ids is not None else OrderedDict()
@@ -119,12 +164,8 @@ async def fallback_polling_generator(
     user_id: uuid.UUID,
     seen_jobs: OrderedDict[str, str] | None = None,
 ) -> AsyncGenerator[ServerSentEvent, None]:
-    """Fallback polling generator when Pub/Sub is unavailable.
-
-    This is a less efficient fallback that polls the database periodically.
-    It should only be used when Redis pub/sub connection fails.
-    """
-    # Reuse existing dedupe cache from request state if available
+    """Fallback polling generator when Pub/Sub is unavailable."""
+    # Reuse existing dedup cache from request state if available
     if hasattr(request.state, "seen_jobs") and request.state.seen_jobs:
         seen_jobs = request.state.seen_jobs
     elif seen_jobs is None:
@@ -171,30 +212,22 @@ async def fallback_polling_generator(
         pass
 
 
-async def event_generator(
+async def event_generator(  # noqa: C901
     request: Request,
     session_factory,
     user_id: uuid.UUID,
 ) -> AsyncGenerator[ServerSentEvent, None]:
-    """SSE event generator that prioritizes Pub/Sub with polling fallback.
-
-    This generator first subscribes to Redis Pub/Sub for real-time updates,
-    buffering incoming messages before emitting the DB snapshot. This ensures
-    no updates are lost or duplicated during the subscribe->query window.
-
-    Sends heartbeat comments every 15 seconds to keep connections alive through proxies.
-    """
+    """SSE event generator that prioritizes Pub/Sub with polling fallback."""
     seen_initial: OrderedDict[str, str] = OrderedDict()
     buffered_events: list[dict] = []
 
     # Start pub/sub subscription first and buffer incoming messages
     pubsub = get_pubsub_service()
     reconnect_attempts = 0
-    subscription_active = False
 
     async def _buffer_pubsub_events():
         """Buffer pub/sub events before DB snapshot."""
-        nonlocal reconnect_attempts, subscription_active
+        nonlocal reconnect_attempts
         while reconnect_attempts < MAX_PUBSUB_RECONNECT_ATTEMPTS:
             if await request.is_disconnected():
                 break
@@ -205,7 +238,6 @@ async def event_generator(
                         job_updated_at = job_data.get("updated_at")
                         status_key = f"{job_id}:{job_updated_at}"
                         buffered_events.append({"key": status_key, "data": job_data})
-                subscription_active = True
                 break
             except (asyncio.CancelledError, GeneratorExit):
                 break
@@ -222,32 +254,13 @@ async def event_generator(
                 else:
                     break
 
-    # Run buffering task concurrently with DB query preparation
+    # Run buffering task concurrently with DB query
     buffer_task = asyncio.create_task(_buffer_pubsub_events())
 
     # Send initial state from database
-    try:
-        async with session_factory() as db:
-            query = (
-                select(DownloadJob)
-                .where(DownloadJob.user_id == user_id)
-                .order_by(DownloadJob.created_at.desc())
-                .limit(50)
-            )
-            result = await db.execute(query)
-            jobs = result.scalars().all()
-
-            for job in jobs:
-                job_id_str = str(job.id)
-                job_updated_at = job.updated_at.isoformat() if job.updated_at else None
-                status_key = f"{job_id_str}:{job_updated_at}"
-                seen_initial[job_id_str] = status_key
-                yield ServerSentEvent(
-                    event="job_update",
-                    data=json.dumps(await _job_to_sse_data(job)),
-                )
-    except Exception as e:
-        logger.warning("sse_initial_state_failed", user_id=str(user_id), error=str(e))
+    initial_events = await _emit_initial_snapshot(session_factory, user_id, seen_initial)
+    for event in initial_events:
+        yield event
 
     # Wait for buffering to complete (with timeout)
     try:
@@ -256,34 +269,22 @@ async def event_generator(
         pass
 
     # Replay buffered events (skipping ones already in seen_initial)
-    for buffered in buffered_events:
-        key = buffered["key"]
-        job_data = buffered["data"]
-        job_id = job_data.get("id")
-        if job_id and key not in seen_initial.values():
-            seen_initial[job_id] = key
-            # Trim to max size
-            while len(seen_initial) > MAX_SEEN_JOBS:
-                seen_initial.popitem(last=False)
-            yield ServerSentEvent(
-                event="job_update",
-                data=json.dumps(job_data),
-            )
+    async for event in _replay_buffered_events(buffered_events, seen_initial):
+        yield event
 
-    # Continue with pub/sub if subscription was active, otherwise fall back to polling
-    if subscription_active or reconnect_attempts < MAX_PUBSUB_RECONNECT_ATTEMPTS:
-        try:
-            async for event in pubsub_event_generator(request, user_id, seen_initial):
-                yield event
-        except Exception as e:
-            logger.warning(
-                "sse_pubsub_generator_failed",
-                user_id=str(user_id),
-                error=str(e),
-                fallback_to_polling=True,
-            )
+    # Continue with pub/sub, fall back to polling if needed
+    try:
+        async for event in pubsub_event_generator(request, user_id, seen_initial):
+            yield event
+    except Exception as e:
+        logger.warning(
+            "sse_pubsub_generator_failed",
+            user_id=str(user_id),
+            error=str(e),
+            fallback_to_polling=True,
+        )
 
-    # Fall back to polling (also covers normal pub/sub termination after max reconnects)
+    # Fall back to polling
     async for event in fallback_polling_generator(request, session_factory, user_id, seen_initial):
         yield event
 
@@ -293,13 +294,7 @@ async def download_status_stream(
     request: Request,
     current_user: CurrentUserFromCookie,
 ):
-    """Server-Sent Events endpoint for real-time download status updates.
-
-    Requires authentication — unauthenticated requests are rejected with 401.
-
-    This endpoint uses Redis Pub/Sub for real-time updates with automatic
-    fallback to polling if pub/sub is unavailable.
-    """
+    """Server-Sent Events endpoint for real-time download status updates."""
     return EventSourceResponse(
         event_generator(request, get_async_session_factory(), current_user.id),
         media_type="text/event-stream",

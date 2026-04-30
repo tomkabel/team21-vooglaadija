@@ -299,9 +299,7 @@ async def custom_redoc(request: Request):
         )
         # Self-hosted: return with nonce only
         html = bytes(response.body).decode()
-        html = html.replace(
-            "<script>\nconst ui =", f'<script nonce="{nonce}">\nconst ui ='
-        )
+        html = html.replace("<script>\nconst ui =", f'<script nonce="{nonce}">\nconst ui =')
         return HTMLResponse(html)
     else:
         response = get_redoc_html(
@@ -311,9 +309,7 @@ async def custom_redoc(request: Request):
         )
         # CDN fallback: add jsdelivr to CSP
         html = bytes(response.body).decode()
-        html = html.replace(
-            "<script>\nconst ui =", f'<script nonce="{nonce}">\nconst ui ='
-        )
+        html = html.replace("<script>\nconst ui =", f'<script nonce="{nonce}">\nconst ui =')
         response = HTMLResponse(html)
         response.headers["Content-Security-Policy"] = (
             f"default-src 'self'; "
