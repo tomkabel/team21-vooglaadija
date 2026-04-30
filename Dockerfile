@@ -118,6 +118,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Copy Python runtime from builder (with dependencies installed)
 COPY --from=app-builder /opt/venv /opt/venv
 
+WORKDIR /app
+
 # Copy application code
 COPY --from=app-builder /app/app ./app
 COPY --from=app-builder /app/pyproject.toml ./pyproject.toml
