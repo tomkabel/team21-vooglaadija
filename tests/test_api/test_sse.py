@@ -1,7 +1,7 @@
 """Tests for SSE (Server-Sent Events) endpoints."""
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -56,18 +56,16 @@ class TestEventGenerator:
 
         mock_session_factory = MagicMock()
 
-        # Collect events from generator
         events = []
         async for event in event_generator(mock_request, mock_session_factory, uuid.uuid4()):
             events.append(event)
 
-        # Should exit immediately due to disconnection
         assert len(events) == 0
         mock_request.is_disconnected.assert_called()
 
     @pytest.mark.asyncio
-    async def test_event_generator_yields_job_updates(self):
-        """Test that event generator yields job status updates."""
+    async def test_event_generator_yields_initial_state(self):
+        """Test that event generator yields initial job state from database."""
         from datetime import UTC, datetime
 
         from fastapi import Request
@@ -78,69 +76,12 @@ class TestEventGenerator:
         mock_request = MagicMock(spec=Request)
         mock_request.is_disconnected = AsyncMock(side_effect=[False, True])
 
-        # Create mock session with a job
         mock_result = MagicMock()
         mock_job = MagicMock(spec=DownloadJob)
         mock_job.id = uuid.uuid4()
         mock_job.url = "https://youtube.com/watch?v=test"
         mock_job.status = "pending"
         mock_job.file_name = None
-        mock_job.error = None
-        mock_job.created_at = datetime.now(UTC)
-
-        mock_result.scalars.return_value.all.return_value = [mock_job]
-
-        mock_session = MagicMock()
-        mock_session.execute = AsyncMock(return_value=mock_result)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock()
-
-        mock_session_factory = MagicMock(return_value=mock_session)
-
-        user_id = uuid.uuid4()
-
-        # Collect events
-        events = []
-        async for event in event_generator(mock_request, mock_session_factory, user_id):
-            events.append(event)
-            if len(events) >= 1:
-                break
-
-        # Should have yielded at least one event
-        assert len(events) >= 1
-        # First event should be a job_update
-        assert events[0].event == "job_update"
-
-    @pytest.mark.asyncio
-    async def test_event_generator_cursor_pagination(self):
-        """Test that event generator uses cursor-based pagination after initial load."""
-        from datetime import UTC, datetime
-
-        from fastapi import Request
-
-        from app.api.routes.sse import event_generator
-        from app.models.download_job import DownloadJob
-
-        # First call returns jobs (is_disconnected=False, last_updated_at=None)
-        # Second call returns empty (is_disconnected=False but returns)
-        # Third call - request disconnected
-        mock_request = MagicMock(spec=Request)
-        call_count = [0]
-
-        async def mock_is_disconnected():
-            call_count[0] += 1
-            if call_count[0] >= 3:
-                return True
-            return False
-
-        mock_request.is_disconnected = mock_is_disconnected
-
-        mock_result = MagicMock()
-        mock_job = MagicMock(spec=DownloadJob)
-        mock_job.id = uuid.uuid4()
-        mock_job.url = "https://youtube.com/watch?v=test"
-        mock_job.status = "completed"
-        mock_job.file_name = "video.mp4"
         mock_job.error = None
         mock_job.created_at = datetime.now(UTC)
         mock_job.updated_at = datetime.now(UTC)
@@ -154,53 +95,48 @@ class TestEventGenerator:
 
         mock_session_factory = MagicMock(return_value=mock_session)
 
-        user_id = uuid.uuid4()
+        mock_pubsub_service = MagicMock()
 
-        # Collect events
-        events = []
-        async for event in event_generator(mock_request, mock_session_factory, user_id):
-            events.append(event)
-            if len(events) >= 2:
-                break
+        async def mock_subscribe(user_id):
+            return
+            yield
 
-        # Should yield events with job_update
+        mock_pubsub_service.subscribe = mock_subscribe
+
+        async def mock_polling(*args, **kwargs):
+            yield
+
+        with (
+            patch("app.api.routes.sse.get_pubsub_service", return_value=mock_pubsub_service),
+            patch("app.api.routes.sse.fallback_polling_generator", mock_polling),
+        ):
+            events = []
+            async for event in event_generator(mock_request, mock_session_factory, uuid.uuid4()):
+                events.append(event)
+                if len(events) >= 1:
+                    break
+
+        assert len(events) >= 1
         assert events[0].event == "job_update"
 
     @pytest.mark.asyncio
-    async def test_event_generator_skips_duplicate_status(self):
-        """Test that event generator doesn't yield events for unchanged job status."""
-        from datetime import UTC, datetime
+    async def test_event_generator_pubsub_path_yields_updates(self):
+        """Test that event generator uses pub/sub when available."""
 
         from fastapi import Request
 
         from app.api.routes.sse import event_generator
-        from app.models.download_job import DownloadJob
 
         mock_request = MagicMock(spec=Request)
-        call_count = [0]
-
-        async def mock_is_disconnected():
-            call_count[0] += 1
-            if call_count[0] >= 2:
-                return True
-            return False
-
-        mock_request.is_disconnected = mock_is_disconnected
-
-        job_id = uuid.uuid4()
-        now = datetime.now(UTC)
+        # is_disconnected sequence:
+        # 1. pubsub_event_generator while check -> False
+        # 2. first pubsub async-for iteration -> False
+        # 3. second pubsub async-for iteration -> False
+        # 4. fallback_polling_generator check -> True (break)
+        mock_request.is_disconnected = AsyncMock(side_effect=[False, False, False, True])
 
         mock_result = MagicMock()
-        mock_job = MagicMock(spec=DownloadJob)
-        mock_job.id = job_id
-        mock_job.url = "https://youtube.com/watch?v=test"
-        mock_job.status = "completed"
-        mock_job.file_name = "video.mp4"
-        mock_job.error = None
-        mock_job.created_at = now
-        mock_job.updated_at = now
-
-        mock_result.scalars.return_value.all.return_value = [mock_job]
+        mock_result.scalars.return_value.all.return_value = []
 
         mock_session = MagicMock()
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -209,17 +145,142 @@ class TestEventGenerator:
 
         mock_session_factory = MagicMock(return_value=mock_session)
 
-        user_id = uuid.uuid4()
+        job_id = str(uuid.uuid4())
+        pubsub_messages = [
+            {
+                "id": job_id,
+                "status": "processing",
+                "url": "https://youtube.com/watch?v=test",
+                "updated_at": "2024-01-01T00:00:00",
+            },
+            {
+                "id": job_id,
+                "status": "completed",
+                "url": "https://youtube.com/watch?v=test",
+                "file_name": "video.mp4",
+                "updated_at": "2024-01-01T00:00:01",
+            },
+        ]
 
-        # Collect events
-        events = []
-        async for event in event_generator(mock_request, mock_session_factory, user_id):
-            events.append(event)
-            if len(events) >= 1:
-                break
+        async def mock_subscribe(user_id):
+            for msg in pubsub_messages:
+                yield msg
 
-        # First yield should happen
+        mock_pubsub_service = MagicMock()
+        mock_pubsub_service.subscribe = mock_subscribe
+
+        with patch("app.api.routes.sse.get_pubsub_service", return_value=mock_pubsub_service):
+            events = []
+            async for event in event_generator(mock_request, mock_session_factory, uuid.uuid4()):
+                events.append(event)
+                if len(events) >= 2:
+                    break
+
+        assert len(events) == 2
+        assert events[0].event == "job_update"
+        assert events[1].event == "job_update"
+
+    @pytest.mark.asyncio
+    async def test_event_generator_pubsub_dedupes_same_status(self):
+        """Test that pub/sub path deduplicates identical status updates."""
+        from fastapi import Request
+
+        from app.api.routes.sse import event_generator
+
+        mock_request = MagicMock(spec=Request)
+        # is_disconnected sequence:
+        # 1. pubsub_event_generator while check -> False
+        # 2. first pubsub async-for iteration -> False
+        # 3. second pubsub async-for iteration -> False (deduped, not yielded)
+        # 4. fallback_polling_generator check -> True (break)
+        mock_request.is_disconnected = AsyncMock(side_effect=[False, False, False, True])
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+
+        mock_session = MagicMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock()
+
+        mock_session_factory = MagicMock(return_value=mock_session)
+
+        job_id = str(uuid.uuid4())
+        pubsub_messages = [
+            {"id": job_id, "status": "processing", "url": "https://youtube.com/watch?v=test"},
+            {"id": job_id, "status": "processing", "url": "https://youtube.com/watch?v=test"},
+        ]
+
+        async def mock_subscribe(user_id):
+            for msg in pubsub_messages:
+                yield msg
+
+        mock_pubsub_service = MagicMock()
+        mock_pubsub_service.subscribe = mock_subscribe
+
+        with patch("app.api.routes.sse.get_pubsub_service", return_value=mock_pubsub_service):
+            events = []
+            async for event in event_generator(mock_request, mock_session_factory, uuid.uuid4()):
+                events.append(event)
+                if len(events) >= 2:
+                    break
+
+        # Should only yield one event because status didn't change
         assert len(events) == 1
+
+    @pytest.mark.asyncio
+    async def test_event_generator_fallback_when_pubsub_fails(self):
+        """Test that event generator falls back to polling when pub/sub is unavailable."""
+        from datetime import UTC, datetime
+
+        from fastapi import Request
+
+        from app.api.routes.sse import event_generator
+        from app.models.download_job import DownloadJob
+
+        mock_request = MagicMock(spec=Request)
+        # is_disconnected sequence:
+        # 1. initial DB query phase -> False
+        # 2. pubsub buffer task -> False (for multiple attempts)
+        # 3. fallback_polling_generator check -> False (to get at least one poll)
+        # 4. fallback_polling_generator check -> True (break)
+        mock_request.is_disconnected = AsyncMock(side_effect=[False, False, False, True])
+
+        mock_job = MagicMock(spec=DownloadJob)
+        mock_job.id = uuid.uuid4()
+        mock_job.url = "https://youtube.com/watch?v=test"
+        mock_job.status = "completed"
+        mock_job.file_name = "video.mp4"
+        mock_job.error = None
+        mock_job.created_at = datetime.now(UTC)
+        mock_job.updated_at = datetime.now(UTC)
+
+        mock_result = MagicMock()
+        # Return empty list for initial DB query to test fallback path
+        mock_result.scalars.return_value.all.return_value = []
+
+        mock_session = MagicMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock()
+
+        mock_session_factory = MagicMock(return_value=mock_session)
+
+        mock_pubsub_service = MagicMock()
+        mock_pubsub_service.subscribe = AsyncMock(side_effect=ConnectionError("Redis down"))
+
+        with (
+            patch("app.api.routes.sse.get_pubsub_service", return_value=mock_pubsub_service),
+            patch("app.api.routes.sse.POLL_INTERVAL_SECONDS", 0),
+        ):
+            events = []
+            async for event in event_generator(mock_request, mock_session_factory, uuid.uuid4()):
+                events.append(event)
+                if len(events) >= 1:
+                    break
+
+        # Should get at least one event from the fallback polling path
+        assert len(events) >= 1
         assert events[0].event == "job_update"
 
     @pytest.mark.asyncio
@@ -236,7 +297,6 @@ class TestEventGenerator:
 
         mock_session_factory = MagicMock()
 
-        # Should not raise, just exit cleanly
         events = []
         try:
             async for event in event_generator(mock_request, mock_session_factory, uuid.uuid4()):
@@ -267,7 +327,6 @@ class TestEventGenerator:
 
         mock_request.is_disconnected = mock_is_disconnected
 
-        # Create many jobs to exceed MAX_SEEN_JOBS
         mock_result = MagicMock()
         jobs = []
         for i in range(MAX_SEEN_JOBS + 50):
@@ -290,13 +349,448 @@ class TestEventGenerator:
 
         mock_session_factory = MagicMock(return_value=mock_session)
 
-        user_id = uuid.uuid4()
-
         events = []
-        async for event in event_generator(mock_request, mock_session_factory, user_id):
+        async for event in event_generator(mock_request, mock_session_factory, uuid.uuid4()):
             events.append(event)
             if len(events) >= 10:
                 break
 
-        # Should have some events
         assert len(events) >= 1
+
+
+class TestJobToSseData:
+    """Tests for _job_to_sse_data function."""
+
+    @pytest.mark.asyncio
+    async def test_job_to_sse_data_with_none_timestamps(self):
+        """Test _job_to_sse_data handles None timestamps."""
+
+        from app.api.routes.sse import _job_to_sse_data
+        from app.models.download_job import DownloadJob
+
+        mock_job = MagicMock(spec=DownloadJob)
+        mock_job.id = uuid.uuid4()
+        mock_job.url = "https://youtube.com/watch?v=test"
+        mock_job.status = "pending"
+        mock_job.file_name = None
+        mock_job.error = None
+        mock_job.created_at = None
+        mock_job.updated_at = None
+
+        result = await _job_to_sse_data(mock_job)
+
+        assert result["id"] == str(mock_job.id)
+        assert result["url"] == mock_job.url
+        assert result["status"] == mock_job.status
+        assert result["file_name"] is None
+        assert result["error"] is None
+        assert result["created_at"] is None
+        assert result["updated_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_job_to_sse_data_with_timestamps(self):
+        """Test _job_to_sse_data formats timestamps correctly."""
+        from datetime import UTC, datetime
+
+        from app.api.routes.sse import _job_to_sse_data
+        from app.models.download_job import DownloadJob
+
+        created = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        updated = datetime(2024, 1, 1, 12, 1, 0, tzinfo=UTC)
+
+        mock_job = MagicMock(spec=DownloadJob)
+        mock_job.id = uuid.uuid4()
+        mock_job.url = "https://youtube.com/watch?v=test"
+        mock_job.status = "completed"
+        mock_job.file_name = "video.mp4"
+        mock_job.error = None
+        mock_job.created_at = created
+        mock_job.updated_at = updated
+
+        result = await _job_to_sse_data(mock_job)
+
+        assert result["created_at"] == created.isoformat()
+        assert result["updated_at"] == updated.isoformat()
+
+
+class TestSubscribeToPubsub:
+    """Tests for _subscribe_to_pubsub function."""
+
+    @pytest.mark.asyncio
+    async def test_subscribe_to_pubsub_dedupes_with_updated_at(self):
+        """Test that messages with same job_id but different updated_at are not deduplicated."""
+        from collections import OrderedDict
+
+        from app.api.routes.sse import _subscribe_to_pubsub
+
+        job_id = str(uuid.uuid4())
+        pubsub_messages = [
+            {"id": job_id, "status": "processing", "updated_at": "2024-01-01T00:00:00"},
+            {"id": job_id, "status": "processing", "updated_at": "2024-01-01T00:00:01"},
+        ]
+
+        async def mock_subscribe(user_id):
+            for msg in pubsub_messages:
+                yield msg
+
+        mock_pubsub = MagicMock()
+        mock_pubsub.subscribe = mock_subscribe
+
+        last_seen = OrderedDict()
+        events = []
+        async for event in _subscribe_to_pubsub(mock_pubsub, uuid.uuid4(), last_seen):
+            events.append(event)
+
+        assert len(events) == 2
+
+    @pytest.mark.asyncio
+    async def test_subscribe_to_pubsub_dedupes_same_updated_at(self):
+        """Test that messages with same job_id and updated_at are deduplicated."""
+        from collections import OrderedDict
+
+        from app.api.routes.sse import _subscribe_to_pubsub
+
+        job_id = str(uuid.uuid4())
+        pubsub_messages = [
+            {"id": job_id, "status": "processing", "updated_at": "2024-01-01T00:00:00"},
+            {"id": job_id, "status": "processing", "updated_at": "2024-01-01T00:00:00"},
+        ]
+
+        async def mock_subscribe(user_id):
+            for msg in pubsub_messages:
+                yield msg
+
+        mock_pubsub = MagicMock()
+        mock_pubsub.subscribe = mock_subscribe
+
+        last_seen = OrderedDict()
+        events = []
+        async for event in _subscribe_to_pubsub(mock_pubsub, uuid.uuid4(), last_seen):
+            events.append(event)
+
+        assert len(events) == 1
+
+
+class TestPubsubEventGenerator:
+    """Tests for pubsub_event_generator function."""
+
+    @pytest.mark.asyncio
+    async def test_pubsub_event_generator_reconnects_on_exception(self):
+        """Test that pubsub_event_generator reconnects on exception up to max attempts."""
+        from app.api.routes.sse import (
+            MAX_PUBSUB_RECONNECT_ATTEMPTS,
+            pubsub_event_generator,
+        )
+
+        mock_request = MagicMock()
+        call_count = [0]
+
+        async def mock_is_disconnected():
+            call_count[0] += 1
+            return False
+
+        mock_request.is_disconnected = mock_is_disconnected
+
+        reconnect_count = [0]
+
+        async def mock_subscribe(user_id):
+            reconnect_count[0] += 1
+            if reconnect_count[0] < MAX_PUBSUB_RECONNECT_ATTEMPTS:
+                raise Exception("Connection lost")
+            return
+            yield
+
+        mock_pubsub = MagicMock()
+        mock_pubsub.subscribe = mock_subscribe
+
+        with patch("app.api.routes.sse.get_pubsub_service", return_value=mock_pubsub):
+            events = []
+            async for event in pubsub_event_generator(mock_request, uuid.uuid4()):
+                events.append(event)
+                if len(events) >= 1:
+                    break
+
+    @pytest.mark.asyncio
+    async def test_pubsub_event_generator_cancelled_error(self):
+        """Test that pubsub_event_generator handles CancelledError."""
+        import asyncio
+
+        from app.api.routes.sse import pubsub_event_generator
+
+        mock_request = MagicMock()
+
+        async def mock_is_disconnected():
+            raise asyncio.CancelledError
+
+        mock_request.is_disconnected = mock_is_disconnected
+
+        events = []
+        try:
+            async for event in pubsub_event_generator(mock_request, uuid.uuid4()):
+                events.append(event)
+        except asyncio.CancelledError:
+            pass
+
+        assert len(events) == 0
+
+    @pytest.mark.asyncio
+    async def test_pubsub_event_generator_stops_after_max_reconnects(self):
+        """Test that pubsub_event_generator stops after max reconnect attempts."""
+        from app.api.routes.sse import (
+            MAX_PUBSUB_RECONNECT_ATTEMPTS,
+            pubsub_event_generator,
+        )
+
+        mock_request = MagicMock()
+        mock_request.is_disconnected = AsyncMock(return_value=False)
+
+        attempt_count = [0]
+
+        class MockAsyncIterator:
+            def __init__(self):
+                pass
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                attempt_count[0] += 1
+                if attempt_count[0] < MAX_PUBSUB_RECONNECT_ATTEMPTS:
+                    raise Exception("Connection failed")
+                raise StopAsyncIteration
+
+        mock_pubsub_service = MagicMock()
+        mock_pubsub_service.subscribe = MagicMock(return_value=MockAsyncIterator())
+
+        with patch("app.api.routes.sse.get_pubsub_service", return_value=mock_pubsub_service):
+            events = []
+            async for event in pubsub_event_generator(mock_request, uuid.uuid4()):
+                events.append(event)
+
+        assert attempt_count[0] == MAX_PUBSUB_RECONNECT_ATTEMPTS
+
+
+class TestFallbackPollingGenerator:
+    """Tests for fallback_polling_generator function."""
+
+    @pytest.mark.asyncio
+    async def test_fallback_polling_generator_yields_jobs(self):
+        """Test that fallback_polling_generator yields job updates."""
+        from datetime import UTC, datetime
+
+        from app.api.routes.sse import fallback_polling_generator
+        from app.models.download_job import DownloadJob
+
+        mock_request = MagicMock()
+        mock_request.is_disconnected = AsyncMock(side_effect=[False, True])
+
+        mock_job = MagicMock(spec=DownloadJob)
+        mock_job.id = uuid.uuid4()
+        mock_job.url = "https://youtube.com/watch?v=test"
+        mock_job.status = "pending"
+        mock_job.file_name = None
+        mock_job.error = None
+        mock_job.created_at = datetime.now(UTC)
+        mock_job.updated_at = datetime.now(UTC)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_job]
+
+        mock_session = MagicMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock()
+
+        mock_session_factory = MagicMock(return_value=mock_session)
+
+        with patch("app.api.routes.sse.POLL_INTERVAL_SECONDS", 0):
+            events = []
+            async for event in fallback_polling_generator(
+                mock_request, mock_session_factory, uuid.uuid4()
+            ):
+                events.append(event)
+                if len(events) >= 1:
+                    break
+
+        assert len(events) == 1
+        assert events[0].event == "job_update"
+
+    @pytest.mark.asyncio
+    async def test_fallback_polling_generator_cancelled_error(self):
+        """Test that fallback_polling_generator handles CancelledError."""
+        import asyncio
+
+        from app.api.routes.sse import fallback_polling_generator
+
+        mock_request = MagicMock()
+
+        async def mock_is_disconnected():
+            raise asyncio.CancelledError
+
+        mock_request.is_disconnected = mock_is_disconnected
+
+        mock_session_factory = MagicMock()
+
+        events = []
+        try:
+            async for event in fallback_polling_generator(
+                mock_request, mock_session_factory, uuid.uuid4()
+            ):
+                events.append(event)
+        except asyncio.CancelledError:
+            pass
+
+        assert len(events) == 0
+
+
+class TestEventGeneratorExtended:
+    """Extended tests for event_generator function."""
+
+    @pytest.mark.asyncio
+    async def test_event_generator_initial_state_exception_falls_back_to_pubsub(self):
+        """Test that event_generator falls back to pubsub when initial state query fails."""
+        from fastapi import Request
+
+        from app.api.routes.sse import event_generator
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.is_disconnected = AsyncMock(side_effect=[False, False, True])
+
+        mock_session = MagicMock()
+        mock_session.execute = AsyncMock(side_effect=Exception("DB error"))
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock()
+
+        mock_session_factory = MagicMock(return_value=mock_session)
+
+        job_id = str(uuid.uuid4())
+        pubsub_messages = [
+            {
+                "id": job_id,
+                "status": "processing",
+                "url": "https://youtube.com/watch?v=test",
+                "updated_at": "2024-01-01T00:00:00",
+            },
+        ]
+
+        async def mock_subscribe(user_id):
+            for msg in pubsub_messages:
+                yield msg
+
+        mock_pubsub_service = MagicMock()
+        mock_pubsub_service.subscribe = mock_subscribe
+
+        with patch("app.api.routes.sse.get_pubsub_service", return_value=mock_pubsub_service):
+            events = []
+            async for event in event_generator(mock_request, mock_session_factory, uuid.uuid4()):
+                events.append(event)
+                if len(events) >= 1:
+                    break
+
+        assert len(events) == 1
+        assert events[0].event == "job_update"
+
+    @pytest.mark.asyncio
+    async def test_event_generator_pubsub_generator_exception_falls_back_to_polling(self):
+        """Test that event_generator falls back to polling when pubsub generator fails."""
+        from datetime import UTC, datetime
+
+        from fastapi import Request
+
+        from app.api.routes.sse import event_generator
+        from app.models.download_job import DownloadJob
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.is_disconnected = AsyncMock(side_effect=[False, False, False, True])
+
+        mock_job = MagicMock(spec=DownloadJob)
+        mock_job.id = uuid.uuid4()
+        mock_job.url = "https://youtube.com/watch?v=test"
+        mock_job.status = "completed"
+        mock_job.file_name = "video.mp4"
+        mock_job.error = None
+        mock_job.created_at = datetime.now(UTC)
+        mock_job.updated_at = datetime.now(UTC)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_job]
+
+        mock_session = MagicMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock()
+
+        mock_session_factory = MagicMock(return_value=mock_session)
+
+        mock_pubsub_service = MagicMock()
+        mock_pubsub_service.subscribe = AsyncMock(side_effect=Exception("Redis error"))
+
+        with (
+            patch("app.api.routes.sse.get_pubsub_service", return_value=mock_pubsub_service),
+            patch("app.api.routes.sse.POLL_INTERVAL_SECONDS", 0),
+        ):
+            events = []
+            async for event in event_generator(mock_request, mock_session_factory, uuid.uuid4()):
+                events.append(event)
+                if len(events) >= 1:
+                    break
+
+        assert len(events) >= 1
+        assert events[0].event == "job_update"
+
+    @pytest.mark.asyncio
+    async def test_event_generator_pubsub_success_no_fallback(self):
+        """Test that event_generator does not fall back to polling when pubsub succeeds."""
+        from fastapi import Request
+
+        from app.api.routes.sse import event_generator
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.is_disconnected = AsyncMock(side_effect=[False, False, False, True])
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+
+        mock_session = MagicMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock()
+
+        mock_session_factory = MagicMock(return_value=mock_session)
+
+        job_id = str(uuid.uuid4())
+        pubsub_messages = [
+            {
+                "id": job_id,
+                "status": "processing",
+                "url": "https://youtube.com/watch?v=test",
+                "updated_at": "2024-01-01T00:00:00",
+            },
+        ]
+
+        async def mock_subscribe(user_id):
+            for msg in pubsub_messages:
+                yield msg
+
+        mock_pubsub_service = MagicMock()
+        mock_pubsub_service.subscribe = mock_subscribe
+
+        polling_called = [False]
+
+        async def mock_polling(*args, **kwargs):
+            polling_called[0] = True
+            return
+            yield
+
+        with (
+            patch("app.api.routes.sse.get_pubsub_service", return_value=mock_pubsub_service),
+            patch("app.api.routes.sse.fallback_polling_generator", mock_polling),
+        ):
+            events = []
+            async for event in event_generator(mock_request, mock_session_factory, uuid.uuid4()):
+                events.append(event)
+                if len(events) >= 1:
+                    break
+
+        assert len(events) == 1
+        assert events[0].event == "job_update"
