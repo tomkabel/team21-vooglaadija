@@ -84,9 +84,9 @@ class TestEventGenerator:
         mock_job.file_name = None
         mock_job.error = None
         mock_job.created_at = datetime.now(UTC)
-    mock_job.updated_at = datetime.now(UTC)
+        mock_job.updated_at = datetime.now(UTC)
 
-    mock_result.scalars.return_value.all.return_value = [mock_job]
+        mock_result.scalars.return_value.all.return_value = [mock_job]
 
         mock_session = MagicMock()
         mock_session.execute = AsyncMock(return_value=mock_result)
