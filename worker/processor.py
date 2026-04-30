@@ -16,10 +16,34 @@ from app.models.download_job import DownloadJob
 from app.models.outbox import Outbox
 from app.services.retry_service import calculate_retry_with_jitter
 from app.services.circuit_breaker import CircuitBreakerOpenError, extract_media_with_circuit_breaker
+from app.services.pubsub_service import get_pubsub_service
 from worker.health import update_worker_state
 from worker.queue import redis_client
 
 logger = get_logger(__name__)
+
+
+async def _publish_job_status(job) -> None:
+    """Publish job status update to Redis pub/sub.
+
+    This is a fire-and-forget operation - failures are logged but don't
+    affect the worker process. The job status is already persisted in the
+    database, so pub/sub is just for real-time notifications.
+    """
+    try:
+        pubsub = get_pubsub_service()
+        await pubsub.publish_job_status(job.user_id, {
+            "id": str(job.id),
+            "status": job.status,
+            "url": job.url,
+            "file_name": job.file_name,
+            "error": job.error,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        })
+    except Exception as e:
+        # Log but don't fail - pub/sub is best-effort notification
+        logger.warning("pubsub_publish_failed", job_id=str(job.id), error=str(e))
 
 
 async def _heartbeat(db, job_id: UUID) -> None:
@@ -139,6 +163,12 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
             # Initial heartbeat after claiming
             await _heartbeat(db, job_id)
 
+            # Publish status="processing" to Redis pub/sub
+            result = await db.execute(select(DownloadJob).where(DownloadJob.id == job_id))
+            job = result.scalar_one_or_none()
+            if job:
+                await _publish_job_status(job)
+
             # Check for cancellation before starting download
             if shutdown_event.is_set():
                 logger.info("Shutdown requested, requeueing job %s", job_id)
@@ -174,6 +204,13 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
                 )
             )
             await db.commit()
+
+            # Refetch job to get updated values for pub/sub
+            result = await db.execute(select(DownloadJob).where(DownloadJob.id == job_id))
+            job = result.scalar_one_or_none()
+            if job:
+                await _publish_job_status(job)
+
             update_worker_state(status="running", current_job_started_at=None)
             JOBS_COMPLETED.labels(status="success").inc()
             logger.info("job_completed_successfully", job_id=str(job_id))
@@ -204,6 +241,13 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
             )
             JOBS_COMPLETED.labels(status="failed").inc()
             await db.commit()
+
+            # Publish status="failed" to Redis pub/sub
+            result = await db.execute(select(DownloadJob).where(DownloadJob.id == job_id))
+            job = result.scalar_one_or_none()
+            if job:
+                await _publish_job_status(job)
+
             return False
         except Exception as e:
             error_str = str(e)
@@ -250,6 +294,13 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
                         max_retries=job.max_retries,
                     )
                 await db.commit()
+
+                # Publish status="failed" to Redis pub/sub (permanent failure)
+                result = await db.execute(select(DownloadJob).where(DownloadJob.id == job_id))
+                job = result.scalar_one_or_none()
+                if job:
+                    await _publish_job_status(job)
+
             else:
                 # Calculate next retry with exponential backoff + full jitter
                 # This prevents thundering herd problem per AWS Well-Architected Framework
@@ -299,6 +350,13 @@ async def process_next_job(job_id: UUID | str | None = None) -> bool:
                         max_retries=job.max_retries,
                         next_retry_at=next_retry.isoformat(),
                     )
+
+                    # Publish status="pending" (retry scheduled) to Redis pub/sub
+                    result = await db.execute(select(DownloadJob).where(DownloadJob.id == job_id))
+                    job = result.scalar_one_or_none()
+                    if job:
+                        await _publish_job_status(job)
+
                 except Exception as enqueue_error:
                     # DB is already committed with pending status and outbox entry
                     # This is recoverable - sync_outbox will eventually enqueue it
@@ -324,17 +382,33 @@ async def reset_stuck_jobs(timeout_minutes: int = 10) -> int:
     session_factory = get_async_session_factory()
 
     async with session_factory() as db:
+        # Find stuck jobs first to publish status changes after update
         result = await db.execute(
-            update(DownloadJob)
+            select(DownloadJob)
             .where(
                 DownloadJob.status == "processing",
                 DownloadJob.updated_at < cutoff,
             )
-            .values(status="failed", error="Job timed out", completed_at=datetime.now(UTC))
         )
-        await db.commit()
+        stuck_jobs = result.scalars().all()
 
-        count = result.rowcount  # type: ignore[attr-defined]
+        if stuck_jobs:
+            result = await db.execute(
+                update(DownloadJob)
+                .where(
+                    DownloadJob.status == "processing",
+                    DownloadJob.updated_at < cutoff,
+                )
+                .values(status="failed", error="Job timed out", completed_at=datetime.now(UTC))
+            )
+            await db.commit()
+
+            # Refresh and publish status changes so SSE clients see timeouts in real-time
+            for job in stuck_jobs:
+                await db.refresh(job)
+                await _publish_job_status(job)
+
+        count = len(stuck_jobs)
         if count > 0:
             logger.warning(
                 "reset_stuck_jobs",

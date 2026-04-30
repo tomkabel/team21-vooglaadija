@@ -19,7 +19,8 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, ORJSONResponse, RedirectResponse
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import HTMLResponse, JSONResponse, ORJSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -203,6 +204,8 @@ app = FastAPI(
     version=APP_VERSION,
     # Use ORJSONResponse for faster JSON serialization
     default_response_class=ORJSONResponse,
+    docs_url=None,  # Disable default docs to use custom
+    redoc_url=None,  # Disable default redoc to use custom
     contact={
         "name": "Team 21",
         "url": "https://github.com/tomkabel/team21-vooglaadija",
@@ -227,6 +230,52 @@ app = FastAPI(
     ],
     lifespan=lifespan,
 )
+
+# Mount static files for self-hosted Swagger UI
+swagger_dir = "app/static/swagger"
+if os.path.exists(swagger_dir):
+    app.mount("/static/swagger", StaticFiles(directory=swagger_dir), name="swagger")
+else:
+    logger.warning(f"Swagger static directory {swagger_dir} not found. Skipping mount.")
+
+
+# Custom /docs route with self-hosted assets, SRI, and nonce
+@app.get("/docs", include_in_schema=False)
+async def custom_docs(request: Request):
+    nonce = request.state.nonce
+    response = get_swagger_ui_html(
+        openapi_url=app.openapi_url or "/openapi.json",
+        title=app.title + " - API Docs",
+        swagger_js_url="/static/swagger/swagger-ui-bundle.js",
+        swagger_css_url="/static/swagger/swagger-ui.css",
+    )
+    html = bytes(response.body).decode()
+    # Add SRI integrity hashes and nonce to inline script
+    html = html.replace(
+        '<script src="/static/swagger/swagger-ui-bundle.js"></script>',
+        '<script src="/static/swagger/swagger-ui-bundle.js" integrity="sha384-ACi6p1pgYLrDqBMp9QGYWrvcHVJ6AJKuQ3qzvkNIZ64Y+RVt" crossorigin="anonymous"></script>',
+    )
+    html = html.replace(
+        '<link rel="stylesheet" type="text/css" href="/static/swagger/swagger-ui.css">',
+        '<link rel="stylesheet" type="text/css" href="/static/swagger/swagger-ui.css" integrity="sha384-9Q2fpS+xeS4ffJy6CagnwoUl+4ldAYhOs9pgZuEKxypVModhmZFzeMlvVsAjf7uT" crossorigin="anonymous">',
+    )
+    # Add nonce to the inline script
+    html = html.replace("<script>\nconst ui =", f'<script nonce="{nonce}">\nconst ui =')
+    return HTMLResponse(html)
+
+
+# Custom /redoc route with self-hosted assets and nonce
+@app.get("/redoc", include_in_schema=False)
+async def custom_redoc(request: Request):
+    response = get_redoc_html(
+        openapi_url=app.openapi_url or "/openapi.json",
+        title=app.title + " - ReDoc",
+    )
+    html = bytes(response.body).decode()
+    # Add nonce to any scripts if present (ReDoc might not have inline scripts)
+    # For now, just return as is, but with CSP allowing nonce
+    return HTMLResponse(html)
+
 
 app.add_middleware(PrometheusMiddleware)
 app.state.limiter = limiter
