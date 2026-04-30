@@ -118,7 +118,10 @@ class PubSubService:
         try:
             yield pubsub
         finally:
-            await pubsub.unsubscribe(channel)
+            try:
+                await pubsub.unsubscribe(channel)
+            except Exception as e:
+                logger.exception("pubsub_unsubscribe_failed", channel=channel, error=str(e))
             await pubsub.close()
             logger.debug("pubsub_subscription_ended", channel=channel)
 
@@ -139,12 +142,21 @@ class PubSubService:
                 if message["type"] == "message":
                     try:
                         data = json.loads(message["data"])
-                        logger.debug(
-                            "pubsub_message_received",
-                            channel=message["channel"],
-                            job_id=data.get("job_id"),
-                        )
-                        yield data
+                        if isinstance(data, dict):
+                            logger.debug(
+                                "pubsub_message_received",
+                                channel=message["channel"],
+                                job_id=data.get("job_id"),
+                            )
+                            yield data
+                        else:
+                            logger.warning(
+                                "pubsub_non_dict_payload",
+                                channel=message["channel"],
+                                payload_type=type(data).__name__,
+                                payload=str(data)[:200],
+                            )
+                            yield {"job_id": None, "_raw": data}
                     except json.JSONDecodeError as e:
                         logger.error(
                             "pubsub_invalid_json",

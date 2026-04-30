@@ -51,10 +51,10 @@ async def _subscribe_to_pubsub(
     """Inner generator that yields events from pubsub subscription."""
     async for job_data in pubsub.subscribe(user_id):
         job_id = job_data.get("id")
-        status = job_data.get("status")
 
         if job_id:
-            status_key = f"{job_id}:{status}"
+            job_updated_at = job_data.get("updated_at")
+            status_key = f"{job_id}:{job_updated_at}"
             if job_id not in last_seen_job_ids or last_seen_job_ids[job_id] != status_key:
                 last_seen_job_ids[job_id] = status_key
                 last_seen_job_ids.move_to_end(job_id)
@@ -141,7 +141,8 @@ async def fallback_polling_generator(
 
                 for job in jobs:
                     job_id_str = str(job.id)
-                    status_key = f"{job_id_str}:{job.status}"
+                    job_updated_at = job.updated_at.isoformat() if job.updated_at else None
+                    status_key = f"{job_id_str}:{job_updated_at}"
 
                     if job_id_str not in seen_jobs or seen_jobs[job_id_str] != status_key:
                         seen_jobs[job_id_str] = status_key
@@ -201,7 +202,8 @@ async def event_generator(
             seen_initial: OrderedDict[str, str] = OrderedDict()
             for job in jobs:
                 job_id_str = str(job.id)
-                status_key = f"{job_id_str}:{job.status}"
+                job_updated_at = job.updated_at.isoformat() if job.updated_at else None
+                status_key = f"{job_id_str}:{job_updated_at}"
                 if job_id_str not in seen_initial:
                     seen_initial[job_id_str] = status_key
                     yield ServerSentEvent(

@@ -231,10 +231,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Mount static files for self-hosted Swagger UI
-swagger_dir = "app/static/swagger"
-if os.path.exists(swagger_dir):
-    app.mount("/static/swagger", StaticFiles(directory=swagger_dir), name="swagger")
+redoc_dir = Path(__file__).resolve().parent / "static" / "redoc"
+if redoc_dir.exists():
+    app.mount("/static/redoc", StaticFiles(directory=str(redoc_dir)), name="redoc")
+
+swagger_dir = Path(__file__).resolve().parent / "static" / "swagger"
+if swagger_dir.exists():
+    app.mount("/static/swagger", StaticFiles(directory=str(swagger_dir)), name="swagger")
 else:
     logger.warning(f"Swagger static directory {swagger_dir} not found. Skipping mount.")
 
@@ -243,23 +246,29 @@ else:
 @app.get("/docs", include_in_schema=False)
 async def custom_docs(request: Request):
     nonce = request.state.nonce
+    swagger_dir = Path(__file__).resolve().parent / "static" / "swagger"
+    if swagger_dir.exists():
+        swagger_js_url = "/static/swagger/swagger-ui-bundle.js"
+        swagger_css_url = "/static/swagger/swagger-ui.css"
+    else:
+        swagger_js_url = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.5/swagger-ui-bundle.js"
+        swagger_css_url = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.5/swagger-ui.css"
     response = get_swagger_ui_html(
         openapi_url=app.openapi_url or "/openapi.json",
         title=app.title + " - API Docs",
-        swagger_js_url="/static/swagger/swagger-ui-bundle.js",
-        swagger_css_url="/static/swagger/swagger-ui.css",
+        swagger_js_url=swagger_js_url,
+        swagger_css_url=swagger_css_url,
     )
     html = bytes(response.body).decode()
-    # Add SRI integrity hashes and nonce to inline script
-    html = html.replace(
-        '<script src="/static/swagger/swagger-ui-bundle.js"></script>',
-        '<script src="/static/swagger/swagger-ui-bundle.js" integrity="sha384-ACi6p1pgYLrDqBMp9QGYWrvcHVJ6AJKuQ3qzvkNIZ64Y+RVt" crossorigin="anonymous"></script>',
-    )
-    html = html.replace(
-        '<link rel="stylesheet" type="text/css" href="/static/swagger/swagger-ui.css">',
-        '<link rel="stylesheet" type="text/css" href="/static/swagger/swagger-ui.css" integrity="sha384-9Q2fpS+xeS4ffJy6CagnwoUl+4ldAYhOs9pgZuEKxypVModhmZFzeMlvVsAjf7uT" crossorigin="anonymous">',
-    )
-    # Add nonce to the inline script
+    if swagger_dir.exists():
+        html = html.replace(
+            '<script src="/static/swagger/swagger-ui-bundle.js"></script>',
+            '<script src="/static/swagger/swagger-ui-bundle.js" integrity="sha384-0028baa75a6060bac3a81329f501985abbdc1d527a5c16ac87977fb8722684d27a0092ae437ab3be434867ae18f9156d" crossorigin="anonymous"></script>',
+        )
+        html = html.replace(
+            '<link rel="stylesheet" type="text/css" href="/static/swagger/swagger-ui.css">',
+            '<link rel="stylesheet" type="text/css" href="/static/swagger/swagger-ui.css" integrity="sha384-f50d9fa52fb1792e1f7c9cba09a827c28525fb895d01884eb3da6066e10ac72a5532876199917378c96f56c0237fbb93" crossorigin="anonymous">',
+        )
     html = html.replace("<script>\nconst ui =", f'<script nonce="{nonce}">\nconst ui =')
     return HTMLResponse(html)
 
@@ -267,13 +276,21 @@ async def custom_docs(request: Request):
 # Custom /redoc route with self-hosted assets and nonce
 @app.get("/redoc", include_in_schema=False)
 async def custom_redoc(request: Request):
-    response = get_redoc_html(
-        openapi_url=app.openapi_url or "/openapi.json",
-        title=app.title + " - ReDoc",
-    )
+    redoc_dir = Path(__file__).resolve().parent / "static" / "redoc"
+    if redoc_dir.exists():
+        response = get_redoc_html(
+            openapi_url=app.openapi_url or "/openapi.json",
+            title=app.title + " - ReDoc",
+            redoc_js_url="/static/redoc/redoc.standalone.js",
+        )
+    else:
+        response = get_redoc_html(
+            openapi_url=app.openapi_url or "/openapi.json",
+            title=app.title + " - ReDoc",
+            redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@latest/bundles/redoc.standalone.js",
+        )
     html = bytes(response.body).decode()
-    # Add nonce to any scripts if present (ReDoc might not have inline scripts)
-    # For now, just return as is, but with CSP allowing nonce
+    html = html.replace("<script>\nconst ui =", f'<script nonce="{request.state.nonce}">\nconst ui =')
     return HTMLResponse(html)
 
 

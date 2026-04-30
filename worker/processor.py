@@ -399,7 +399,7 @@ async def reset_stuck_jobs(timeout_minutes: int = 10) -> int:
                     DownloadJob.status == "processing",
                     DownloadJob.updated_at < cutoff,
                 )
-                .values(status="failed", error="Job timed out", completed_at=datetime.now(UTC))
+                .values(status="failed", error="Job timed out", completed_at=datetime.now(UTC), updated_at=datetime.now(UTC))
             )
             await db.commit()
 

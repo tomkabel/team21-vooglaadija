@@ -87,10 +87,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY --link --from=frontend-builder /app/frontend/css/dist/styles.css /app/app/static/css/styles.css
 COPY --link --from=frontend-builder /app/frontend/node_modules/htmx.org/dist/htmx.min.js /app/app/static/js/htmx.min.js
 
-# Download Swagger UI assets
+# Download Swagger UI assets (version 5.32.5 - exact pin for SRI integrity)
 RUN mkdir -p /app/app/static/swagger && \
-    curl -o /app/app/static/swagger/swagger-ui-bundle.js https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js && \
-    curl -o /app/app/static/swagger/swagger-ui.css https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css
+    curl -fsSL https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.5/swagger-ui-bundle.js -o /app/app/static/swagger/swagger-ui-bundle.js && \
+    curl -fsSL https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.5/swagger-ui.css -o /app/app/static/swagger/swagger-ui.css
 
 # ============================================
 # Stage 4: Runtime Base
