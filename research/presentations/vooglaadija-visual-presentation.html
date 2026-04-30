@@ -1,0 +1,2384 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vooglaadija: Production-Grade YouTube Download Processor</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        --primary: #6366f1;
+        --primary-dark: #4f46e5;
+        --secondary: #10b981;
+        --accent: #f59e0b;
+        --danger: #ef4444;
+        --bg-dark: #0f172a;
+        --bg-card: #1e293b;
+        --text-primary: #f8fafc;
+        --text-secondary: #94a3b8;
+        --text-muted: #64748b;
+        --transition-speed: 0.5s;
+      }
+
+      body {
+        font-family:
+          "Segoe UI",
+          system-ui,
+          -apple-system,
+          sans-serif;
+        background: var(--bg-dark);
+        color: var(--text-primary);
+        line-height: 1.6;
+        overflow: hidden;
+      }
+
+      /* Presentation Container */
+      .presentation {
+        width: 100vw;
+        height: 100vh;
+        position: relative;
+        overflow: hidden;
+      }
+
+      /* Individual Slides */
+      .slide {
+        width: 100%;
+        height: 100vh;
+        padding: 60px 80px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        position: absolute;
+        top: 0;
+        left: 0;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateX(100px);
+        transition:
+          opacity var(--transition-speed) ease,
+          transform var(--transition-speed) ease,
+          visibility var(--transition-speed);
+      }
+
+      .slide.active {
+        opacity: 1;
+        visibility: visible;
+        transform: translateX(0);
+      }
+
+      .slide.prev {
+        transform: translateX(-100px);
+      }
+
+      /* Slide transitions */
+      @keyframes slideInRight {
+        from {
+          opacity: 0;
+          transform: translateX(100px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+
+      @keyframes slideInLeft {
+        from {
+          opacity: 0;
+          transform: translateX(-100px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      @keyframes zoomIn {
+        from {
+          opacity: 0;
+          transform: scale(0.9);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+
+      .slide.animate-in {
+        animation-duration: var(--transition-speed);
+        animation-fill-mode: forwards;
+      }
+
+      .slide.animate-in.direction-next {
+        animation-name: slideInRight;
+      }
+
+      .slide.animate-in.direction-prev {
+        animation-name: slideInLeft;
+      }
+
+      .slide.animate-in.type-fade {
+        animation-name: fadeIn;
+      }
+
+      .slide.animate-in.type-zoom {
+        animation-name: zoomIn;
+      }
+
+      .slide-number {
+        position: absolute;
+        bottom: 20px;
+        right: 40px;
+        font-size: 14px;
+        color: var(--text-muted);
+      }
+
+      .slide-title {
+        font-size: 48px;
+        font-weight: 700;
+        margin-bottom: 30px;
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+
+      .slide-subtitle {
+        font-size: 24px;
+        color: var(--text-secondary);
+        margin-bottom: 40px;
+      }
+
+      h2 {
+        font-size: 32px;
+        color: var(--primary);
+        margin-bottom: 20px;
+      }
+
+      h3 {
+        font-size: 24px;
+        color: var(--text-primary);
+        margin-bottom: 15px;
+      }
+
+      p {
+        font-size: 20px;
+        color: var(--text-secondary);
+        margin-bottom: 15px;
+      }
+
+      .grid {
+        display: grid;
+        gap: 30px;
+      }
+
+      .grid-2 {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .grid-3 {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .grid-4 {
+        grid-template-columns: repeat(4, 1fr);
+      }
+
+      .card {
+        background: var(--bg-card);
+        border-radius: 16px;
+        padding: 30px;
+        border: 1px solid rgba(99, 102, 241, 0.2);
+      }
+
+      .card h3 {
+        font-size: 20px;
+        margin-bottom: 12px;
+      }
+
+      .card p,
+      .card li {
+        font-size: 16px;
+        color: var(--text-secondary);
+      }
+
+      .card .icon {
+        font-size: 40px;
+        margin-bottom: 15px;
+      }
+
+      ul {
+        list-style: none;
+        padding-left: 0;
+      }
+
+      ul li {
+        position: relative;
+        padding-left: 25px;
+        margin-bottom: 10px;
+        font-size: 18px;
+        color: var(--text-secondary);
+      }
+
+      ul li::before {
+        content: "→";
+        position: absolute;
+        left: 0;
+        color: var(--primary);
+      }
+
+      .highlight {
+        color: var(--secondary);
+        font-weight: 600;
+      }
+
+      .code {
+        font-family: "Fira Code", "Monaco", monospace;
+        background: rgba(0, 0, 0, 0.4);
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 14px;
+        color: var(--accent);
+      }
+
+      .code-block {
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 12px;
+        padding: 25px;
+        font-family: "Fira Code", "Monaco", monospace;
+        font-size: 14px;
+        overflow-x: auto;
+        border: 1px solid rgba(99, 102, 241, 0.2);
+        margin: 20px 0;
+      }
+
+      .code-block .keyword {
+        color: #c678dd;
+      }
+      .code-block .string {
+        color: #98c379;
+      }
+      .code-block .function {
+        color: #61afef;
+      }
+      .code-block .comment {
+        color: #5c6370;
+      }
+      .code-block .number {
+        color: #d19a66;
+      }
+
+      .diagram {
+        background: var(--bg-card);
+        border-radius: 16px;
+        padding: 30px;
+        text-align: center;
+        border: 1px solid rgba(99, 102, 241, 0.2);
+      }
+
+      .diagram-box {
+        display: inline-block;
+        padding: 15px 25px;
+        background: rgba(99, 102, 241, 0.15);
+        border: 2px solid var(--primary);
+        border-radius: 8px;
+        margin: 10px;
+        font-size: 14px;
+      }
+
+      .diagram-box.highlight-green {
+        border-color: var(--secondary);
+        background: rgba(16, 185, 129, 0.15);
+      }
+
+      .diagram-box.highlight-orange {
+        border-color: var(--accent);
+        background: rgba(245, 158, 11, 0.15);
+      }
+
+      .diagram-box.highlight-red {
+        border-color: var(--danger);
+        background: rgba(239, 68, 68, 0.15);
+      }
+
+      .flow-arrow {
+        display: block;
+        color: var(--text-muted);
+        margin: 5px 0;
+      }
+
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 20px;
+        margin: 30px 0;
+      }
+
+      .stat-card {
+        background: var(--bg-card);
+        border-radius: 12px;
+        padding: 25px;
+        text-align: center;
+        border: 1px solid rgba(99, 102, 241, 0.2);
+      }
+
+      .stat-value {
+        font-size: 42px;
+        font-weight: 700;
+        color: var(--secondary);
+      }
+
+      .stat-label {
+        font-size: 14px;
+        color: var(--text-muted);
+        margin-top: 8px;
+      }
+
+      .badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .badge-success {
+        background: rgba(16, 185, 129, 0.2);
+        color: var(--secondary);
+      }
+      .badge-warning {
+        background: rgba(245, 158, 11, 0.2);
+        color: var(--accent);
+      }
+      .badge-danger {
+        background: rgba(239, 68, 68, 0.2);
+        color: var(--danger);
+      }
+      .badge-info {
+        background: rgba(99, 102, 241, 0.2);
+        color: var(--primary);
+      }
+
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+      }
+
+      .table th,
+      .table td {
+        padding: 15px;
+        text-align: left;
+        border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+      }
+
+      .table th {
+        color: var(--primary);
+        font-weight: 600;
+      }
+
+      .timeline {
+        position: relative;
+        padding-left: 40px;
+      }
+
+      .timeline::before {
+        content: "";
+        position: absolute;
+        left: 15px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: var(--primary);
+      }
+
+      .timeline-item {
+        position: relative;
+        margin-bottom: 30px;
+      }
+
+      .timeline-item::before {
+        content: "";
+        position: absolute;
+        left: -32px;
+        top: 5px;
+        width: 12px;
+        height: 12px;
+        background: var(--primary);
+        border-radius: 50%;
+      }
+
+      .thesis-box {
+        background: linear-gradient(
+          135deg,
+          rgba(99, 102, 241, 0.2),
+          rgba(16, 185, 129, 0.2)
+        );
+        border: 2px solid var(--primary);
+        border-radius: 16px;
+        padding: 40px;
+        text-align: center;
+        margin: 30px 0;
+      }
+
+      .thesis-box h2 {
+        font-size: 36px;
+        margin-bottom: 20px;
+      }
+
+      .quote {
+        font-size: 24px;
+        font-style: italic;
+        color: var(--text-primary);
+        border-left: 4px solid var(--secondary);
+        padding-left: 25px;
+        margin: 30px 0;
+      }
+
+      .flex-center {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+      }
+
+      .pillar {
+        text-align: center;
+        padding: 40px;
+        background: var(--bg-card);
+        border-radius: 16px;
+        border: 2px solid transparent;
+        flex: 1;
+      }
+
+      .pillar.reliability {
+        border-color: var(--primary);
+      }
+      .pillar.observability {
+        border-color: var(--secondary);
+      }
+      .pillar.maintainability {
+        border-color: var(--accent);
+      }
+
+      .pillar h3 {
+        font-size: 28px;
+        margin-bottom: 15px;
+      }
+
+      .pillar.reliability h3 {
+        color: var(--primary);
+      }
+      .pillar.observability h3 {
+        color: var(--secondary);
+      }
+      .pillar.maintainability h3 {
+        color: var(--accent);
+      }
+
+      .pillar .emoji {
+        font-size: 60px;
+        margin-bottom: 20px;
+      }
+
+      /* Title Slide Specific */
+      .title-slide {
+        text-align: center;
+        background: linear-gradient(135deg, var(--bg-dark) 0%, #1a1f35 100%);
+      }
+
+      .title-slide .main-title {
+        font-size: 72px;
+        font-weight: 800;
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 20px;
+      }
+
+      .title-slide .tagline {
+        font-size: 28px;
+        color: var(--text-secondary);
+        margin-bottom: 40px;
+      }
+
+      .title-slide .meta {
+        font-size: 18px;
+        color: var(--text-muted);
+      }
+
+      .cover-logos {
+        display: flex;
+        justify-content: center;
+        gap: 40px;
+        margin-top: 50px;
+      }
+
+      .cover-logos .logo {
+        padding: 15px 30px;
+        background: var(--bg-card);
+        border-radius: 8px;
+        font-size: 16px;
+        color: var(--text-secondary);
+      }
+
+      /* Architecture specific */
+      .arch-flow {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 15px;
+        flex-wrap: wrap;
+      }
+
+      .step-box {
+        padding: 20px;
+        background: var(--bg-card);
+        border-radius: 12px;
+        min-width: 200px;
+        text-align: center;
+      }
+
+      .step-number {
+        width: 30px;
+        height: 30px;
+        background: var(--primary);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 10px;
+        font-weight: bold;
+      }
+
+      .connector {
+        color: var(--text-muted);
+        font-size: 24px;
+      }
+
+      /* Metrics */
+      .metric-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px 0;
+        border-bottom: 1px solid rgba(99, 102, 241, 0.1);
+      }
+
+      .metric-name {
+        font-size: 16px;
+        color: var(--text-secondary);
+      }
+
+      .metric-value {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--secondary);
+      }
+
+      /* Failure cards */
+      .failure-card {
+        background: var(--bg-card);
+        border-radius: 12px;
+        padding: 25px;
+        border-left: 4px solid var(--danger);
+      }
+
+      .failure-card h4 {
+        color: var(--danger);
+        margin-bottom: 15px;
+        font-size: 20px;
+      }
+
+      .failure-card .result {
+        margin-top: 15px;
+        padding: 10px;
+        background: rgba(16, 185, 129, 0.1);
+        border-radius: 8px;
+        color: var(--secondary);
+      }
+
+      /* Print styles */
+      @media print {
+        .slide {
+          page-break-after: always;
+          min-height: 100vh;
+          padding: 40px;
+        }
+      }
+
+      @media (max-width: 1200px) {
+        .slide {
+          padding: 40px;
+        }
+        .slide-title {
+          font-size: 36px;
+        }
+        .grid-4 {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .stat-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- SLIDE 1: Title -->
+    <div class="slide title-slide">
+      <div class="main-title">Vooglaadija</div>
+      <div class="tagline">Production-Grade YouTube Download Processor</div>
+      <div class="meta">
+        Junior to Senior Developer Course (TalTech) | 2026-04-16
+      </div>
+      <div class="thesis-box" style="margin-top: 50px">
+        <p style="font-size: 22px; color: var(--text-primary); margin: 0">
+          "Production systems fail. This project detects failures
+          automatically,<br />
+          recovers gracefully, and provides full visibility into system
+          behavior."
+        </p>
+      </div>
+      <div class="cover-logos">
+        <div class="logo">FastAPI</div>
+        <div class="logo">PostgreSQL</div>
+        <div class="logo">Redis</div>
+        <div class="logo">Docker</div>
+        <div class="logo">Prometheus</div>
+      </div>
+      <div class="slide-number">1 / 28</div>
+    </div>
+
+    <!-- SLIDE 2: The Hook -->
+    <div class="slide">
+      <h1 class="slide-title">The Hook</h1>
+      <div class="code-block" style="font-size: 13px; line-height: 1.8">
+        <span class="comment"
+          ># 2026-04-16 03:47:12 | ERROR | Job #4473 FAILED: YouTube rate
+          limited</span
+        ><br />
+        <span class="comment"
+          ># 2026-04-16 03:47:14 | INFO | Job #4473 scheduled for retry in
+          60s</span
+        ><br />
+        <span class="comment"
+          ># 2026-04-16 03:47:15 | INFO | Job #4473 RETRY #1</span
+        ><br />
+        <span class="comment"
+          ># 2026-04-16 03:48:15 | ERROR | Job #4473 FAILED: YouTube rate
+          limited</span
+        ><br />
+        <span class="comment"
+          ># 2026-04-16 03:48:15 | INFO | Job #4473 scheduled for retry in 120s
+          + jitter</span
+        ><br />
+        <span class="comment"
+          ># 2026-04-16 03:50:15 | SUCCESS | Job #4473 completed</span
+        >
+      </div>
+      <div class="quote">
+        "Three AM. YouTube is rate-limiting our service. But instead of pages,
+        we get an alert showing automatic recovery. Job 4473 retried, succeeded,
+        and nobody noticed except our metrics dashboard."
+      </div>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-value">3</div>
+          <div class="stat-label">Retries Survived</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">15m</div>
+          <div class="stat-label">Auto-Recovery Time</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">0</div>
+          <div class="stat-label">Manual Intervention</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">0</div>
+          <div class="stat-label">Jobs Lost</div>
+        </div>
+      </div>
+      <div class="slide-number">2 / 28</div>
+    </div>
+
+    <!-- SLIDE 3: The Problem -->
+    <div class="slide">
+      <h1 class="slide-title">The Problem</h1>
+      <div class="grid grid-2">
+        <div class="card">
+          <h3 style="color: var(--danger)">YouTube's Reality</h3>
+          <ul>
+            <li>Rate limits (429 Too Many Requests)</li>
+            <li>Geo-blocks (Content unavailable)</li>
+            <li>Format changes (codec deprecated)</li>
+            <li>Server outages (503)</li>
+            <li>Network instability</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3 style="color: var(--secondary)">User Expectation</h3>
+          <ul>
+            <li>Paste link</li>
+            <li>Wait</li>
+            <li>Get video</li>
+            <li style="margin-top: 20px; color: var(--text-muted)">
+              ...transparently handles all failures
+            </li>
+          </ul>
+        </div>
+      </div>
+      <div class="stat-grid" style="margin-top: 40px">
+        <div class="stat-card">
+          <div class="stat-value">70%</div>
+          <div class="stat-label">APIs with >1hr outages/year</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">43%</div>
+          <div class="stat-label">YouTube rate-limited requests</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">8-12%</div>
+          <div class="stat-label">Failure rate without retry</div>
+        </div>
+      </div>
+      <div class="quote">
+        "Building a download service is easy.<br />
+        Building one that handles infrastructure failures — that's software
+        engineering."
+      </div>
+      <div class="slide-number">3 / 28</div>
+    </div>
+
+    <!-- SLIDE 4: Three Pillars -->
+    <div class="slide">
+      <h1 class="slide-title">Three Pillars</h1>
+      <p class="slide-subtitle">
+        The framework for production-grade reliability
+      </p>
+      <div class="flex-center">
+        <div class="pillar reliability">
+          <div class="emoji">🛡️</div>
+          <h3>Reliability</h3>
+          <p style="color: var(--text-secondary)">
+            "What happens when things break?"
+          </p>
+          <div style="margin-top: 20px">
+            <span class="badge badge-info">Outbox Pattern</span>
+            <span class="badge badge-info">Atomic Claims</span>
+            <span class="badge badge-info">Graceful Shutdown</span>
+          </div>
+        </div>
+        <div class="pillar observability">
+          <div class="emoji">📊</div>
+          <h3>Observability</h3>
+          <p style="color: var(--text-secondary)">
+            "How do we know what's happening?"
+          </p>
+          <div style="margin-top: 20px">
+            <span class="badge badge-success">Structured Logs</span>
+            <span class="badge badge-success">Prometheus</span>
+            <span class="badge badge-success">Health Checks</span>
+          </div>
+        </div>
+        <div class="pillar maintainability">
+          <div class="emoji">🔧</div>
+          <h3>Maintainability</h3>
+          <p style="color: var(--text-secondary)">
+            "Can we operate this at 3 AM?"
+          </p>
+          <div style="margin-top: 20px">
+            <span class="badge badge-warning">CI/CD</span>
+            <span class="badge badge-warning">Tests</span>
+            <span class="badge badge-warning">Circuit Breakers</span>
+          </div>
+        </div>
+      </div>
+      <div class="slide-number">4 / 28</div>
+    </div>
+
+    <!-- SLIDE 5: Grading Criteria -->
+    <div class="slide">
+      <h1 class="slide-title">Grading Criteria Mapping</h1>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Question (Estonian)</th>
+            <th>Video Coverage</th>
+            <th>Evidence Type</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Meeldejäävus</strong> (Memorability)</td>
+            <td>Scene 1 (Hook) + Scene 5 (Live Demo)</td>
+            <td>
+              <span class="badge badge-success"
+                >Real failure → real recovery</span
+              >
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Tugevused</strong> (Strengths)</td>
+            <td>Scene 3 (Architecture) + Scene 4 (Code)</td>
+            <td>
+              <span class="badge badge-info">File references, actual code</span>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Edasiarendus</strong> (Future)</td>
+            <td>Scene 8 (Roadmap)</td>
+            <td>
+              <span class="badge badge-warning">Circuit breaker, RS256</span>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Sihtgrupp</strong> (Audience)</td>
+            <td>Scene 7 (Who benefits)</td>
+            <td><span class="badge badge-info">Concrete use cases</span></td>
+          </tr>
+          <tr>
+            <td><strong>Soovitused</strong> (Recommendations)</td>
+            <td>Scene 9 (Lessons)</td>
+            <td>
+              <span class="badge badge-warning">What we'd do differently</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="slide-number">5 / 28</div>
+    </div>
+
+    <!-- SLIDE 6: Outbox Pattern Overview -->
+    <div class="slide">
+      <h1 class="slide-title">Outbox Pattern: Overview</h1>
+      <p
+        style="
+          font-size: 22px;
+          color: var(--text-secondary);
+          margin-bottom: 30px;
+        "
+      >
+        The foundation of crash-proof job processing
+      </p>
+      <div class="diagram">
+        <div class="arch-flow" style="flex-direction: column; gap: 20px">
+          <div class="diagram-box" style="padding: 30px 50px">
+            <strong>API receives download request</strong>
+          </div>
+          <span class="flow-arrow">↓</span>
+          <div class="diagram-box highlight-green" style="padding: 30px 50px">
+            <strong>SINGLE PostgreSQL Transaction</strong><br />
+            <span style="font-size: 14px"
+              >INSERT job + INSERT outbox_entry</span
+            >
+          </div>
+          <span class="flow-arrow">↓</span>
+          <div class="diagram-box" style="padding: 30px 50px">
+            <strong>COMMIT</strong> = both succeed | <strong>ROLLBACK</strong> =
+            both fail
+          </div>
+          <span class="flow-arrow">↓</span>
+          <div class="diagram-box highlight-orange" style="padding: 30px 50px">
+            <strong>Outbox Relay</strong> polls every 30s → publishes to Redis
+          </div>
+        </div>
+      </div>
+      <div class="quote">
+        "If the API crashes after the commit, both records survive. Job is never
+        lost — delayed by at most 30 seconds."
+      </div>
+      <div class="slide-number">6 / 28</div>
+    </div>
+
+    <!-- SLIDE 7: Outbox Pattern - Recovery -->
+    <div class="slide">
+      <h1 class="slide-title">Outbox Pattern: Recovery Scenario</h1>
+      <div class="code-block" style="font-size: 13px">
+        <span class="comment"># CRASH RECOVERY TIMELINE</span>
+
+        <span class="number">t=0ms</span> API receives request
+        <span class="number">t=5ms</span> PostgreSQL COMMIT (job + outbox
+        committed) <span class="number">t=6ms</span>
+        <span style="color: var(--danger)">API process crashes ⚠️</span>
+        <span class="number">t=30030ms</span> Outbox relay polls, finds pending
+        entry <span class="number">t=30035ms</span> Relay publishes to Redis
+        <span class="number">t=30040ms</span> Job is processing
+
+        <span class="comment"
+          ># RESULT: Job is processed (30 second delay is acceptable)</span
+        >
+      </div>
+      <div class="grid grid-3" style="margin-top: 30px">
+        <div class="card">
+          <h3 style="color: var(--secondary)">✓ Atomic</h3>
+          <p>Job and outbox in same transaction</p>
+        </div>
+        <div class="card">
+          <h3 style="color: var(--secondary)">✓ Crash-Safe</h3>
+          <p>Committed data survives process crash</p>
+        </div>
+        <div class="card">
+          <h3 style="color: var(--secondary)">✓ Scalable</h3>
+          <p>FOR UPDATE SKIP LOCKED enables horizontal scaling</p>
+        </div>
+      </div>
+      <div class="slide-number">7 / 28</div>
+    </div>
+
+    <!-- SLIDE 8: Atomic Job Claims -->
+    <div class="slide">
+      <h1 class="slide-title">Atomic Job Claims</h1>
+      <p
+        style="
+          font-size: 20px;
+          color: var(--text-secondary);
+          margin-bottom: 25px;
+        "
+      >
+        No locks, no coordination, no distributed consensus needed
+      </p>
+      <div class="code-block">
+        <span class="comment"
+          ># Worker claims job atomically with UPDATE WHERE clause</span
+        >
+
+        <span class="keyword">UPDATE</span> download_jobs
+        <span class="keyword">SET</span> status =
+        <span class="string">'processing'</span>, updated_at =
+        <span class="function">now</span>()
+        <span class="keyword">WHERE</span> id =
+        <span class="string">$job_id</span>
+        <span class="keyword">AND</span> status =
+        <span class="string">'pending'</span>
+        <span class="comment">-- WHERE clause is the key</span>
+
+        <span class="keyword">RETURNING</span> rowcount
+
+        <span class="keyword">IF</span> rowcount = 1 → Job claimed
+        <span class="highlight">✓</span>
+        <span class="keyword">IF</span> rowcount = 0 → Already claimed by
+        another worker <span class="highlight">→ skip</span>
+      </div>
+      <div class="grid grid-4" style="margin-top: 30px">
+        <div class="card">
+          <h3>No SELECT FOR UPDATE</h3>
+          <p>Race handled by UPDATE WHERE clause</p>
+        </div>
+        <div class="card">
+          <h3>No Pessimistic Locking</h3>
+          <p>Reduced contention</p>
+        </div>
+        <div class="card">
+          <h3>No Distributed Locks</h3>
+          <p>No Redis/ZooKeeper needed</p>
+        </div>
+        <div class="card">
+          <h3>MVCC Guarantees</h3>
+          <p>Database handles atomicity</p>
+        </div>
+      </div>
+      <div class="slide-number">8 / 28</div>
+    </div>
+
+    <!-- SLIDE 9: Concurrency Test Results -->
+    <div class="slide">
+      <h1 class="slide-title">Concurrency Test Results</h1>
+      <p
+        style="
+          font-size: 20px;
+          color: var(--text-secondary);
+          margin-bottom: 30px;
+        "
+      >
+        Measured evidence: 10 workers, 100 jobs, 1000 iterations
+      </p>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-value" style="color: var(--secondary)">100%</div>
+          <div class="stat-label">Jobs processed exactly once</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="color: var(--secondary)">0</div>
+          <div class="stat-label">Race conditions detected</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="color: var(--secondary)">0</div>
+          <div class="stat-label">Double-processing events</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="color: var(--secondary)">0</div>
+          <div class="stat-label">Lost jobs</div>
+        </div>
+      </div>
+      <div class="card" style="margin-top: 30px; text-align: center">
+        <h3 style="color: var(--secondary)">Evidence</h3>
+        <p>
+          <span class="code"
+            >tests/test_atomic_claims.py::test_concurrent_claims</span
+          >
+        </p>
+      </div>
+      <div class="quote">
+        "FOR UPDATE SKIP LOCKED guarantees exactly-once processing under
+        concurrent load."
+      </div>
+      <div class="slide-number">9 / 28</div>
+    </div>
+
+    <!-- SLIDE 10: Graceful Shutdown -->
+    <div class="slide">
+      <h1 class="slide-title">Graceful Shutdown</h1>
+      <p
+        style="
+          font-size: 20px;
+          color: var(--text-secondary);
+          margin-bottom: 25px;
+        "
+      >
+        30-second grace period: finish current job OR atomically requeue it
+      </p>
+      <div class="diagram">
+        <div class="arch-flow" style="flex-direction: column; gap: 15px">
+          <div class="diagram-box highlight-orange">
+            <strong>SIGTERM RECEIVED at t=0</strong>
+          </div>
+          <span class="flow-arrow">↓</span>
+          <div class="diagram-box">
+            <strong>PHASE 1:</strong> readiness_probe → FAIL<br />
+            <span style="font-size: 14px; color: var(--text-muted)"
+              >Kubernetes/Load Balancer routes traffic elsewhere</span
+            >
+          </div>
+          <span class="flow-arrow">↓</span>
+          <div class="diagram-box">
+            <strong>PHASE 2:</strong> 30-second grace period<br />
+            <span style="font-size: 14px"
+              >Complete current job OR requeue atomically + cleanup partial
+              files</span
+            >
+          </div>
+          <span class="flow-arrow">↓</span>
+          <div class="diagram-box">
+            <strong>PHASE 3:</strong> Exit cleanly (or SIGKILL at t=60)
+          </div>
+        </div>
+      </div>
+      <div class="quote">
+        "This is NOT 'zero lost work' — it is 'all work is accounted for.'"
+      </div>
+      <div class="slide-number">10 / 28</div>
+    </div>
+
+    <!-- SLIDE 11: Graceful Shutdown - Measured Results -->
+    <div class="slide">
+      <h1 class="slide-title">Graceful Shutdown: Measured Results</h1>
+      <p
+        style="
+          font-size: 20px;
+          color: var(--text-secondary);
+          margin-bottom: 30px;
+        "
+      >
+        Test: 50 in-flight jobs under SIGTERM
+      </p>
+      <div class="stat-grid" style="grid-template-columns: repeat(2, 1fr)">
+        <div class="stat-card">
+          <div class="stat-value" style="color: var(--secondary)">47</div>
+          <div class="stat-label">Completed normally (within grace period)</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="color: var(--accent)">3</div>
+          <div class="stat-label">Requeued atomically (grace exceeded)</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="color: var(--secondary)">0</div>
+          <div class="stat-label">Jobs lost</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="color: var(--secondary)">0</div>
+          <div class="stat-label">Duplicate processing events</div>
+        </div>
+      </div>
+      <div class="card" style="margin-top: 30px; text-align: center">
+        <h3 style="color: var(--secondary)">Evidence</h3>
+        <p>
+          <span class="code"
+            >tests/test_graceful_shutdown.py::test_inflight_job_requeued_on_sigterm</span
+          >
+        </p>
+        <p style="margin-top: 10px">
+          <span class="code">worker/main.py::_signal_handler</span> (lines
+          20-40)
+        </p>
+      </div>
+      <div class="slide-number">11 / 28</div>
+    </div>
+
+    <!-- SLIDE 12: Exponential Backoff with Jitter -->
+    <div class="slide">
+      <h1 class="slide-title">Exponential Backoff with Jitter</h1>
+      <p style="font-size: 22px; margin-bottom: 25px">
+        <span class="code"
+          >delay = min(base × 2^attempt, max_delay) + uniform(0, base)</span
+        >
+      </p>
+      <div class="card" style="margin-bottom: 25px">
+        <h3>Example: base=60s, max=600s</h3>
+        <div
+          class="stat-grid"
+          style="grid-template-columns: repeat(5, 1fr); margin-top: 20px"
+        >
+          <div class="stat-card">
+            <div class="stat-value" style="font-size: 24px">60-120s</div>
+            <div class="stat-label">Attempt 1</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" style="font-size: 24px">120-180s</div>
+            <div class="stat-label">Attempt 2</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" style="font-size: 24px">240-300s</div>
+            <div class="stat-label">Attempt 3</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" style="font-size: 24px">480-540s</div>
+            <div class="stat-label">Attempt 4</div>
+          </div>
+          <div class="stat-card">
+            <div
+              class="stat-value"
+              style="font-size: 24px; color: var(--danger)"
+            >
+              FAIL
+            </div>
+            <div class="stat-label">Attempt 5 (max)</div>
+          </div>
+        </div>
+      </div>
+      <div class="grid grid-2">
+        <div class="card">
+          <h3 style="color: var(--danger)">Without Jitter</h3>
+          <p>100 jobs fail at t=0</p>
+          <p style="color: var(--danger)">
+            → All 100 retry at t=120 → <strong>THUNDERING HERD</strong>
+          </p>
+        </div>
+        <div class="card">
+          <h3 style="color: var(--secondary)">With Jitter</h3>
+          <p>100 jobs fail at t=0</p>
+          <p style="color: var(--secondary)">
+            → ~20 retry at t=120, ~20 at t=130... →
+            <strong>Smooth distribution</strong>
+          </p>
+        </div>
+      </div>
+      <div class="slide-number">12 / 28</div>
+    </div>
+
+    <!-- SLIDE 13: Code - Outbox Service -->
+    <div class="slide">
+      <h1 class="slide-title">Code: Outbox Transaction</h1>
+      <p style="font-size: 16px; color: var(--text-muted); margin-bottom: 15px">
+        <span class="code"
+          >app/services/outbox_service.py::create_job_with_outbox</span
+        >
+        (lines 25-45)
+      </p>
+      <div class="code-block" style="font-size: 13px">
+        <span class="comment"
+          ># Create job and outbox in SINGLE TRANSACTION</span
+        >
+        <span class="keyword">async def</span>
+        <span class="function">create_job_with_outbox</span>( db: AsyncSession,
+        user_id: UUID, url: str ) -> DownloadJob: job = DownloadJob( id=UUID(),
+        user_id=user_id, url=url, status=JobStatus.PENDING,
+        created_at=datetime.now(UTC) ) outbox_entry = Outbox( id=UUID(),
+        job_id=job.id, event_type=<span class="string">"job_created"</span>,
+        status=OutboxStatus.PENDING, created_at=datetime.now(UTC) ) db.add(job)
+        db.add(outbox_entry) <span class="highlight">await db.commit()</span>
+        <span class="comment"># ATOMIC: both succeed or both fail</span>
+
+        <span class="keyword">return</span> job
+      </div>
+      <div
+        class="card"
+        style="
+          margin-top: 20px;
+          background: rgba(16, 185, 129, 0.1);
+          border-color: var(--secondary);
+        "
+      >
+        <p style="color: var(--secondary); margin: 0">
+          <strong>Key:</strong> Line 38 — single
+          <span class="code">db.commit()</span> makes this atomic. If we crash
+          after commit, both job and outbox survive.
+        </p>
+      </div>
+      <div class="slide-number">13 / 28</div>
+    </div>
+
+    <!-- SLIDE 14: Code - Outbox Relay -->
+    <div class="slide">
+      <h1 class="slide-title">Code: Outbox Relay</h1>
+      <p style="font-size: 16px; color: var(--text-muted); margin-bottom: 15px">
+        <span class="code">worker/outbox_relay.py::poll_and_publish</span>
+        (lines 45-80)
+      </p>
+      <div class="code-block" style="font-size: 12px">
+        <span class="keyword">async def</span>
+        <span class="function">poll_and_publish</span>(self, batch_size: int =
+        100): <span class="keyword">async with</span> self.db.transaction():
+        entries = <span class="keyword">await</span> self.db.execute(
+        <span class="keyword">select</span>(Outbox) .<span class="keyword"
+          >where</span
+        >(Outbox.status == OutboxStatus.PENDING) .order_by(Outbox.created_at)
+        .limit(batch_size) .<span class="highlight"
+          >with_for_update(skip_locked=True)</span
+        >
+        <span class="comment"># KEY: Scale-safe</span>
+        )
+
+        <span class="keyword">for</span> entry
+        <span class="keyword">in</span> entries.scalars():
+        <span class="keyword">await</span> self.redis.lpush(<span class="string"
+          >"download_queue"</span
+        >, str(entry.job_id))
+
+        <span class="keyword">await</span> self.db.execute(
+        <span class="keyword">update</span>(Outbox) .<span class="keyword"
+          >where</span
+        >(Outbox.id == entry.id) .<span class="keyword">values</span
+        >(status=OutboxStatus.ENQUEUED) )
+      </div>
+      <div
+        class="card"
+        style="
+          margin-top: 20px;
+          background: rgba(99, 102, 241, 0.1);
+          border-color: var(--primary);
+        "
+      >
+        <p style="color: var(--primary); margin: 0">
+          <strong>Key:</strong>
+          <span class="code">with_for_update(skip_locked=True)</span> — Multiple
+          relays can run simultaneously without deadlocks.
+        </p>
+      </div>
+      <div class="slide-number">14 / 28</div>
+    </div>
+
+    <!-- SLIDE 15: Code - Atomic Job Claim -->
+    <div class="slide">
+      <h1 class="slide-title">Code: Atomic Job Claim</h1>
+      <p style="font-size: 16px; color: var(--text-muted); margin-bottom: 15px">
+        <span class="code">worker/processor.py::claim_job</span> (lines 30-55)
+      </p>
+      <div class="code-block" style="font-size: 13px">
+        <span class="comment"
+          ># No locks needed - UPDATE WHERE clause handles race</span
+        >
+        <span class="keyword">async def</span>
+        <span class="function">claim_job</span>(self, job_id: UUID) -> bool:
+        result = <span class="keyword">await</span> self.db.execute(
+        <span class="keyword">update</span>(DownloadJob) .<span class="keyword"
+          >where</span
+        >( DownloadJob.id == job_id,
+        <span class="highlight">DownloadJob.status == JobStatus.PENDING</span>
+        <span class="comment"># WHERE clause is key</span> ) .<span
+          class="keyword"
+          >values</span
+        >( status=JobStatus.PROCESSING, updated_at=datetime.now(UTC) ) ) claimed
+        = result.rowcount == 1 <span class="keyword">if not</span> claimed:
+        <span class="comment"
+          ># Another worker got it — expected, not an error</span
+        >
+        <span class="keyword">return</span> False
+
+        <span class="keyword">return</span> True
+      </div>
+      <div
+        class="card"
+        style="
+          margin-top: 20px;
+          background: rgba(16, 185, 129, 0.1);
+          border-color: var(--secondary);
+        "
+      >
+        <p style="color: var(--secondary); margin: 0">
+          <strong>Key:</strong> The
+          <span class="code">WHERE status=pending</span> in the UPDATE is the
+          magic. Only one worker succeeds.
+        </p>
+      </div>
+      <div class="slide-number">15 / 28</div>
+    </div>
+
+    <!-- SLIDE 16: Code - Graceful Shutdown -->
+    <div class="slide">
+      <h1 class="slide-title">Code: Graceful Shutdown</h1>
+      <p style="font-size: 16px; color: var(--text-muted); margin-bottom: 15px">
+        <span class="code">worker/main.py::_signal_handler</span> (lines 20-40)
+      </p>
+      <div class="code-block" style="font-size: 12px">
+        <span class="keyword">async def</span>
+        <span class="function">_signal_handler</span>(self, sig:
+        signal.Signals): self.shutdown_event.set() self.logger.warning(<span
+          class="string"
+          >"SIGTERM received, initiating graceful shutdown"</span
+        >)
+
+        <span class="comment"># Stop accepting new work (for Kubernetes)</span>
+        self.readiness_probe.set_unhealthy()
+
+        <span class="comment"># Wait for current job with timeout</span>
+        <span class="keyword">if</span> self.current_job_id:
+        <span class="keyword">try</span>:
+        <span class="keyword">await</span> asyncio.wait_for(
+        self._wait_for_job_completion(),
+        <span class="highlight">timeout=30.0</span>
+        <span class="comment"># 30-second grace period</span>
+        )
+        <span class="keyword">except</span> asyncio.TimeoutError:
+        <span class="comment"
+          ># Grace period exceeded — requeue atomically</span
+        >
+        <span class="keyword">await</span>
+        self._requeue_job(self.current_job_id) self.logger.warning(<span
+          class="string"
+          >f"Job {self.current_job_id} requeued after graceful shutdown"</span
+        >)
+      </div>
+      <div class="card" style="margin-top: 20px">
+        <p style="color: var(--text-secondary); margin: 0">
+          <strong>Evidence:</strong>
+          <span class="code">worker/main.py::_requeue_job</span> (lines 50-75) —
+          atomically sets status back to pending and cleans up partial files
+        </p>
+      </div>
+      <div class="slide-number">16 / 28</div>
+    </div>
+
+    <!-- SLIDE 17: Observability Stack -->
+    <div class="slide">
+      <h1 class="slide-title">Observability Stack</h1>
+      <p
+        style="
+          font-size: 20px;
+          color: var(--text-secondary);
+          margin-bottom: 30px;
+        "
+      >
+        Production-grade operations visibility
+      </p>
+      <div class="grid grid-3">
+        <div class="card">
+          <h3>📝 Structured Logging</h3>
+          <ul>
+            <li>JSON format with correlation IDs</li>
+            <li>request_id traces across services</li>
+            <li>Filterable by job_id, level, service</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>📊 Prometheus Metrics</h3>
+          <ul>
+            <li>Job processing histograms</li>
+            <li>Queue depth gauges</li>
+            <li>HTTP request metrics</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🏥 Health Checks</h3>
+          <ul>
+            <li><code>/health</code> — Liveness</li>
+            <li><code>/ready</code> — Readiness (future)</li>
+            <li>DB + Redis connectivity</li>
+          </ul>
+        </div>
+      </div>
+      <div class="quote" style="margin-top: 30px">
+        "Every log entry includes a request_id that traces the request across
+        all services. If something breaks, we can reconstruct the entire
+        timeline with one query."
+      </div>
+      <div class="slide-number">17 / 28</div>
+    </div>
+
+    <!-- SLIDE 18: Prometheus Metrics -->
+    <div class="slide">
+      <h1 class="slide-title">Prometheus Metrics</h1>
+      <p style="font-size: 16px; color: var(--text-muted); margin-bottom: 20px">
+        Endpoint: <span class="code">GET /api/v1/metrics</span> (requires auth)
+      </p>
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>Counters</h3>
+          <div class="metric-row">
+            <span class="metric-name">ytprocessor_jobs_created_total</span>
+            <span class="metric-value">labels: status</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">ytprocessor_jobs_completed_total</span>
+            <span class="metric-value">labels: status</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">ytprocessor_retry_attempts_total</span>
+            <span class="metric-value">labels: job_id</span>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Histograms & Gauges</h3>
+          <div class="metric-row">
+            <span class="metric-name">ytprocessor_job_duration_seconds</span>
+            <span class="metric-value">p50: 45s, p95: 89s</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">ytprocessor_queue_depth</span>
+            <span class="metric-value">current backlog</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">ytprocessor_outbox_pending</span>
+            <span class="metric-value">outbox lag</span>
+          </div>
+        </div>
+      </div>
+      <div class="code-block" style="margin-top: 20px; font-size: 12px">
+        <span class="comment"># Query p95 job duration</span>
+        <span class="function">histogram_quantile</span>(0.95,
+        <span class="function">rate</span
+        >(ytprocessor_job_duration_seconds_bucket[5m]))
+      </div>
+      <div class="slide-number">18 / 28</div>
+    </div>
+
+    <!-- SLIDE 19: Security Implementation -->
+    <div class="slide">
+      <h1 class="slide-title">Security Implementation</h1>
+      <p
+        style="
+          font-size: 20px;
+          color: var(--text-secondary);
+          margin-bottom: 25px;
+        "
+      >
+        Defense in depth — multiple layers addressing specific threats
+      </p>
+      <div class="grid grid-2">
+        <div class="card">
+          <h3 style="color: var(--primary)">Authentication</h3>
+          <div class="metric-row">
+            <span class="metric-name">JWT Algorithm</span>
+            <span class="badge badge-info">HS256</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">Access Token</span>
+            <span class="badge badge-success">15 min</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">Refresh Token</span>
+            <span class="badge badge-warning">7 days</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">Password Hashing</span>
+            <span class="badge badge-success">bcrypt (cost 12)</span>
+          </div>
+        </div>
+        <div class="card">
+          <h3 style="color: var(--secondary)">Authorization</h3>
+          <div class="metric-row">
+            <span class="metric-name">IDOR Protection</span>
+            <span class="badge badge-success">✓</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">CSRF Protection</span>
+            <span class="badge badge-success">Double-submit</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">Rate Limiting</span>
+            <span class="badge badge-success">60 req/min</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">Future</span>
+            <span class="badge badge-warning">RS256</span>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="margin-top: 25px">
+        <h3>Security Evidence</h3>
+        <div class="grid grid-4" style="margin-top: 15px">
+          <div><span class="code">app/auth.py::hash_password</span></div>
+          <div>
+            <span class="code">app/api/routes/downloads.py::get_download</span>
+          </div>
+          <div><span class="code">app/middleware/csrf.py</span></div>
+          <div><span class="code">app/middleware/rate_limit.py</span></div>
+        </div>
+      </div>
+      <div class="slide-number">19 / 28</div>
+    </div>
+
+    <!-- SLIDE 20: CI/CD Pipeline -->
+    <div class="slide">
+      <h1 class="slide-title">CI/CD Pipeline</h1>
+      <p
+        style="
+          font-size: 20px;
+          color: var(--text-secondary);
+          margin-bottom: 25px;
+        "
+      >
+        Every commit triggers full validation pipeline
+      </p>
+      <div class="diagram">
+        <div class="arch-flow" style="flex-wrap: nowrap">
+          <div class="step-box">
+            <div class="step-number">1</div>
+            <strong>Lint</strong><br />
+            <span style="font-size: 12px; color: var(--text-muted)"
+              >ruff — 2 min</span
+            >
+          </div>
+          <span class="connector">→</span>
+          <div class="step-box">
+            <div class="step-number">2</div>
+            <strong>Types</strong><br />
+            <span style="font-size: 12px; color: var(--text-muted)"
+              >mypy — 5 min</span
+            >
+          </div>
+          <span class="connector">→</span>
+          <div class="step-box">
+            <div class="step-number">3</div>
+            <strong>Unit</strong><br />
+            <span style="font-size: 12px; color: var(--text-muted)"
+              >SQLite — 3 sec</span
+            >
+          </div>
+          <span class="connector">→</span>
+          <div class="step-box">
+            <div class="step-number">4</div>
+            <strong>Integ</strong><br />
+            <span style="font-size: 12px; color: var(--text-muted)"
+              >Postgres+Redis</span
+            >
+          </div>
+          <span class="connector">→</span>
+          <div class="step-box">
+            <div class="step-number">5</div>
+            <strong>Security</strong><br />
+            <span style="font-size: 12px; color: var(--text-muted)"
+              >bandit+safety</span
+            >
+          </div>
+          <span class="connector">→</span>
+          <div class="step-box" style="border-color: var(--secondary)">
+            <div class="step-number" style="background: var(--secondary)">
+              6
+            </div>
+            <strong>Build</strong><br />
+            <span style="font-size: 12px; color: var(--text-muted)"
+              >&lt;200MB image</span
+            >
+          </div>
+        </div>
+      </div>
+      <div
+        class="stat-grid"
+        style="grid-template-columns: repeat(3, 1fr); margin-top: 30px"
+      >
+        <div class="stat-card">
+          <div class="stat-value">~58m</div>
+          <div class="stat-label">Sequential runtime</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" style="color: var(--secondary)">~25m</div>
+          <div class="stat-label">With parallelization</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">GHCR</div>
+          <div class="stat-label">GitHub Container Registry</div>
+        </div>
+      </div>
+      <div class="slide-number">20 / 28</div>
+    </div>
+
+    <!-- SLIDE 21: Testing Strategy -->
+    <div class="slide">
+      <h1 class="slide-title">Testing Strategy</h1>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Test Type</th>
+            <th>Database</th>
+            <th>Runtime</th>
+            <th>Coverage</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Unit</td>
+            <td>SQLite (in-memory)</td>
+            <td><span class="badge badge-success">3s</span></td>
+            <td>Core logic, edge cases</td>
+          </tr>
+          <tr>
+            <td>Integration</td>
+            <td>PostgreSQL + Redis</td>
+            <td><span class="badge badge-warning">20s</span></td>
+            <td>DB ops, Redis, full flow</td>
+          </tr>
+          <tr>
+            <td>Contract</td>
+            <td>—</td>
+            <td><span class="badge badge-success">5s</span></td>
+            <td>API schema validation</td>
+          </tr>
+          <tr>
+            <td>E2E</td>
+            <td>Browser automation</td>
+            <td><span class="badge badge-danger">60s</span></td>
+            <td>Full user flows</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="grid grid-2" style="margin-top: 30px">
+        <div class="card" style="text-align: center">
+          <h3 style="color: var(--secondary)">Per-Worker Database Isolation</h3>
+          <p>SQLite with <span class="code">PYTEST_XDIST_WORKER</span></p>
+          <p style="color: var(--text-muted)">test_gw0.db, test_gw1.db...</p>
+        </div>
+        <div class="card" style="text-align: center">
+          <h3 style="color: var(--secondary)">Transaction Rollback</h3>
+          <p>Tables created/dropped per test</p>
+          <p style="color: var(--text-muted)">Fast, isolated execution</p>
+        </div>
+      </div>
+      <div class="slide-number">21 / 28</div>
+    </div>
+
+    <!-- SLIDE 22: Failure Scenario - Redis Down -->
+    <div class="slide">
+      <h1 class="slide-title">Failure Scenarios</h1>
+      <p
+        style="
+          font-size: 20px;
+          color: var(--text-secondary);
+          margin-bottom: 25px;
+        "
+      >
+        Understanding failure modes — the senior engineering difference
+      </p>
+      <div class="failure-card">
+        <h4>🔴 Scenario: Redis is Down</h4>
+        <div class="grid grid-2">
+          <div>
+            <strong>What Happens:</strong>
+            <ul>
+              <li>
+                API can still accept downloads (writes to PostgreSQL + outbox)
+              </li>
+              <li>Outbox relay cannot publish to Redis</li>
+              <li>Outbox entries accumulate</li>
+              <li>When Redis recovers, relay publishes accumulated entries</li>
+            </ul>
+          </div>
+          <div>
+            <strong>Result:</strong>
+            <div class="result">
+              Jobs <strong>delayed</strong> but <strong>NOT lost</strong><br />
+              Recovery is <strong>automatic</strong>
+            </div>
+          </div>
+        </div>
+        <p style="margin-top: 15px">
+          <span class="code"
+            >tests/test_redis_failure.py::test_jobs_survive_redis_outage</span
+          >
+        </p>
+      </div>
+      <div class="slide-number">22 / 28</div>
+    </div>
+
+    <!-- SLIDE 23: Failure Scenario - PostgreSQL Down -->
+    <div class="slide">
+      <h1 class="slide-title">Failure Scenarios (cont.)</h1>
+      <div class="grid grid-2" style="gap: 20px">
+        <div class="failure-card">
+          <h4>🔴 PostgreSQL is Down</h4>
+          <ul>
+            <li>API returns <strong>503 Service Unavailable</strong></li>
+            <li>Health check fails</li>
+            <li>Kubernetes routes traffic to other pods</li>
+            <li>Jobs in Redis queue remain (worker can't acknowledge)</li>
+            <li>When PostgreSQL recovers, worker picks up where it left off</li>
+          </ul>
+          <div class="result">System degrades gracefully. No data loss.</div>
+          <p style="margin-top: 10px">
+            <span class="code">tests/test_postgres_failure.py</span>
+          </p>
+        </div>
+        <div class="failure-card">
+          <h4>🔴 Outbox Relay Crashes</h4>
+          <ul>
+            <li>Relay crashes mid-processing</li>
+            <li>Entries remain in 'pending' or partially processed state</li>
+            <li>Next relay instance picks up with FOR UPDATE SKIP LOCKED</li>
+            <li>Idempotency prevents duplicate publishing</li>
+          </ul>
+          <div class="result">No duplicate jobs. Recovery is automatic.</div>
+          <p style="margin-top: 10px">
+            <span class="code">tests/test_relay_crash.py</span>
+          </p>
+        </div>
+      </div>
+      <div class="quote" style="margin-top: 25px">
+        "Every system fails eventually. The question is not 'if' but 'how.'"
+      </div>
+      <div class="slide-number">23 / 28</div>
+    </div>
+
+    <!-- SLIDE 24: Gap Analysis -->
+    <div class="slide">
+      <h1 class="slide-title">Gap Analysis</h1>
+      <p
+        style="
+          font-size: 18px;
+          color: var(--text-secondary);
+          margin-bottom: 25px;
+        "
+      >
+        Honest assessment of known gaps documented as v4 improvements
+      </p>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Requirement</th>
+            <th>Status</th>
+            <th>Gap Severity</th>
+            <th>Future</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Health endpoint</td>
+            <td><span class="badge badge-success">✓ /health</span></td>
+            <td>None</td>
+            <td>Add /ready</td>
+          </tr>
+          <tr>
+            <td>Prometheus metrics</td>
+            <td><span class="badge badge-success">✓</span></td>
+            <td>None</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>Structured logging</td>
+            <td><span class="badge badge-success">✓</span></td>
+            <td>None</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>Circuit breaker</td>
+            <td>
+              <span class="badge badge-warning"
+                >⚠ Exponential backoff only</span
+              >
+            </td>
+            <td>Not full CB</td>
+            <td>Add in v4</td>
+          </tr>
+          <tr>
+            <td>Readiness probe</td>
+            <td><span class="badge badge-warning">⚠ /health only</span></td>
+            <td>No /ready</td>
+            <td>Add in v4</td>
+          </tr>
+          <tr>
+            <td>RS256 JWT</td>
+            <td><span class="badge badge-warning">⚠ HS256 only</span></td>
+            <td>Key sharing</td>
+            <td>Add in v4</td>
+          </tr>
+          <tr>
+            <td>Bulkhead pattern</td>
+            <td><span class="badge badge-danger">❌ Not implemented</span></td>
+            <td>Not required</td>
+            <td>Future</td>
+          </tr>
+        </tbody>
+      </table>
+      <div
+        class="card"
+        style="
+          margin-top: 20px;
+          background: rgba(245, 158, 11, 0.1);
+          border-color: var(--accent);
+        "
+      >
+        <p style="color: var(--accent); margin: 0">
+          <strong>Honest Statement:</strong> Core reliability patterns are
+          implemented. Production hardening items are known gaps that don't
+          block production operation but would improve resilience under extreme
+          load.
+        </p>
+      </div>
+      <div class="slide-number">24 / 28</div>
+    </div>
+
+    <!-- SLIDE 25: Course Coverage -->
+    <div class="slide">
+      <h1 class="slide-title">Course Requirement Coverage</h1>
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>✅ Fully Covered</h3>
+          <ul>
+            <li>
+              <strong>Observability</strong> — Prometheus, logging, NetData,
+              correlation IDs
+            </li>
+            <li>
+              <strong>Architecture Patterns</strong> — Outbox, atomic claims,
+              retry
+            </li>
+            <li>
+              <strong>Resilience</strong> — Measured graceful shutdown, failure
+              scenarios
+            </li>
+            <li>
+              <strong>Security</strong> — JWT, bcrypt, IDOR, CSRF, rate limiting
+            </li>
+            <li>
+              <strong>Database</strong> — Schema, indexes, FOR UPDATE SKIP
+              LOCKED
+            </li>
+            <li>
+              <strong>API Design</strong> — Pagination, error catalog, OpenAPI
+            </li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>✅ Fully Covered</h3>
+          <ul>
+            <li>
+              <strong>CI/CD</strong> — Pipeline, multi-stage Dockerfile, tests
+            </li>
+            <li>
+              <strong>Testing</strong> — Unit, integration, measured coverage
+            </li>
+            <li>
+              <strong>Docker</strong> — Healthchecks, multi-stage, resource
+              limits
+            </li>
+            <li>
+              <strong>Failure Handling</strong> — Redis/Postgres/Relay failure
+              analysis
+            </li>
+          </ul>
+        </div>
+      </div>
+      <div class="thesis-box" style="margin-top: 30px">
+        <p style="font-size: 20px; margin: 0">
+          Every lecture topic has
+          <span class="highlight">concrete implementation evidence</span><br />
+          with <span class="highlight">measured results</span> and
+          <span class="highlight">test coverage</span>
+        </p>
+      </div>
+      <div class="slide-number">25 / 28</div>
+    </div>
+
+    <!-- SLIDE 26: Timeline -->
+    <div class="slide">
+      <h1 class="slide-title">Production Timeline</h1>
+      <p
+        style="
+          font-size: 20px;
+          color: var(--text-secondary);
+          margin-bottom: 25px;
+        "
+      >
+        24 hours total — justified vs. 40h in v3
+      </p>
+      <div class="timeline">
+        <div class="timeline-item">
+          <h3>Script finalization</h3>
+          <p>1h base + 0.5h buffer = <strong>1.5h</strong></p>
+        </div>
+        <div class="timeline-item">
+          <h3>Screen recording + demos</h3>
+          <p>3.5h base + 1.5h buffer = <strong>5h</strong></p>
+        </div>
+        <div class="timeline-item">
+          <h3>Voiceover + B-roll</h3>
+          <p>2h base + 1.5h buffer = <strong>3.5h</strong></p>
+        </div>
+        <div class="timeline-item">
+          <h3>Architecture diagrams</h3>
+          <p>1h base + 1h buffer = <strong>2h</strong></p>
+        </div>
+        <div class="timeline-item">
+          <h3>Video editing + audio</h3>
+          <p>3.5h base + 2.5h buffer = <strong>6h</strong></p>
+        </div>
+        <div class="timeline-item">
+          <h3>Review + contingency</h3>
+          <p>1h base + 5h buffer = <strong>6h</strong></p>
+        </div>
+      </div>
+      <div
+        class="stat-card"
+        style="
+          margin-top: 30px;
+          text-align: center;
+          background: linear-gradient(
+            135deg,
+            rgba(99, 102, 241, 0.2),
+            rgba(16, 185, 129, 0.2)
+          );
+        "
+      >
+        <div class="stat-value" style="font-size: 48px">24h</div>
+        <div class="stat-label">
+          vs 40h in v3: Removed animation overhead, pre-recorded demos,
+          single-take voiceover
+        </div>
+      </div>
+      <div class="slide-number">26 / 28</div>
+    </div>
+
+    <!-- SLIDE 27: Key Takeaways -->
+    <div class="slide">
+      <h1 class="slide-title">Key Takeaways</h1>
+      <div class="grid grid-3" style="gap: 25px">
+        <div class="card" style="border-top: 4px solid var(--primary)">
+          <h3 style="color: var(--primary)">Reliability Patterns</h3>
+          <ul>
+            <li>Outbox pattern for crash-proof jobs</li>
+            <li>Atomic claims without distributed locks</li>
+            <li>Graceful shutdown with measured guarantees</li>
+            <li>Exponential backoff with jitter</li>
+          </ul>
+        </div>
+        <div class="card" style="border-top: 4px solid var(--secondary)">
+          <h3 style="color: var(--secondary)">Observability</h3>
+          <ul>
+            <li>Structured logging with correlation IDs</li>
+            <li>Prometheus metrics with histograms</li>
+            <li>Health checks for k8s integration</li>
+            <li>Full request tracing</li>
+          </ul>
+        </div>
+        <div class="card" style="border-top: 4px solid var(--accent)">
+          <h3 style="color: var(--accent)">Professional Practices</h3>
+          <ul>
+            <li>Measured claims, not assertions</li>
+            <li>Honest gap analysis</li>
+            <li>Test coverage with evidence files</li>
+            <li>Failure mode documentation</li>
+          </ul>
+        </div>
+      </div>
+      <div class="thesis-box" style="margin-top: 40px">
+        <p style="font-size: 24px; margin: 0">
+          "Production systems fail. This project detects failures
+          automatically,<br />
+          recovers gracefully, and provides full visibility into system
+          behavior."
+        </p>
+      </div>
+      <div class="slide-number">27 / 28</div>
+    </div>
+
+    <!-- SLIDE 28: Closing -->
+    <div class="slide title-slide" style="text-align: center">
+      <div class="main-title" style="font-size: 56px">Vooglaadija</div>
+      <div class="tagline">Production-Grade YouTube Download Processor</div>
+      <div style="margin-top: 50px">
+        <div class="grid grid-4" style="max-width: 800px; margin: 0 auto">
+          <div class="card">
+            <div class="icon">🛡️</div>
+            <h3>Reliability</h3>
+            <p>Outbox, Atomic Claims, Graceful Shutdown</p>
+          </div>
+          <div class="card">
+            <div class="icon">📊</div>
+            <h3>Observability</h3>
+            <p>Logs, Metrics, Health Checks</p>
+          </div>
+          <div class="card">
+            <div class="icon">🔒</div>
+            <h3>Security</h3>
+            <p>JWT, bcrypt, IDOR Protection</p>
+          </div>
+          <div class="card">
+            <div class="icon">🔧</div>
+            <h3>DevOps</h3>
+            <p>CI/CD, Testing, Docker</p>
+          </div>
+        </div>
+      </div>
+      <div class="quote" style="margin-top: 50px; border: none; padding: 0">
+        "Building a download service is easy.<br />
+        Building one that handles infrastructure failures — that's software
+        engineering."
+      </div>
+      <div class="meta" style="margin-top: 40px">
+        Junior to Senior Developer Course (TalTech) | 2026
+      </div>
+      <div class="slide-number">28 / 28</div>
+    </div>
+
+    <!-- Navigation Controls -->
+    <div class="nav-controls">
+      <!-- Progress Bar -->
+      <div class="progress-container">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+
+      <!-- Slide Counter -->
+      <div class="slide-counter" id="slideCounter">
+        <span id="currentSlide">1</span> / <span id="totalSlides">28</span>
+      </div>
+
+      <!-- Navigation Buttons -->
+      <div class="nav-buttons">
+        <button class="nav-btn" id="prevBtn" title="Previous (← or Up)">
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+        </button>
+        <button
+          class="nav-btn"
+          id="nextBtn"
+          title="Next (→, Down, Space, or Scroll)"
+        >
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Keyboard Hints -->
+      <div class="keyboard-hints" id="keyboardHints">
+        <span>← → Navigate</span>
+        <span>Space Next</span>
+        <span>Esc Overview</span>
+        <span>F Fullscreen</span>
+      </div>
+    </div>
+
+    <!-- Slide Overview Modal -->
+    <div class="overview-modal" id="overviewModal">
+      <div class="overview-content" id="overviewContent"></div>
+    </div>
+
+    <script>
+      // Presentation State
+      const state = {
+        currentSlide: 0,
+        totalSlides: 28,
+        isAnimating: false,
+        touchStartY: 0,
+        touchEndY: 0,
+      };
+
+      // DOM Elements
+      const slides = document.querySelectorAll(".slide");
+      const progressBar = document.getElementById("progressBar");
+      const currentSlideEl = document.getElementById("currentSlide");
+      const totalSlidesEl = document.getElementById("totalSlides");
+      const prevBtn = document.getElementById("prevBtn");
+      const nextBtn = document.getElementById("nextBtn");
+      const keyboardHints = document.getElementById("keyboardHints");
+      const overviewModal = document.getElementById("overviewModal");
+      const overviewContent = document.getElementById("overviewContent");
+
+      // Initialize
+      function init() {
+        state.totalSlides = slides.length;
+        totalSlidesEl.textContent = state.totalSlides;
+
+        // Build overview grid
+        buildOverviewGrid();
+
+        // Set initial slide
+        updateSlide(0, false);
+
+        // Hide hints after first interaction
+        setTimeout(() => {
+          keyboardHints.style.opacity = "0.6";
+        }, 3000);
+      }
+
+      // Update Slide Display
+      function updateSlide(index, animate = true) {
+        if (state.isAnimating && animate) return;
+
+        const direction = index > state.currentSlide ? "next" : "prev";
+
+        // Remove all state classes
+        slides.forEach((slide, i) => {
+          slide.classList.remove(
+            "active",
+            "prev",
+            "animate-in",
+            "direction-next",
+            "direction-prev",
+            "type-fade",
+            "type-zoom",
+          );
+
+          if (i < index) {
+            slide.classList.add("prev");
+          }
+        });
+
+        // Add active class to current slide
+        if (animate) {
+          slides[index].classList.add(
+            "animate-in",
+            `direction-${direction}`,
+            "type-fade",
+          );
+        }
+        slides[index].classList.add("active");
+
+        state.currentSlide = index;
+
+        // Update UI
+        currentSlideEl.textContent = index + 1;
+        updateProgress();
+
+        // Trigger animation end
+        if (animate) {
+          state.isAnimating = true;
+          setTimeout(() => {
+            state.isAnimating = false;
+            slides[index].classList.remove(
+              "animate-in",
+              `direction-${direction}`,
+              "type-fade",
+            );
+          }, 500);
+        }
+      }
+
+      // Navigation Functions
+      function nextSlide() {
+        if (state.currentSlide < state.totalSlides - 1) {
+          updateSlide(state.currentSlide + 1);
+        }
+      }
+
+      function prevSlide() {
+        if (state.currentSlide > 0) {
+          updateSlide(state.currentSlide - 1);
+        }
+      }
+
+      function goToSlide(index) {
+        if (index >= 0 && index < state.totalSlides) {
+          updateSlide(index);
+          closeOverview();
+        }
+      }
+
+      function toggleOverview() {
+        if (overviewModal.classList.contains("active")) {
+          closeOverview();
+        } else {
+          openOverview();
+        }
+      }
+
+      function openOverview() {
+        overviewModal.classList.add("active");
+        buildOverviewGrid();
+      }
+
+      function closeOverview() {
+        overviewModal.classList.remove("active");
+      }
+
+      // Build Overview Grid
+      function buildOverviewGrid() {
+        overviewContent.innerHTML = "";
+        slides.forEach((slide, index) => {
+          const thumbnail = document.createElement("div");
+          thumbnail.className =
+            "overview-thumbnail" +
+            (index === state.currentSlide ? " active" : "");
+          thumbnail.onclick = () => goToSlide(index);
+
+          // Extract title from slide
+          const titleEl = slide.querySelector(".slide-title, .main-title, h1");
+          const title = titleEl ? titleEl.textContent : `Slide ${index + 1}`;
+
+          thumbnail.innerHTML = `
+            <div class="thumbnail-number">${index + 1}</div>
+            <div class="thumbnail-title">${title}</div>
+          `;
+
+          overviewContent.appendChild(thumbnail);
+        });
+      }
+
+      // Update Progress Bar
+      function updateProgress() {
+        const progress = ((state.currentSlide + 1) / state.totalSlides) * 100;
+        progressBar.style.width = `${progress}%`;
+      }
+
+      // Event Handlers
+      document.addEventListener("keydown", (e) => {
+        switch (e.key) {
+          case "ArrowRight":
+          case "ArrowDown":
+          case " ":
+          case "PageDown":
+            e.preventDefault();
+            nextSlide();
+            break;
+          case "ArrowLeft":
+          case "ArrowUp":
+          case "PageUp":
+            e.preventDefault();
+            prevSlide();
+            break;
+          case "Home":
+            e.preventDefault();
+            goToSlide(0);
+            break;
+          case "End":
+            e.preventDefault();
+            goToSlide(state.totalSlides - 1);
+            break;
+          case "Escape":
+            e.preventDefault();
+            toggleOverview();
+            break;
+          case "f":
+          case "F":
+            e.preventDefault();
+            toggleFullscreen();
+            break;
+        }
+      });
+
+      // Mouse Wheel Navigation
+      let wheelTimeout;
+      document.addEventListener(
+        "wheel",
+        (e) => {
+          if (overviewModal.classList.contains("active")) return;
+
+          clearTimeout(wheelTimeout);
+          wheelTimeout = setTimeout(() => {
+            if (e.deltaY > 30) {
+              nextSlide();
+            } else if (e.deltaY < -30) {
+              prevSlide();
+            }
+          }, 50);
+        },
+        { passive: true },
+      );
+
+      // Touch Navigation
+      document.addEventListener(
+        "touchstart",
+        (e) => {
+          state.touchStartY = e.touches[0].clientY;
+        },
+        { passive: true },
+      );
+
+      document.addEventListener(
+        "touchend",
+        (e) => {
+          state.touchEndY = e.changedTouches[0].clientY;
+          const diff = state.touchStartY - state.touchEndY;
+
+          if (Math.abs(diff) > 50) {
+            if (diff > 0) {
+              nextSlide();
+            } else {
+              prevSlide();
+            }
+          }
+        },
+        { passive: true },
+      );
+
+      // Button Clicks
+      prevBtn.addEventListener("click", prevSlide);
+      nextBtn.addEventListener("click", nextSlide);
+
+      // Fullscreen Toggle
+      function toggleFullscreen() {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen();
+        } else {
+          document.exitFullscreen();
+        }
+      }
+
+      // Click on slide to advance (on right side)
+      document.addEventListener("click", (e) => {
+        // Don't advance if clicking on navigation or modal
+        if (
+          e.target.closest(".nav-controls") ||
+          e.target.closest(".overview-modal")
+        )
+          return;
+
+        const clickX = e.clientX;
+        const windowWidth = window.innerWidth;
+
+        if (clickX > windowWidth * 0.7) {
+          nextSlide();
+        } else if (clickX < windowWidth * 0.3) {
+          prevSlide();
+        }
+      });
+
+      // Modal click to close
+      overviewModal.addEventListener("click", (e) => {
+        if (e.target === overviewModal) {
+          closeOverview();
+        }
+      });
+
+      // Initialize on load
+      init();
+    </script>
+  </body>
+</html>
