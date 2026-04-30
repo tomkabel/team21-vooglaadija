@@ -152,7 +152,7 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    access_token = create_access_token(user.id)
+    access_token = create_access_token(user.id, email=user.email)
     refresh_token = create_refresh_token(user.id)
 
     # Set JWT tokens as HttpOnly cookies for HTMX/browser auth
@@ -265,7 +265,7 @@ async def refresh(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    access_token = create_access_token(user.id)
+    access_token = create_access_token(user.id, email=user.email)
     new_refresh_token = create_refresh_token(user.id)
 
     # Set JWT tokens as HttpOnly cookies for HTMX/browser auth

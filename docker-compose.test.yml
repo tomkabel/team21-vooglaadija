@@ -1,17 +1,45 @@
+# Test Infrastructure — PostgreSQL + Redis for Integration Tests
+#
+# Usage:
+#   docker-compose -f docker-compose.test.yml up -d
+#   TEST_DATABASE_URL=postgresql+asyncpg://test_user:test_pass@localhost:5433/test_db \
+#     REDIS_URL=redis://localhost:6380/0 \
+#     pytest tests/ -v
+#   docker-compose -f docker-compose.test.yml down -v
+
 services:
-  db:
-    image: postgres:16-alpine
+  test-db:
+    image: postgres:15-alpine
+    container_name: ytprocessor-test-db
     environment:
-      POSTGRES_DB: test_db
       POSTGRES_USER: test_user
       POSTGRES_PASSWORD: test_pass
+      POSTGRES_DB: test_db
+    ports:
+      - "127.0.0.1:5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test_user -d test_db"]
       interval: 5s
       timeout: 5s
       retries: 5
-    networks:
-      - ytprocessor-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
 
-networks:
-  ytprocessor-network:
+  test-redis:
+    image: redis:7-alpine
+    container_name: ytprocessor-test-redis
+    ports:
+      - "127.0.0.1:6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
