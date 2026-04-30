@@ -20,7 +20,8 @@ import structlog.contextvars
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, ORJSONResponse, RedirectResponse
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import HTMLResponse, JSONResponse, ORJSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -204,6 +205,8 @@ app = FastAPI(
     version=APP_VERSION,
     # Use ORJSONResponse for faster JSON serialization
     default_response_class=ORJSONResponse,
+    docs_url=None,  # Disable default docs to use custom
+    redoc_url=None,  # Disable default redoc to use custom
     contact={
         "name": "Team 21",
         "url": "https://github.com/tomkabel/team21-vooglaadija",
@@ -228,6 +231,100 @@ app = FastAPI(
     ],
     lifespan=lifespan,
 )
+
+redoc_dir = Path(__file__).resolve().parent / "static" / "redoc"
+if redoc_dir.exists():
+    app.mount("/static/redoc", StaticFiles(directory=str(redoc_dir)), name="redoc")
+
+swagger_dir = Path(__file__).resolve().parent / "static" / "swagger"
+if swagger_dir.exists():
+    app.mount("/static/swagger", StaticFiles(directory=str(swagger_dir)), name="swagger")
+else:
+    logger.warning(f"Swagger static directory {swagger_dir} not found. Skipping mount.")
+
+
+# Custom /docs route with self-hosted assets, SRI, and nonce
+@app.get("/docs", include_in_schema=False)
+async def custom_docs(request: Request):
+    nonce = request.state.nonce
+    swagger_dir = Path(__file__).resolve().parent / "static" / "swagger"
+    if swagger_dir.exists():
+        swagger_js_url = "/static/swagger/swagger-ui-bundle.js"
+        swagger_css_url = "/static/swagger/swagger-ui.css"
+    else:
+        swagger_js_url = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.5/swagger-ui-bundle.js"
+        swagger_css_url = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.5/swagger-ui.css"
+    response = get_swagger_ui_html(
+        openapi_url=app.openapi_url or "/openapi.json",
+        title=app.title + " - API Docs",
+        swagger_js_url=swagger_js_url,
+        swagger_css_url=swagger_css_url,
+    )
+    html = bytes(response.body).decode()
+    if swagger_dir.exists():
+        html = html.replace(
+            '<script src="/static/swagger/swagger-ui-bundle.js"></script>',
+            '<script src="/static/swagger/swagger-ui-bundle.js" integrity="sha384-0028baa75a6060bac3a81329f501985abbdc1d527a5c16ac87977fb8722684d27a0092ae437ab3be434867ae18f9156d" crossorigin="anonymous"></script>',
+        )
+        html = html.replace(
+            '<link rel="stylesheet" type="text/css" href="/static/swagger/swagger-ui.css">',
+            '<link rel="stylesheet" type="text/css" href="/static/swagger/swagger-ui.css" integrity="sha384-f50d9fa52fb1792e1f7c9ba09a827c28525fb895d01884eb3da6066e10ac72a5532876199917378c96f56c0237fbb93" crossorigin="anonymous">',
+        )
+    html = html.replace("<script>\nconst ui =", f'<script nonce="{nonce}">\nconst ui =')
+    # Add jsDelivr to CSP for Swagger UI CDN fallback
+    response = HTMLResponse(html)
+    response.headers["Content-Security-Policy"] = (
+        f"default-src 'self'; "
+        f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+        f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline' https://cdn.jsdelivr.net; "
+        f"font-src 'self' https://fonts.gstatic.com; "
+        f"img-src 'self' data: blob:; "
+        f"connect-src 'self'; "
+        f"frame-ancestors 'none'; "
+        f"base-uri 'self'; "
+        f"form-action 'self'"
+    )
+    return response
+
+
+# Custom /redoc route with self-hosted assets and nonce
+@app.get("/redoc", include_in_schema=False)
+async def custom_redoc(request: Request):
+    nonce = request.state.nonce
+    redoc_dir = Path(__file__).resolve().parent / "static" / "redoc"
+    if redoc_dir.exists():
+        response = get_redoc_html(
+            openapi_url=app.openapi_url or "/openapi.json",
+            title=app.title + " - ReDoc",
+            redoc_js_url="/static/redoc/redoc.standalone.js",
+        )
+        # Self-hosted: return with nonce only
+        html = bytes(response.body).decode()
+        html = html.replace("<script>\nconst ui =", f'<script nonce="{nonce}">\nconst ui =')
+        return HTMLResponse(html)
+    else:
+        response = get_redoc_html(
+            openapi_url=app.openapi_url or "/openapi.json",
+            title=app.title + " - ReDoc",
+            redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@2.0.0-rc.70/bundles/redoc.standalone.js",
+        )
+        # CDN fallback: add jsdelivr to CSP
+        html = bytes(response.body).decode()
+        html = html.replace("<script>\nconst ui =", f'<script nonce="{nonce}">\nconst ui =')
+        response = HTMLResponse(html)
+        response.headers["Content-Security-Policy"] = (
+            f"default-src 'self'; "
+            f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+            f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline' https://cdn.jsdelivr.net; "
+            f"font-src 'self' https://fonts.gstatic.com; "
+            f"img-src 'self' data: blob:; "
+            f"connect-src 'self'; "
+            f"frame-ancestors 'none'; "
+            f"base-uri 'self'; "
+            f"form-action 'self'"
+        )
+        return response
+
 
 app.add_middleware(PrometheusMiddleware)
 app.state.limiter = limiter

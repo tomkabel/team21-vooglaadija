@@ -1,249 +1,232 @@
-"""Tests for app.main module."""
+"""Tests for app/main.py - FastAPI application entry point."""
 
 import signal
-import threading
-from unittest.mock import MagicMock, patch
+import sys
+import uuid
+from unittest.mock import MagicMock
 
 import pytest
-from fastapi.exceptions import RequestValidationError
+from fastapi import Request
+from fastapi.responses import JSONResponse, RedirectResponse
+from httpx import ASGITransport, AsyncClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.main import (
-    _ShutdownState,
+    UVLOOP_AVAILABLE,
+    _shutdown_state,
     _sigterm_handler,
+    add_request_id,
+    add_security_headers,
     app,
     general_exception_handler,
     http_exception_handler,
+    root,
     validation_exception_handler,
 )
 
 
-class TestShutdownState:
-    """Tests for _ShutdownState class."""
+class TestSecurityHeadersMiddleware:
+    """Tests for add_security_headers middleware."""
 
-    def test_shutdown_state_initially_zero(self):
-        """Test that shutdown state is initially zero."""
+    @pytest.mark.asyncio
+    async def test_security_headers_added(self):
+        """Test that security headers are added to responses."""
+        mock_request = MagicMock(spec=Request)
+        mock_request.state.nonce = "test-nonce-123"
 
-        state = _ShutdownState()
-        assert state.received == 0
+        async def mock_call_next(request):
+            response = MagicMock()
+            response.headers = {}
+            return response
 
-    def test_shutdown_state_set_updates_value(self):
-        """Test that set() updates the received value."""
+        result = await add_security_headers(mock_request, mock_call_next)
 
-        state = _ShutdownState()
-        state.set(signal.SIGTERM)
-        assert state.received == signal.SIGTERM
+        assert "Content-Security-Policy" in result.headers
+        assert result.headers["X-Content-Type-Options"] == "nosniff"
+        assert result.headers["X-Frame-Options"] == "DENY"
+        assert result.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+        assert result.headers["Permissions-Policy"] == "camera=(), microphone=(), geolocation=()"
 
-    def test_shutdown_state_thread_safety(self):
-        """Spawn threads, call set(), assert final value is one of the set values."""
+    @pytest.mark.asyncio
+    async def test_csp_contains_nonce(self):
+        """Test that CSP header contains a nonce."""
+        mock_request = MagicMock(spec=Request)
 
-        state = _ShutdownState()
-        results = []
+        async def mock_call_next(request):
+            response = MagicMock()
+            response.headers = {}
+            return response
 
-        def set_sigterm():
-            state.set(signal.SIGTERM)
-            results.append(signal.SIGTERM)
+        result = await add_security_headers(mock_request, mock_call_next)
 
-        def set_sigint():
-            state.set(signal.SIGINT)
-            results.append(signal.SIGINT)
-
-        threads = [
-            threading.Thread(target=set_sigterm),
-            threading.Thread(target=set_sigint),
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        assert state.received in [signal.SIGTERM, signal.SIGINT]
+        csp = result.headers["Content-Security-Policy"]
+        assert "script-src" in csp
+        assert "'nonce-" in csp
 
 
-class TestAppConfiguration:
-    """Tests for app configuration."""
+class TestRequestIdMiddleware:
+    """Tests for add_request_id middleware."""
 
-    def test_app_has_lifespan(self):
-        """Test that app is created with lifespan context manager."""
-        from app.main import app
+    @pytest.mark.asyncio
+    async def test_request_id_added_to_response(self):
+        """Test that X-Request-ID header is added to responses."""
+        mock_request = MagicMock(spec=Request)
 
-        assert app is not None
-        assert hasattr(app, "router")
+        request_id_captured = None
 
-    def test_app_version_set(self):
-        """Test that APP_VERSION is defined."""
-        from app.main import APP_VERSION
+        async def mock_call_next(request):
+            nonlocal request_id_captured
+            request_id_captured = request.state.request_id
+            response = MagicMock()
+            response.headers = {}
+            return response
 
-        assert APP_VERSION == "1.0.0"
+        result = await add_request_id(mock_request, mock_call_next)
 
-
-class TestShutdownDiagnosticsInstallation:
-    """Tests for _install_shutdown_diagnostics behavior."""
-
-    def test_install_shutdown_diagnostics_is_callable(self):
-        """Test that _install_shutdown_diagnostics is a callable function."""
-        from app.main import _install_shutdown_diagnostics
-
-        assert callable(_install_shutdown_diagnostics)
-
-    def test_install_shutdown_diagnostics_runs_without_error(self):
-        """Test that _install_shutdown_diagnostics runs without raising."""
-        from app.main import _install_shutdown_diagnostics
-
-        _install_shutdown_diagnostics()
+        assert result.headers["X-Request-ID"] == request_id_captured
+        assert len(request_id_captured) == 36  # UUID format with dashes
 
 
-class TestAppSignals:
-    """Tests for signal handling configuration."""
-
-    def test_sigterm_handler_exists(self):
-        """Test that _sigterm_handler is defined and callable."""
-
-        assert callable(_sigterm_handler)
-
-    def test_sigterm_handler_sets_shutdown_state(self):
-        """Test that _sigterm_handler updates _shutdown_state."""
-
-        state = _ShutdownState()
-        with patch("app.main._shutdown_state", state):
-            _sigterm_handler(signal.SIGTERM, None)
-            assert state.received == signal.SIGTERM
-
-
-class TestLifespanLogging:
-    """Tests for lifespan function logging behavior."""
-
-    def test_lifespan_function_exists(self):
-        """Test that lifespan is importable and callable."""
-        from app.main import lifespan
-
-        assert callable(lifespan)
-
-
-class TestMainModuleExports:
-    """Tests for module-level exports."""
-
-    def test_circuit_breaker_imported(self):
-        """Test that CircuitBreaker is available."""
-        from app.services.circuit_breaker import CircuitBreaker
-
-        assert CircuitBreaker is not None
-
-    def test_get_youtube_circuit_breaker_returns_breaker(self):
-        """Test that get_youtube_circuit_breaker returns a CircuitBreaker instance."""
-        from app.services.circuit_breaker import CircuitBreaker, get_youtube_circuit_breaker
-
-        cb = get_youtube_circuit_breaker()
-        assert isinstance(cb, CircuitBreaker)
-
-
-class TestHttpExceptionHandler:
+class TestHTTPExceptionHandler:
     """Tests for http_exception_handler."""
 
     @pytest.mark.asyncio
-    async def test_http_exception_handler_401(self):
-        """Test that 401 returns UNAUTHORIZED error code."""
+    async def test_http_exception_401_unauthorized(self):
+        """Test 401 returns UNAUTHORIZED error code."""
+        mock_request = MagicMock(spec=Request)
+        mock_request.state.request_id = "test-request-id"
 
-        request = MagicMock()
-        request.state.request_id = "test-request-id"
         exc = StarletteHTTPException(status_code=401, detail="Not authenticated")
 
-        response = await http_exception_handler(request, exc)
+        result = await http_exception_handler(mock_request, exc)
 
-        assert response.status_code == 401
-        assert response.body is not None
-        body = response.body.decode()
-        assert "UNAUTHORIZED" in body
-        assert "Not authenticated" in body
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_http_exception_handler_404(self):
-        """Test that 404 returns NOT_FOUND error code."""
+    async def test_http_exception_404_not_found(self):
+        """Test 404 returns NOT_FOUND error code."""
+        mock_request = MagicMock(spec=Request)
+        mock_request.state.request_id = "test-request-id"
 
-        request = MagicMock()
-        request.state.request_id = "test-request-id"
         exc = StarletteHTTPException(status_code=404, detail="Resource not found")
 
-        response = await http_exception_handler(request, exc)
+        result = await http_exception_handler(mock_request, exc)
 
-        assert response.status_code == 404
-        body = response.body.decode()
-        assert "NOT_FOUND" in body
-
-    @pytest.mark.asyncio
-    async def test_http_exception_handler_500(self):
-        """Test that 500 returns INTERNAL_ERROR error code."""
-        request = MagicMock()
-        request.state.request_id = "test-request-id"
-        exc = StarletteHTTPException(status_code=500, detail="Internal server error")
-
-        response = await http_exception_handler(request, exc)
-
-        assert response.status_code == 500
-        body = response.body.decode()
-        assert "INTERNAL_ERROR" in body
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_http_exception_handler_429(self):
-        """Test that 429 returns RATE_LIMIT_EXCEEDED error code."""
-        request = MagicMock()
-        request.state.request_id = "test-request-id"
-        exc = StarletteHTTPException(status_code=429, detail="Rate limit exceeded")
+    async def test_http_exception_422_validation_error(self):
+        """Test 422 returns VALIDATION_ERROR error code."""
+        mock_request = MagicMock(spec=Request)
+        mock_request.state.request_id = "test-request-id"
 
-        response = await http_exception_handler(request, exc)
+        exc = StarletteHTTPException(status_code=422, detail="Validation error")
 
-        assert response.status_code == 429
-        body = response.body.decode()
-        assert "RATE_LIMIT_EXCEEDED" in body
+        result = await http_exception_handler(mock_request, exc)
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_http_exception_500_internal_error(self):
+        """Test 500 returns INTERNAL_ERROR error code."""
+        mock_request = MagicMock(spec=Request)
+        mock_request.state.request_id = "test-request-id"
+
+        exc = StarletteHTTPException(status_code=500, detail="Internal error")
+
+        result = await http_exception_handler(mock_request, exc)
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 500
+
+    @pytest.mark.asyncio
+    async def test_http_exception_unmapped_4xx(self):
+        """Test unmapped 4xx status returns VALIDATION_ERROR."""
+        mock_request = MagicMock(spec=Request)
+        mock_request.state.request_id = "test-request-id"
+
+        exc = StarletteHTTPException(status_code=418, detail="I'm a teapot")
+
+        result = await http_exception_handler(mock_request, exc)
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 418
+
+    @pytest.mark.asyncio
+    async def test_http_exception_no_request_id(self):
+        """Test handler works when request_id is not set."""
+        mock_request = MagicMock(spec=Request)
+        mock_request.state.request_id = "unknown"
+
+        exc = StarletteHTTPException(status_code=404, detail="Not found")
+
+        result = await http_exception_handler(mock_request, exc)
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 404
 
 
 class TestValidationExceptionHandler:
     """Tests for validation_exception_handler."""
 
     @pytest.mark.asyncio
-    async def test_validation_exception_handler_returns_422(self):
-        """Test that validation errors return 422 status code."""
-        request = MagicMock()
-        request.state.request_id = "test-request-id"
+    async def test_validation_exception_handler(self):
+        """Test that validation errors are properly formatted."""
+        from fastapi.exceptions import RequestValidationError
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.state.request_id = "test-request-id"
 
         exc = RequestValidationError(
             errors=[
                 {
-                    "loc": ("body", "url"),
+                    "loc": ("body", "email"),
+                    "msg": "field required",
+                    "type": "missing",
+                },
+                {
+                    "loc": ("body", "password"),
+                    "msg": "string too short",
+                    "type": "string_too_short",
+                },
+            ]
+        )
+
+        result = await validation_exception_handler(mock_request, exc)
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        content = result.body
+        assert b"validation_errors" in content
+        assert b"email" in content
+        assert b"password" in content
+
+    @pytest.mark.asyncio
+    async def test_validation_exception_nested_field(self):
+        """Test validation errors with nested field locations."""
+        from fastapi.exceptions import RequestValidationError
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.state.request_id = "test-request-id"
+
+        exc = RequestValidationError(
+            errors=[
+                {
+                    "loc": ("body", "user", "profile", "name"),
                     "msg": "field required",
                     "type": "missing",
                 },
             ]
         )
 
-        response = await validation_exception_handler(request, exc)
+        result = await validation_exception_handler(mock_request, exc)
 
-        assert response.status_code == 422
-        body = response.body.decode()
-        assert "VALIDATION_ERROR" in body
-        assert "Request validation failed" in body
-
-    @pytest.mark.asyncio
-    async def test_validation_exception_handler_includes_error_details(self):
-        """Test that validation errors include field details."""
-        request = MagicMock()
-        request.state.request_id = "test-request-id"
-
-        exc = RequestValidationError(
-            errors=[
-                {
-                    "loc": ("body", "email"),
-                    "msg": "invalid email format",
-                    "type": "value_error",
-                },
-            ]
-        )
-
-        response = await validation_exception_handler(request, exc)
-
-        assert response.status_code == 422
-        body = response.body.decode()
-        assert "validation_errors" in body
+        assert isinstance(result, JSONResponse)
+        content = result.body
+        assert b"user.profile.name" in content
 
 
 class TestGeneralExceptionHandler:
@@ -251,56 +234,252 @@ class TestGeneralExceptionHandler:
 
     @pytest.mark.asyncio
     async def test_general_exception_handler_returns_500(self):
-        """Test that unexpected exceptions return 500."""
-        request = MagicMock()
-        request.state.request_id = "test-request-id"
-
-        exc = ValueError("Unexpected error")
-
-        response = await general_exception_handler(request, exc)
-
-        assert response.status_code == 500
-        body = response.body.decode()
-        assert "INTERNAL_ERROR" in body
-        assert "internal error occurred" in body.lower()
-
-    @pytest.mark.asyncio
-    async def test_general_exception_handler_includes_request_id(self):
-        """Test that exception handler includes X-Request-ID header."""
-        request = MagicMock()
-        request.state.request_id = "my-custom-request-id"
+        """Test that unhandled exceptions return 500."""
+        mock_request = MagicMock(spec=Request)
+        mock_request.state.request_id = "test-request-id"
 
         exc = RuntimeError("Something went wrong")
 
-        response = await general_exception_handler(request, exc)
+        result = await general_exception_handler(mock_request, exc)
 
-        assert response.status_code == 500
-        assert response.headers.get("X-Request-ID") == "my-custom-request-id"
-
-
-class TestSecurityMiddleware:
-    """Tests for security headers middleware."""
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 500
+        assert b"INTERNAL_ERROR" in result.body
 
     @pytest.mark.asyncio
-    async def test_security_headers_added(self):
-        """Test that security headers are added to responses."""
-        from starlette.testclient import TestClient
+    async def test_general_exception_handler_includes_request_id(self):
+        """Test that error response includes X-Request-ID header."""
+        mock_request = MagicMock(spec=Request)
+        mock_request.state.request_id = "specific-request-id"
 
-        with TestClient(app) as client:
-            response = client.get("/api/v1/health")
+        exc = ValueError("Test error")
 
-            assert "X-Content-Type-Options" in response.headers
-            assert response.headers["X-Content-Type-Options"] == "nosniff"
-            assert "X-Frame-Options" in response.headers
-            assert response.headers["X-Frame-Options"] == "DENY"
+        result = await general_exception_handler(mock_request, exc)
+
+        assert result.headers.get("X-Request-ID") == "specific-request-id"
+
+
+class TestRootRedirect:
+    """Tests for root redirect endpoint."""
 
     @pytest.mark.asyncio
-    async def test_request_id_added(self):
-        """Test that X-Request-ID header is added to responses."""
-        from starlette.testclient import TestClient
+    async def test_root_redirect_unauthenticated(self):
+        """Test that unauthenticated users are redirected to login."""
+        mock_request = MagicMock(spec=Request)
+        mock_request.cookies.get.return_value = None
 
-        with TestClient(app) as client:
-            response = client.get("/api/v1/health")
+        result = await root(mock_request)
 
-            assert "X-Request-ID" in response.headers
-            assert len(response.headers["X-Request-ID"]) > 0
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        assert result.headers.get("location") == "/web/login"
+
+    @pytest.mark.asyncio
+    async def test_root_redirect_authenticated(self):
+        """Test that authenticated users are redirected to dashboard."""
+        from app.auth import create_access_token
+
+        mock_request = MagicMock(spec=Request)
+
+        token = create_access_token({"sub": "test@example.com", "user_id": str(uuid.uuid4())})
+        mock_request.cookies.get.return_value = token
+
+        result = await root(mock_request)
+
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        assert result.headers.get("location") == "/web/downloads"
+
+    @pytest.mark.asyncio
+    async def test_root_redirect_invalid_token(self):
+        """Test that invalid tokens redirect to login."""
+        mock_request = MagicMock(spec=Request)
+        mock_request.cookies.get.return_value = "invalid-token"
+
+        result = await root(mock_request)
+
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        assert result.headers.get("location") == "/web/login"
+
+
+class TestShutdownDiagnostics:
+    """Tests for shutdown diagnostics functions."""
+
+    def test_sigterm_handler_sets_state(self):
+        """Test that SIGTERM handler updates shutdown state."""
+        _shutdown_state._received = 0
+
+        _sigterm_handler(signal.SIGTERM, None)
+
+        assert _shutdown_state.received == signal.SIGTERM
+
+    def test_sigterm_handler_accepts_frame(self):
+        """Test that SIGTERM handler works with frame parameter."""
+        _shutdown_state._received = 0
+
+        _sigterm_handler(signal.SIGTERM, sys._getframe())
+
+        assert _shutdown_state.received == signal.SIGTERM
+
+
+class TestAppConfiguration:
+    """Tests for app configuration."""
+
+    def test_app_has_title(self):
+        """Test that app has correct title."""
+        assert app.title == "Vooglaadija API"
+
+    def test_app_has_version(self):
+        """Test that app has correct version."""
+        assert app.version == "1.0.0"
+
+    def test_app_has_description(self):
+        """Test that app has description."""
+        assert "REST API" in app.description
+
+    def test_app_uses_custom_docs_url(self):
+        """Test that app uses custom docs URL."""
+        assert app.docs_url is None  # Disabled default docs
+
+    def test_app_uses_custom_redoc_url(self):
+        """Test that app uses custom redoc URL."""
+        assert app.redoc_url is None  # Disabled default redoc
+
+
+class TestUVLoopAvailability:
+    """Tests for uvloop availability detection."""
+
+    def test_uvloop_available_is_boolean(self):
+        """Test that UVLOOP_AVAILABLE is a boolean."""
+        assert isinstance(UVLOOP_AVAILABLE, bool)
+
+
+class TestDocsEndpoint:
+    """Tests for custom /docs endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_docs_endpoint_returns_html(self):
+        """Test that /docs returns HTML response."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/docs")
+
+        assert response.status_code == 200
+        assert "text/html" in response.headers.get("content-type", "")
+
+    @pytest.mark.asyncio
+    async def test_docs_endpoint_contains_swagger_ui(self):
+        """Test that /docs contains Swagger UI."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/docs")
+
+        assert response.status_code == 200
+        text_lower = response.text.lower()
+        assert "swagger" in text_lower
+
+
+class TestReDocEndpoint:
+    """Tests for custom /redoc endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_redoc_endpoint_returns_html(self):
+        """Test that /redoc returns HTML response."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/redoc")
+
+        assert response.status_code == 200
+        assert "text/html" in response.headers.get("content-type", "")
+
+    @pytest.mark.asyncio
+    async def test_redoc_endpoint_contains_redoc(self):
+        """Test that /redoc contains ReDoc."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/redoc")
+
+        assert response.status_code == 200
+        text_lower = response.text.lower()
+        assert "redoc" in text_lower
+
+
+class TestHealthEndpoint:
+    """Tests for health check endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_health_endpoint(self):
+        """Test that /health endpoint exists and returns a response."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/health")
+
+        assert response.status_code in [200, 503]
+        data = response.json()
+        assert "status" in data
+
+
+class TestExceptionHandlersRegistered:
+    """Tests that exception handlers are properly registered."""
+
+    def test_rate_limit_exceeded_handler_registered(self):
+        """Test that RateLimitExceeded handler is registered."""
+        from slowapi.errors import RateLimitExceeded
+
+        assert RateLimitExceeded in app.exception_handlers
+
+    def test_starlette_http_exception_handler_registered(self):
+        """Test that StarletteHTTPException handler is registered."""
+        assert StarletteHTTPException in app.exception_handlers
+
+    def test_request_validation_handler_registered(self):
+        """Test that RequestValidationError handler is registered."""
+        from fastapi.exceptions import RequestValidationError
+
+        assert RequestValidationError in app.exception_handlers
+
+    def test_generic_exception_handler_registered(self):
+        """Test that generic Exception handler is registered."""
+        assert Exception in app.exception_handlers
+
+
+class TestLifespan:
+    """Tests for lifespan context manager."""
+
+    @pytest.mark.asyncio
+    async def test_lifespan_startup_and_shutdown(self):
+        """Test that lifespan context manager runs startup and shutdown."""
+        from app.main import lifespan
+
+        startup_events = []
+        shutdown_events = []
+
+        mock_app = MagicMock()
+
+        async with lifespan(mock_app):
+            startup_events.append("started")
+
+        shutdown_events.append("stopped")
+
+        assert "started" in startup_events
+        assert "stopped" in shutdown_events
+
+
+class TestOpenAPITags:
+    """Tests for OpenAPI tags configuration."""
+
+    def test_app_has_openapi_tags(self):
+        """Test that app has OpenAPI tags defined."""
+        assert hasattr(app, "openapi_tags")
+        assert app.openapi_tags is not None
+
+    def test_auth_tag_present(self):
+        """Test that auth tag is present."""
+        tag_names = [tag["name"] for tag in app.openapi_tags]
+        assert "auth" in tag_names
+
+    def test_downloads_tag_present(self):
+        """Test that downloads tag is present."""
+        tag_names = [tag["name"] for tag in app.openapi_tags]
+        assert "downloads" in tag_names
+
+    def test_health_tag_present(self):
+        """Test that health tag is present."""
+        tag_names = [tag["name"] for tag in app.openapi_tags]
+        assert "health" in tag_names

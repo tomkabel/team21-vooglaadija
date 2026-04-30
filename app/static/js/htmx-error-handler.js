@@ -5,13 +5,50 @@
    * Initialize HTMX error handlers
    */
   function initHtmxErrorHandlers() {
+    const AUTH_FORM_ENDPOINT_PREFIXES = ["/web/login", "/web/register"];
+
+    function renderErrorInTarget(evt, responseHtml) {
+      if (!responseHtml) return false;
+
+      const sourceElement = evt.detail.elt;
+      if (!sourceElement) return false;
+
+      const targetSelector = sourceElement.getAttribute("hx-target");
+      if (!targetSelector) return false;
+
+      const targetElement = document.querySelector(targetSelector);
+      if (!targetElement) return false;
+
+      targetElement.innerHTML = responseHtml;
+      return true;
+    }
+
     // Global HTMX error handler
     document.body.addEventListener("htmx:responseError", function (evt) {
       const xhr = evt.detail.xhr;
+      const requestPath = evt.detail.pathInfo?.requestPath || "";
+      const isAuthFormRequest = AUTH_FORM_ENDPOINT_PREFIXES.some((prefix) =>
+        requestPath.startsWith(prefix),
+      );
+      const isWebFormRequest = requestPath.startsWith("/web/");
+
+      // For web forms, render server-provided 4xx HTML errors inline.
+      // This avoids duplicate generic toasts when backend returns an HTML error fragment.
+      if (isWebFormRequest && xhr.status >= 400 && xhr.status < 500) {
+        if (renderErrorInTarget(evt, xhr.responseText)) {
+          if (xhr.status !== 401) {
+            return;
+          }
+        }
+      }
 
       switch (xhr.status) {
         case 401:
-          // Token expired or invalid - redirect to login
+          // Allow auth form endpoints to handle credential errors inline.
+          if (isAuthFormRequest) {
+            return;
+          }
+          // Token expired or invalid on protected endpoints - redirect to login.
           window.location.href = "/web/login?expired=1";
           break;
 
