@@ -3,19 +3,18 @@
 import signal
 import sys
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from httpx import ASGITransport, AsyncClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.main import (
     UVLOOP_AVAILABLE,
-    _install_shutdown_diagnostics,
-    _sigterm_handler,
     _shutdown_state,
+    _sigterm_handler,
     add_request_id,
     add_security_headers,
     app,
@@ -34,8 +33,6 @@ class TestSecurityHeadersMiddleware:
         """Test that security headers are added to responses."""
         mock_request = MagicMock(spec=Request)
         mock_request.state.nonce = "test-nonce-123"
-
-        events = []
 
         async def mock_call_next(request):
             response = MagicMock()
