@@ -314,8 +314,8 @@ async def add_security_headers(request: Request, call_next: Any) -> Any:
     # CSP: Allow same-origin scripts with nonce for inline scripts, allow Google Fonts CDN
     response.headers["Content-Security-Policy"] = (
         f"default-src 'self'; "
-        f"script-src 'self' 'nonce-{nonce}'; "
-        f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
+        f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+        f"style-src 'self' https://fonts.googleapis.com 'unsafe-inline' https://cdn.jsdelivr.net; "
         f"font-src 'self' https://fonts.gstatic.com; "
         f"img-src 'self' data: blob:; "
         f"connect-src 'self'; "

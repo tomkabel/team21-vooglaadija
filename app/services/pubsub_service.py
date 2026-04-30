@@ -38,7 +38,6 @@ class PubSubService:
         """
         self.redis_url = redis_url or settings.redis_url
         self._client: aioredis.Redis | None = None
-        self._pubsub_connections: dict[str, aioredis.client.PubSub] = {}
 
     async def get_client(self) -> aioredis.Redis:
         """Get or create Redis client with connection pooling.
@@ -89,7 +88,7 @@ class PubSubService:
         logger.debug(
             "pubsub_message_published",
             channel=channel,
-            job_id=job_data.get("job_id"),
+            job_id=job_data.get("id"),
             status=job_data.get("status"),
             subscribers=result,
         )
@@ -146,7 +145,7 @@ class PubSubService:
                             logger.debug(
                                 "pubsub_message_received",
                                 channel=message["channel"],
-                                job_id=data.get("job_id"),
+                                job_id=data.get("id"),
                             )
                             yield data
                         else:

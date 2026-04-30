@@ -71,6 +71,7 @@ async def _subscribe_to_pubsub(
 async def pubsub_event_generator(
     request: Request,
     user_id: uuid.UUID,
+    last_seen_job_ids: OrderedDict[str, str] | None = None,
 ) -> AsyncGenerator[ServerSentEvent, None]:
     """SSE event generator that subscribes to Redis Pub/Sub for real-time updates.
 
@@ -83,7 +84,7 @@ async def pubsub_event_generator(
     """
     pubsub = get_pubsub_service()
     reconnect_attempts = 0
-    last_seen_job_ids: OrderedDict[str, str] = OrderedDict()
+    last_seen_job_ids = last_seen_job_ids if last_seen_job_ids is not None else OrderedDict()
 
     while reconnect_attempts < MAX_PUBSUB_RECONNECT_ATTEMPTS:
         if await request.is_disconnected():
@@ -154,18 +155,7 @@ async def fallback_polling_generator(
 
                         yield ServerSentEvent(
                             event="job_update",
-                            data=json.dumps(
-                                {
-                                    "id": str(job.id),
-                                    "url": job.url,
-                                    "status": job.status,
-                                    "file_name": job.file_name,
-                                    "error": job.error,
-                                    "created_at": job.created_at.isoformat()
-                                    if job.created_at
-                                    else None,
-                                }
-                            ),
+                            data=json.dumps(await _job_to_sse_data(job)),
                         )
 
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
@@ -187,6 +177,8 @@ async def event_generator(
 
     Sends heartbeat comments every 15 seconds to keep connections alive through proxies.
     """
+    seen_initial: OrderedDict[str, str] = OrderedDict()
+
     # First, send initial state from database
     try:
         async with session_factory() as db:
@@ -199,7 +191,6 @@ async def event_generator(
             result = await db.execute(query)
             jobs = result.scalars().all()
 
-            seen_initial: OrderedDict[str, str] = OrderedDict()
             for job in jobs:
                 job_id_str = str(job.id)
                 job_updated_at = job.updated_at.isoformat() if job.updated_at else None
@@ -208,25 +199,14 @@ async def event_generator(
                     seen_initial[job_id_str] = status_key
                     yield ServerSentEvent(
                         event="job_update",
-                        data=json.dumps(
-                            {
-                                "id": str(job.id),
-                                "url": job.url,
-                                "status": job.status,
-                                "file_name": job.file_name,
-                                "error": job.error,
-                                "created_at": job.created_at.isoformat()
-                                if job.created_at
-                                else None,
-                            }
-                        ),
+                        data=json.dumps(await _job_to_sse_data(job)),
                     )
     except Exception as e:
         logger.warning("sse_initial_state_failed", user_id=str(user_id), error=str(e))
 
     # Try pub/sub first, fall back to polling when pub/sub ends or fails
     try:
-        async for event in pubsub_event_generator(request, user_id):
+        async for event in pubsub_event_generator(request, user_id, seen_initial):
             yield event
     except Exception as e:
         logger.warning(

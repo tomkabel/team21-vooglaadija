@@ -131,7 +131,12 @@ class TestEventGenerator:
 
         job_id = str(uuid.uuid4())
         pubsub_messages = [
-            {"id": job_id, "status": "processing", "url": "https://youtube.com/watch?v=test", "updated_at": "2024-01-01T00:00:00"},
+            {
+                "id": job_id,
+                "status": "processing",
+                "url": "https://youtube.com/watch?v=test",
+                "updated_at": "2024-01-01T00:00:00",
+            },
             {
                 "id": job_id,
                 "status": "completed",
@@ -341,7 +346,6 @@ class TestJobToSseData:
     @pytest.mark.asyncio
     async def test_job_to_sse_data_with_none_timestamps(self):
         """Test _job_to_sse_data handles None timestamps."""
-        from datetime import UTC, datetime
 
         from app.api.routes.sse import _job_to_sse_data
         from app.models.download_job import DownloadJob
@@ -583,7 +587,9 @@ class TestFallbackPollingGenerator:
 
         with patch("app.api.routes.sse.POLL_INTERVAL_SECONDS", 0):
             events = []
-            async for event in fallback_polling_generator(mock_request, mock_session_factory, uuid.uuid4()):
+            async for event in fallback_polling_generator(
+                mock_request, mock_session_factory, uuid.uuid4()
+            ):
                 events.append(event)
                 if len(events) >= 1:
                     break
@@ -609,7 +615,9 @@ class TestFallbackPollingGenerator:
 
         events = []
         try:
-            async for event in fallback_polling_generator(mock_request, mock_session_factory, uuid.uuid4()):
+            async for event in fallback_polling_generator(
+                mock_request, mock_session_factory, uuid.uuid4()
+            ):
                 events.append(event)
         except asyncio.CancelledError:
             pass
@@ -639,7 +647,12 @@ class TestEventGeneratorExtended:
 
         job_id = str(uuid.uuid4())
         pubsub_messages = [
-            {"id": job_id, "status": "processing", "url": "https://youtube.com/watch?v=test", "updated_at": "2024-01-01T00:00:00"},
+            {
+                "id": job_id,
+                "status": "processing",
+                "url": "https://youtube.com/watch?v=test",
+                "updated_at": "2024-01-01T00:00:00",
+            },
         ]
 
         async def mock_subscribe(user_id):
@@ -729,7 +742,12 @@ class TestEventGeneratorExtended:
 
         job_id = str(uuid.uuid4())
         pubsub_messages = [
-            {"id": job_id, "status": "processing", "url": "https://youtube.com/watch?v=test", "updated_at": "2024-01-01T00:00:00"},
+            {
+                "id": job_id,
+                "status": "processing",
+                "url": "https://youtube.com/watch?v=test",
+                "updated_at": "2024-01-01T00:00:00",
+            },
         ]
 
         async def mock_subscribe(user_id):
