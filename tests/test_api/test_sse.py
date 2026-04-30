@@ -84,8 +84,9 @@ class TestEventGenerator:
         mock_job.file_name = None
         mock_job.error = None
         mock_job.created_at = datetime.now(UTC)
+    mock_job.updated_at = datetime.now(UTC)
 
-        mock_result.scalars.return_value.all.return_value = [mock_job]
+    mock_result.scalars.return_value.all.return_value = [mock_job]
 
         mock_session = MagicMock()
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -94,11 +95,26 @@ class TestEventGenerator:
 
         mock_session_factory = MagicMock(return_value=mock_session)
 
-        events = []
-        async for event in event_generator(mock_request, mock_session_factory, uuid.uuid4()):
-            events.append(event)
-            if len(events) >= 1:
-                break
+        mock_pubsub_service = MagicMock()
+
+        async def mock_subscribe(user_id):
+            return
+            yield
+
+        mock_pubsub_service.subscribe = mock_subscribe
+
+        async def mock_polling(*args, **kwargs):
+            yield
+
+        with (
+            patch("app.api.routes.sse.get_pubsub_service", return_value=mock_pubsub_service),
+            patch("app.api.routes.sse.fallback_polling_generator", mock_polling),
+        ):
+            events = []
+            async for event in event_generator(mock_request, mock_session_factory, uuid.uuid4()):
+                events.append(event)
+                if len(events) >= 1:
+                    break
 
         assert len(events) >= 1
         assert events[0].event == "job_update"

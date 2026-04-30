@@ -95,7 +95,7 @@ async def pubsub_event_generator(
                 yield event
             break
 
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, GeneratorExit):
             break
         except Exception as e:
             reconnect_attempts += 1
@@ -159,8 +159,7 @@ async def fallback_polling_generator(
                         )
 
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
-    except asyncio.CancelledError:
-        # Client disconnected — normal shutdown
+    except (asyncio.CancelledError, GeneratorExit):
         pass
 
 
