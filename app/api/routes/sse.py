@@ -138,7 +138,7 @@ async def pubsub_event_generator(
         try:
             async for event in _subscribe_to_pubsub(pubsub, user_id, last_seen_job_ids):
                 yield event
-            break
+            break  # Normal completion, no more events
 
         except (asyncio.CancelledError, GeneratorExit):
             break
@@ -155,7 +155,7 @@ async def pubsub_event_generator(
                 await asyncio.sleep(PUBSUB_RECONNECT_DELAY_SECONDS * reconnect_attempts)
             else:
                 logger.error("pubsub_max_reconnect_attempts", user_id=str(user_id))
-                break
+                return  # Use return instead of break for generator
 
 
 async def fallback_polling_generator(
