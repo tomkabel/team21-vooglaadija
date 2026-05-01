@@ -110,9 +110,7 @@ class TestRequeueStuckJobs:
         assert count >= 1
 
         # Verify outbox entry was created
-        result = await db_session.execute(
-            select(Outbox).where(Outbox.job_id == stuck_job_id)
-        )
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == stuck_job_id))
         outbox_entry = result.scalar_one_or_none()
         assert outbox_entry is not None
         assert outbox_entry.event_type == "zombie_recovery"
@@ -142,9 +140,7 @@ class TestRequeueStuckJobs:
         assert job.status == "pending"
 
         # Verify outbox entry was created
-        result = await db_session.execute(
-            select(Outbox).where(Outbox.job_id == job_id)
-        )
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == job_id))
         outbox_entry = result.scalar_one_or_none()
         assert outbox_entry is not None
         assert outbox_entry.event_type == "zombie_recovery"
@@ -194,9 +190,7 @@ class TestRequeueStuckJobs:
         assert count == 0
 
         # Verify no outbox entry was created
-        result = await db_session.execute(
-            select(Outbox).where(Outbox.job_id == pending_job_id)
-        )
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == pending_job_id))
         outbox_entry = result.scalar_one_or_none()
         assert outbox_entry is None
 
@@ -218,9 +212,7 @@ class TestRequeueStuckJobs:
         assert count == 0
 
         # Verify no outbox entry was created
-        result = await db_session.execute(
-            select(Outbox).where(Outbox.job_id == completed_job_id)
-        )
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == completed_job_id))
         outbox_entry = result.scalar_one_or_none()
         assert outbox_entry is None
 
@@ -242,9 +234,7 @@ class TestRequeueStuckJobs:
         assert count == 0
 
         # Verify no outbox entry was created
-        result = await db_session.execute(
-            select(Outbox).where(Outbox.job_id == failed_job_id)
-        )
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == failed_job_id))
         outbox_entry = result.scalar_one_or_none()
         assert outbox_entry is None
 
@@ -268,9 +258,7 @@ class TestRequeueStuckJobs:
         assert count == 0
 
         # Verify no outbox entry was created
-        result = await db_session.execute(
-            select(Outbox).where(Outbox.job_id == recent_job_id)
-        )
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == recent_job_id))
         outbox_entry = result.scalar_one_or_none()
         assert outbox_entry is None
 
@@ -303,9 +291,7 @@ class TestRequeueStuckJobs:
         assert count == 1
 
         # Verify outbox entry was created
-        result = await db_session.execute(
-            select(Outbox).where(Outbox.job_id == boundary_job_id)
-        )
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == boundary_job_id))
         outbox_entry = result.scalar_one_or_none()
         assert outbox_entry is not None
         assert outbox_entry.event_type == "zombie_recovery"
@@ -378,9 +364,7 @@ class TestRequeueStuckJobs:
         assert count == 1
 
         # Verify outbox entry was created only for stuck job
-        result = await db_session.execute(
-            select(Outbox).where(Outbox.job_id == stuck_job_id)
-        )
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == stuck_job_id))
         outbox_entry = result.scalar_one_or_none()
         assert outbox_entry is not None
         assert outbox_entry.event_type == "zombie_recovery"
@@ -444,9 +428,7 @@ class TestRequeueStuckJobsEdgeCases:
         assert count == 3
 
         # Verify outbox entries were created for all stuck jobs
-        result = await db_session.execute(
-            select(Outbox).where(Outbox.job_id.in_(stuck_job_ids))
-        )
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id.in_(stuck_job_ids)))
         outbox_entries = result.scalars().all()
         assert len(outbox_entries) == 3
         for entry in outbox_entries:
@@ -474,8 +456,6 @@ class TestRequeueStuckJobsEdgeCases:
         assert count == 0
 
         # Verify no outbox entry was created
-        result = await db_session.execute(
-            select(Outbox).where(Outbox.job_id == job_id)
-        )
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == job_id))
         outbox_entry = result.scalar_one_or_none()
         assert outbox_entry is None
