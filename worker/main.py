@@ -251,11 +251,11 @@ async def main() -> None:
 
         # Independent outbox sync (30s default) — lower latency than cleanup
         if now - last_outbox_sync >= outbox_sync_interval:
-            last_outbox_sync = now
             try:
                 synced = await sync_outbox_to_queue()
                 if synced > 0:
                     logger.info("outbox_sync_completed", synced=synced)
+                last_outbox_sync = now
             except Exception as e:
                 logger.error("outbox_sync_error", error=str(e))
 
