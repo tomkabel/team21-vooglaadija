@@ -45,6 +45,7 @@ build/
 *.key
 *.crt
 *.log
+infra/certbot/*.ini
 
 # Cloudflare credentials for certbot DNS challenge
 infra/certbot/cloudflare.ini

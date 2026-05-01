@@ -5,13 +5,13 @@ status for too long, indicating a worker crashed or stalled.
 """
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
 from sqlalchemy import select
 
 from app.models.download_job import DownloadJob
+from app.models.outbox import Outbox
 
 
 @pytest.fixture
@@ -101,18 +101,20 @@ class TestRequeueStuckJobs:
         self, db_session, stuck_processing_job
     ):
         """Test that stuck jobs in processing status are found."""
-        _stuck_job_id = stuck_processing_job.id
+        stuck_job_id = stuck_processing_job.id
 
-        mock_redis = AsyncMock()
-        mock_redis.lpush = AsyncMock(return_value=1)
+        from worker.zombie_sweeper import requeue_stuck_jobs
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
+        assert count >= 1
 
-            assert count >= 1
-            mock_redis.lpush.assert_called()
+        # Verify outbox entry was created
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == stuck_job_id))
+        outbox_entry = result.scalar_one_or_none()
+        assert outbox_entry is not None
+        assert outbox_entry.event_type == "zombie_recovery"
+        assert outbox_entry.status == "pending"
 
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_resets_status_to_pending(self, db_session, user_id):
@@ -128,19 +130,20 @@ class TestRequeueStuckJobs:
         db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
-        mock_redis.lpush = AsyncMock(return_value=1)
+        from worker.zombie_sweeper import requeue_stuck_jobs
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
+        assert count == 1
 
-            assert count == 1
-            assert mock_redis.lpush.call_count == 1
+        await db_session.refresh(job)
+        assert job.status == "pending"
 
-            await db_session.refresh(job)
-            assert job.status == "pending"
+        # Verify outbox entry was created
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == job_id))
+        outbox_entry = result.scalar_one_or_none()
+        assert outbox_entry is not None
+        assert outbox_entry.event_type == "zombie_recovery"
 
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_returns_count(self, db_session, user_id):
@@ -159,30 +162,37 @@ class TestRequeueStuckJobs:
             db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
-        mock_redis.lpush = AsyncMock(return_value=1)
+        from worker.zombie_sweeper import requeue_stuck_jobs
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
+        assert count == 2
 
-            assert count == 2
+        # Verify outbox entries were created for both jobs
+        result = await db_session.execute(
+            select(Outbox).where(Outbox.job_id.in_([job1_id, job2_id]))
+        )
+        outbox_entries = result.scalars().all()
+        assert len(outbox_entries) == 2
+        for entry in outbox_entries:
+            assert entry.event_type == "zombie_recovery"
+            assert entry.status == "pending"
 
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_ignores_pending(self, db_session, pending_job):
         """Test that pending jobs are NOT affected."""
         pending_job_id = pending_job.id
 
-        mock_redis = AsyncMock()
+        from worker.zombie_sweeper import requeue_stuck_jobs
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
+        assert count == 0
 
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
+        # Verify no outbox entry was created
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == pending_job_id))
+        outbox_entry = result.scalar_one_or_none()
+        assert outbox_entry is None
 
         result = await db_session.execute(
             select(DownloadJob).where(DownloadJob.id == pending_job_id)
@@ -195,15 +205,16 @@ class TestRequeueStuckJobs:
         """Test that completed jobs are NOT affected."""
         completed_job_id = completed_job.id
 
-        mock_redis = AsyncMock()
+        from worker.zombie_sweeper import requeue_stuck_jobs
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
+        assert count == 0
 
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
+        # Verify no outbox entry was created
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == completed_job_id))
+        outbox_entry = result.scalar_one_or_none()
+        assert outbox_entry is None
 
         result = await db_session.execute(
             select(DownloadJob).where(DownloadJob.id == completed_job_id)
@@ -216,15 +227,16 @@ class TestRequeueStuckJobs:
         """Test that failed jobs are NOT affected."""
         failed_job_id = failed_job.id
 
-        mock_redis = AsyncMock()
+        from worker.zombie_sweeper import requeue_stuck_jobs
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
+        assert count == 0
 
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
+        # Verify no outbox entry was created
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == failed_job_id))
+        outbox_entry = result.scalar_one_or_none()
+        assert outbox_entry is None
 
         result = await db_session.execute(
             select(DownloadJob).where(DownloadJob.id == failed_job_id)
@@ -239,15 +251,16 @@ class TestRequeueStuckJobs:
         """Test that processing jobs that are not stuck (too recent) are NOT affected."""
         recent_job_id = recent_processing_job.id
 
-        mock_redis = AsyncMock()
+        from worker.zombie_sweeper import requeue_stuck_jobs
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
+        assert count == 0
 
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
+        # Verify no outbox entry was created
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == recent_job_id))
+        outbox_entry = result.scalar_one_or_none()
+        assert outbox_entry is None
 
         result = await db_session.execute(
             select(DownloadJob).where(DownloadJob.id == recent_job_id)
@@ -271,16 +284,17 @@ class TestRequeueStuckJobs:
         db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
-        mock_redis.lpush = AsyncMock(return_value=1)
+        from worker.zombie_sweeper import requeue_stuck_jobs
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
+        assert count == 1
 
-            assert count == 1
-            mock_redis.lpush.assert_called_once()
+        # Verify outbox entry was created
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == boundary_job_id))
+        outbox_entry = result.scalar_one_or_none()
+        assert outbox_entry is not None
+        assert outbox_entry.event_type == "zombie_recovery"
 
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_just_under_timeout(self, db_session, user_id):
@@ -298,15 +312,18 @@ class TestRequeueStuckJobs:
         db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
+        from worker.zombie_sweeper import requeue_stuck_jobs
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
+        assert count == 0
 
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
+        # Verify no outbox entry was created
+        result = await db_session.execute(
+            select(Outbox).where(Outbox.job_id == just_under_timeout_id)
+        )
+        outbox_entry = result.scalar_one_or_none()
+        assert outbox_entry is None
 
         result = await db_session.execute(
             select(DownloadJob).where(DownloadJob.id == just_under_timeout_id)
@@ -340,16 +357,26 @@ class TestRequeueStuckJobs:
             db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
-        mock_redis.lpush = AsyncMock(return_value=1)
+        from worker.zombie_sweeper import requeue_stuck_jobs
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
+        assert count == 1
 
-            assert count == 1
-            mock_redis.lpush.assert_called_once_with("download_queue", str(stuck_job_id))
+        # Verify outbox entry was created only for stuck job
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == stuck_job_id))
+        outbox_entry = result.scalar_one_or_none()
+        assert outbox_entry is not None
+        assert outbox_entry.event_type == "zombie_recovery"
+
+        # Verify no outbox entries for other jobs
+        result = await db_session.execute(
+            select(Outbox).where(
+                Outbox.job_id.in_([pending_job_id, completed_job_id, recent_processing_id])
+            )
+        )
+        other_entries = result.scalars().all()
+        assert len(other_entries) == 0
 
 
 class TestRequeueStuckJobsEdgeCases:
@@ -363,15 +390,16 @@ class TestRequeueStuckJobsEdgeCases:
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_empty_database(self, db_session):
         """Test with no jobs in database - should return 0."""
-        mock_redis = AsyncMock()
+        from worker.zombie_sweeper import requeue_stuck_jobs
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
+        assert count == 0
 
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
+        # Verify no outbox entries were created
+        result = await db_session.execute(select(Outbox))
+        outbox_entries = result.scalars().all()
+        assert len(outbox_entries) == 0
 
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_all_stuck(self, db_session, user_id):
@@ -393,22 +421,26 @@ class TestRequeueStuckJobsEdgeCases:
             db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
-        mock_redis.lpush = AsyncMock(return_value=1)
+        from worker.zombie_sweeper import requeue_stuck_jobs
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
+        assert count == 3
 
-            assert count == 3
-            assert mock_redis.lpush.call_count == 3
+        # Verify outbox entries were created for all stuck jobs
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id.in_(stuck_job_ids)))
+        outbox_entries = result.scalars().all()
+        assert len(outbox_entries) == 3
+        for entry in outbox_entries:
+            assert entry.event_type == "zombie_recovery"
+            assert entry.status == "pending"
 
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_no_stuck_jobs(self, db_session, user_id):
         """Test when there are no stuck jobs."""
+        job_id = UUID("550e8400-e29b-41d4-a716-446655441050")
         job = DownloadJob(
-            id=UUID("550e8400-e29b-41d4-a716-446655441050"),
+            id=job_id,
             user_id=user_id,
             url="https://www.youtube.com/watch?v=recent",
             status="processing",
@@ -417,12 +449,13 @@ class TestRequeueStuckJobsEdgeCases:
         db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
+        from worker.zombie_sweeper import requeue_stuck_jobs
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
+        assert count == 0
 
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
+        # Verify no outbox entry was created
+        result = await db_session.execute(select(Outbox).where(Outbox.job_id == job_id))
+        outbox_entry = result.scalar_one_or_none()
+        assert outbox_entry is None
