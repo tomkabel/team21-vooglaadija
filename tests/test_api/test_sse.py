@@ -134,11 +134,13 @@ class TestEventGenerator:
         # 3. second pubsub async-for iteration -> False
         # 4. fallback_polling_generator check -> True (break)
         call_count = [0]
+
         async def mock_is_disconnected():
             call_count[0] += 1
             if call_count[0] >= 15:  # Allow enough calls for all retry loops
                 return True
             return False
+
         mock_request.is_disconnected = mock_is_disconnected
 
         mock_result = MagicMock()
