@@ -104,6 +104,7 @@ async def requeue_stuck_jobs(timeout_minutes: int = 15) -> int:
                 error=str(e),
                 requeued_count=requeued_count,
             )
+            return 0
 
         if requeued_count > 0:
             logger.warning(
