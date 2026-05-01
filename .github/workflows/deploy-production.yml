@@ -97,7 +97,7 @@ jobs:
           log-public-key: false
 
       - name: Add known hosts
-        run: mkdir -p ~/.ssh && echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+        run: mkdir -p ~/.ssh && grep -qF "${{ secrets.SSH_KNOWN_HOSTS }}" ~/.ssh/known_hosts 2>/dev/null || echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
 
       - name: Deploy to server
         env:
