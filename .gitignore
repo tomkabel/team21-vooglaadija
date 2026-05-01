@@ -45,6 +45,7 @@ build/
 *.key
 *.crt
 *.log
+infra/certbot/*.ini
 
 # =============================================
 # Tooling & CLI Config
