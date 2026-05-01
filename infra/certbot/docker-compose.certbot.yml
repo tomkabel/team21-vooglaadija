@@ -4,19 +4,17 @@ services:
     volumes:
       - ./ssl:/etc/letsencrypt:rw
       - ./cloudflare.ini:/etc/letsencrypt/cloudflare.ini:ro
+      # Mount Docker socket so certbot can reload nginx via docker exec
+      - /var/run/docker.sock:/var/run/docker.sock:rw
     entrypoint: |
       /bin/sh -c '
-        deploy_hook() {
-          echo "Reloading nginx after cert renewal..."
-          docker exec ytprocessor-nginx nginx -s reload 2>/dev/null || echo "nginx reload attempted"
-        }
         trap exit TERM;
         while :; do
           certbot renew \
             --dns-cloudflare \
             --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
             --dns-cloudflare-propagation-seconds 30 \
-            --deploy-hook "bash -c deploy_hook" || true;
+            --deploy-hook "docker exec ytprocessor-nginx nginx -s reload 2>/dev/null || echo '"'"'nginx reload attempted'"'"'" || true;
           sleep 12h;
         done;'
     restart: unless-stopped
