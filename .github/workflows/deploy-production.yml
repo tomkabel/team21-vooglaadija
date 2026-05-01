@@ -97,7 +97,7 @@ jobs:
           log-public-key: false
 
       - name: Add known hosts
-        run: echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+        run: mkdir -p ~/.ssh && echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
 
       - name: Deploy to server
         env:
@@ -107,7 +107,7 @@ jobs:
           GHCR_OWNER: ${{ github.repository_owner }}
           GHCR_REPO: ${{ github.event.repository.name }}
         run: |
-          ssh ubuntu@37.114.46.226 \
+          ssh ubuntu@${{ secrets.SERVER_IP }} \
             "GHCR_PAT='$GHCR_PAT' ENV_B64='$ENV_B64' IMAGE_TAG='$IMAGE_TAG' GHCR_OWNER='$GHCR_OWNER' GHCR_REPO='$GHCR_REPO' bash -s" \
             < infra/deploy/remote-deploy.sh
 
