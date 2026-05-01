@@ -251,34 +251,39 @@ async def main() -> None:
 
         # Independent outbox sync (30s default) — lower latency than cleanup
         if now - last_outbox_sync >= outbox_sync_interval:
+            last_outbox_sync = now
             try:
                 synced = await sync_outbox_to_queue()
                 if synced > 0:
                     logger.info("outbox_sync_completed", synced=synced)
-                last_outbox_sync = now
             except Exception as e:
                 logger.error("outbox_sync_error", error=str(e))
 
         if now - last_cleanup >= cleanup_interval:
             cleanup_count = 0
+            cleanup_success = False
             try:
                 cleanup_count = await cleanup_expired_jobs()
+                cleanup_success = True
             except Exception as e:
                 logger.error("expired_job_cleanup_error", error=str(e))
 
             stuck_count = 0
+            stuck_success = False
             try:
                 stuck_count = await requeue_stuck_jobs(timeout_minutes=15)
+                stuck_success = True
             except Exception as e:
                 logger.error("zombie_sweep_error", error=str(e))
 
-            logger.info(
-                "cleanup_cycle_completed",
-                expired_jobs_cleaned=cleanup_count,
-                stuck_jobs_requeued=stuck_count,
-            )
-            last_cleanup = now
-            update_worker_state(last_cleanup=last_cleanup.isoformat())
+            if cleanup_success or stuck_success:
+                logger.info(
+                    "cleanup_cycle_completed",
+                    expired_jobs_cleaned=cleanup_count,
+                    stuck_jobs_requeued=stuck_count,
+                )
+                last_cleanup = now
+                update_worker_state(last_cleanup=last_cleanup.isoformat())
 
         heartbeat_counter += 1
         if heartbeat_counter >= heartbeat_interval:
