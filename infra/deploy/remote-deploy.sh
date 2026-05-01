@@ -184,7 +184,7 @@ health_check() {
 
     for i in {1..12}; do
         local http_code
-        http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://${DOMAIN}/api/v1/health" || echo "000")
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://${DOMAIN}/health" || echo "000")
 
         if [ "$http_code" = "200" ]; then
             log_info "Health check passed (HTTP 200)"
@@ -214,9 +214,9 @@ rollback() {
     cat > /tmp/rollback-override.yml << EOF
 services:
   api:
-    image: ${BACKUP_API:-${API_IMAGE}}
+    image: ${BACKUP_API}
   worker:
-    image: ${BACKUP_WORKER:-${WORKER_IMAGE}}
+    image: ${BACKUP_WORKER}
 EOF
 
     $COMPOSE_CMD -f /tmp/rollback-override.yml up -d --no-build || {
@@ -229,7 +229,7 @@ EOF
     # Verify rollback health
     sleep 5
     local http_code
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://${DOMAIN}/api/v1/health" || echo "000")
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://${DOMAIN}/health" || echo "000")
     if [ "$http_code" = "200" ]; then
         log_info "Rollback health check passed"
     else
