@@ -11,11 +11,11 @@
 #   - NO host-level nginx or certbot should be running.
 #
 # SSL via Let's Encrypt DNS-01 challenge (Cloudflare).
-# Requires CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY environment variables.
+# Requires CLOUDFLARE_EMAIL (optional) and CLOUDFLARE_API_TOKEN environment variables.
 #
 # Usage:
 #   export CLOUDFLARE_EMAIL=cloudflare@proksiabel.ee
-#   export CLOUDFLARE_API_KEY=<your-global-api-key>
+#   export CLOUDFLARE_API_TOKEN=<your-scoped-api-token>
 #   sudo -E ./infra/deploy/deploy.sh all
 #
 # Note: Use `sudo -E` to preserve exported environment variables.
@@ -30,7 +30,7 @@ DEPLOY_DIR="/opt/vooglaadija"
 LETSENCRYPT_DIR="$DEPLOY_DIR/infra/letsencrypt"
 CERTBOT_DATA_DIR="$DEPLOY_DIR/infra/certbot/data"
 BACKUP_DIR="/opt/vooglaadija-backups"
-NGINX_CONTAINER="ytprocessor-nginx"
+# NGINX_CONTAINER="ytprocessor-nginx"  # reserved for future use
 
 # Colors for output
 RED='\033[0;31m'
@@ -74,14 +74,13 @@ phase0() {
     fi
 
     # Validate Cloudflare credentials for DNS-01 challenge
-    if [[ -z "${CLOUDFLARE_EMAIL:-}" ]]; then
-        log_warn "CLOUDFLARE_EMAIL is not set. Phase 4 (SSL) will fail."
-        log_info "Export it before running: export CLOUDFLARE_EMAIL=your-email@example.com"
+    if [[ -n "${CLOUDFLARE_EMAIL:-}" ]]; then
+        log_info "CLOUDFLARE_EMAIL is set (optional - only used for certbot registration notice)"
     fi
 
-    if [[ -z "${CLOUDFLARE_API_KEY:-}" ]]; then
-        log_warn "CLOUDFLARE_API_KEY is not set. Phase 4 (SSL) will fail."
-        log_info "Export it before running: export CLOUDFLARE_API_KEY=your-global-api-key"
+    if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+        log_warn "CLOUDFLARE_API_TOKEN is not set. Phase 4 (SSL) will fail."
+        log_info "Export it before running: export CLOUDFLARE_API_TOKEN=your-scoped-api-token"
     fi
 
     log_info "Pre-flight checks passed"
@@ -213,17 +212,10 @@ phase4() {
     log_step "=== Phase 4: SSL Certificate Acquisition (Cloudflare DNS-01) ==="
 
     # Validate Cloudflare credentials
-    if [[ -z "${CLOUDFLARE_EMAIL:-}" ]]; then
-        log_error "CLOUDFLARE_EMAIL environment variable is not set"
+    if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+        log_error "CLOUDFLARE_API_TOKEN environment variable is not set"
         log_info "Export it before running this script:"
-        log_info "  export CLOUDFLARE_EMAIL=cloudflare@proksiabel.ee"
-        return 1
-    fi
-
-    if [[ -z "${CLOUDFLARE_API_KEY:-}" ]]; then
-        log_error "CLOUDFLARE_API_KEY environment variable is not set"
-        log_info "Export it before running this script:"
-        log_info "  export CLOUDFLARE_API_KEY=your-global-api-key"
+        log_info "  export CLOUDFLARE_API_TOKEN=your-scoped-api-token"
         return 1
     fi
 
@@ -264,13 +256,13 @@ phase4() {
     log_info "Obtaining Let's Encrypt certificate for $DOMAIN via Cloudflare DNS challenge..."
 
     # Create Cloudflare credentials file with restricted permissions
-    local CF_CREDENTIALS_FILE="$CERTBOT_DATA_DIR/cloudflare.ini"
+    local CF_CREDENTIALS_FILE="$(dirname "$CERTBOT_DATA_DIR")/cloudflare.ini"
 
     cat > "$CF_CREDENTIALS_FILE" << EOF
 # Cloudflare API credentials
 # DO NOT commit this file to version control
-dns_cloudflare_email = ${CLOUDFLARE_EMAIL}
-dns_cloudflare_api_key = ${CLOUDFLARE_API_KEY}
+# Using scoped API token (dns_cloudflare_api_token) instead of global key
+dns_cloudflare_api_token = ${CLOUDFLARE_API_TOKEN}
 EOF
 
     chmod 600 "$CF_CREDENTIALS_FILE"
@@ -284,6 +276,12 @@ EOF
     # -------------------------------------------------------------------------
 
     log_info "Requesting certificate via certbot --dns-cloudflare..."
+
+    local EMAIL_FLAG=""
+    if [[ -n "${CLOUDFLARE_EMAIL:-}" ]]; then
+        EMAIL_FLAG="--email ${CLOUDFLARE_EMAIL} --no-eff-email"
+    fi
+
     docker run --rm \
         -v "$LETSENCRYPT_DIR:/etc/letsencrypt" \
         -v "$CF_CREDENTIALS_FILE:/etc/letsencrypt/cloudflare.ini:ro" \
@@ -293,8 +291,7 @@ EOF
         --dns-cloudflare-propagation-seconds 30 \
         --non-interactive \
         --agree-tos \
-        --no-eff-email \
-        --email "${CLOUDFLARE_EMAIL}" \
+        ${EMAIL_FLAG} \
         -d "$DOMAIN" \
         --verbose
 
@@ -312,6 +309,8 @@ EOF
     find "$LETSENCRYPT_DIR" -type f -exec chmod 644 {} \; 2>/dev/null || true
     # Keep cloudflare credentials restricted
     chmod 600 "$CF_CREDENTIALS_FILE"
+    # Protect private keys - must not be world-readable
+    find "$LETSENCRYPT_DIR/live" -name "privkey.pem" -exec chmod 600 {} \; 2>/dev/null || true
 
     # Verify certificate details
     log_info "Certificate details:"
@@ -412,11 +411,12 @@ FEATURE_TRACING_ENABLED=false
 # Cloudflare DNS Challenge Credentials
 # These must be exported as environment variables before running deploy.sh:
 #   export CLOUDFLARE_EMAIL=cloudflare@proksiabel.ee
-#   export CLOUDFLARE_API_KEY=<your-global-api-key>
-# Get your Global API Key from: https://dash.cloudflare.com/profile/api-tokens
+#   export CLOUDFLARE_API_TOKEN=<your-scoped-api-token>
+# Create a scoped API token at: https://dash.cloudflare.com/profile/api-tokens
+# (requires DNS:Write permission for the zone)
 # ===========================================
 # CLOUDFLARE_EMAIL=
-# CLOUDFLARE_API_KEY=
+# CLOUDFLARE_API_TOKEN=
 EOF
 
     chmod 600 "$DEPLOY_DIR/.env"
@@ -522,7 +522,7 @@ phase8() {
 
     # Test API health
     log_info "Testing API health..."
-    curl -s https://"$DOMAIN"/api/v1/health || log_warn "API health check failed"
+    curl -s https://"$DOMAIN"/health || log_warn "API health check failed"
 
     # Check SSL certificate
     log_info ""
