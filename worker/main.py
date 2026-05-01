@@ -251,19 +251,25 @@ async def main() -> None:
                 logger.error("outbox_sync_error", error=str(e))
 
         if now - last_cleanup >= cleanup_interval:
+            cleanup_count = 0
             try:
                 cleanup_count = await cleanup_expired_jobs()
-                # Zombie sweeper: requeue jobs stuck in processing (SIGKILL/OOM recovery)
-                stuck_count = await requeue_stuck_jobs(timeout_minutes=15)
-                logger.info(
-                    "cleanup_cycle_completed",
-                    expired_jobs_cleaned=cleanup_count,
-                    stuck_jobs_requeued=stuck_count,
-                )
-                last_cleanup = now
-                update_worker_state(last_cleanup=last_cleanup.isoformat())
             except Exception as e:
-                logger.error("cleanup_error", error=str(e))
+                logger.error("expired_job_cleanup_error", error=str(e))
+
+            stuck_count = 0
+            try:
+                stuck_count = await requeue_stuck_jobs(timeout_minutes=15)
+            except Exception as e:
+                logger.error("zombie_sweep_error", error=str(e))
+
+            logger.info(
+                "cleanup_cycle_completed",
+                expired_jobs_cleaned=cleanup_count,
+                stuck_jobs_requeued=stuck_count,
+            )
+            last_cleanup = now
+            update_worker_state(last_cleanup=last_cleanup.isoformat())
 
         heartbeat_counter += 1
         if heartbeat_counter >= heartbeat_interval:
