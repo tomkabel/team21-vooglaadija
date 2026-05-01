@@ -65,32 +65,30 @@ async def requeue_stuck_jobs(timeout_minutes: int = 15) -> int:
         requeued_count = 0
         for job in stuck_jobs:
             try:
-                # Create outbox entry atomically with status update.
-                # Prevents the dual-write problem: if Redis is down,
-                # the outbox relay will enqueue when it recovers.
-                outbox_entry = Outbox(
-                    id=uuid.uuid4(),
-                    job_id=job.id,
-                    event_type="zombie_recovery",
-                    payload=json.dumps({"recovered_at": datetime.now(UTC).isoformat()}),
-                    status="pending",
-                )
-                db.add(outbox_entry)
-
-                await db.execute(
-                    update(DownloadJob)
-                    .where(DownloadJob.id == job.id)
-                    .values(
+                async with db.begin_nested():
+                    outbox_entry = Outbox(
+                        id=uuid.uuid4(),
+                        job_id=job.id,
+                        event_type="zombie_recovery",
+                        payload=json.dumps({"recovered_at": datetime.now(UTC).isoformat()}),
                         status="pending",
-                        updated_at=datetime.now(UTC),
                     )
-                )
-                requeued_count += 1
-                logger.info(
-                    "zombie_job_requeued",
-                    job_id=str(job.id),
-                    stuck_minutes=int((datetime.now(UTC) - job.updated_at).total_seconds() / 60),
-                )
+                    db.add(outbox_entry)
+
+                    await db.execute(
+                        update(DownloadJob)
+                        .where(DownloadJob.id == job.id)
+                        .values(
+                            status="pending",
+                            updated_at=datetime.now(UTC),
+                        )
+                    )
+                    requeued_count += 1
+                    logger.info(
+                        "zombie_job_requeued",
+                        job_id=str(job.id),
+                        stuck_minutes=int((datetime.now(UTC) - job.updated_at).total_seconds() / 60),
+                    )
             except Exception as e:
                 logger.error(
                     "failed_to_requeue_zombie_job",
@@ -98,7 +96,14 @@ async def requeue_stuck_jobs(timeout_minutes: int = 15) -> int:
                     error=str(e),
                 )
 
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception as e:
+            logger.error(
+                "zombie_sweep_commit_failed",
+                error=str(e),
+                requeued_count=requeued_count,
+            )
 
         if requeued_count > 0:
             logger.warning(
