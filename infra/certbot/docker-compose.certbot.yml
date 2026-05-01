@@ -1,8 +1,20 @@
 services:
   certbot:
-    image: certbot/certbot
+    image: certbot/dns-cloudflare
     volumes:
       - ./ssl:/etc/letsencrypt:rw
-      - ./data:/var/www/certbot:rw
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h; done;'"
+      - ./cloudflare.ini:/etc/letsencrypt/cloudflare.ini:ro
+      # Mount Docker socket so certbot can reload nginx via docker exec
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+    entrypoint: |
+      /bin/sh -c '
+        trap exit TERM;
+        while :; do
+          certbot renew \
+            --dns-cloudflare \
+            --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
+            --dns-cloudflare-propagation-seconds 30 \
+            --deploy-hook "docker exec ytprocessor-nginx nginx -s reload 2>/dev/null || echo '"'"'nginx reload attempted'"'"'" || true;
+          sleep 12h;
+        done;'
     restart: unless-stopped

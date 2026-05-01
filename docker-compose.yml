@@ -171,6 +171,7 @@ services:
         max-size: "10m"
         max-file: "3"
         compress: "true"
+    ports: []
     # Database typically needs more resources
     # Note: PostgreSQL must run as its default user, not overridden by security-context
     deploy:

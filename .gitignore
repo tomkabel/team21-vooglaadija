@@ -47,6 +47,10 @@ build/
 *.log
 infra/certbot/*.ini
 
+# Cloudflare credentials for certbot DNS challenge
+infra/certbot/cloudflare.ini
+cloudflare.ini
+
 # =============================================
 # Tooling & CLI Config
 # =============================================
@@ -144,4 +148,5 @@ bundle.html
 vooglaadija-slides/
 
 .github/project-config.json
+docs/CRITIQUE-ISSUES.md
 .openchange/

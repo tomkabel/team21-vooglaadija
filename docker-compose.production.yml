@@ -112,43 +112,33 @@ services:
     profiles: [] # Always run in production
 
   # ==========================================
-  # Certbot - Automatic SSL Renewal
+  # Certbot - Automatic SSL Renewal (Cloudflare DNS-01)
   # ==========================================
   certbot:
-    image: certbot/certbot
+    image: certbot/dns-cloudflare
     container_name: ytprocessor-certbot
     restart: unless-stopped
     volumes:
-      # SSL certificates - mount host letsencrypt directory for certbot renewal compatibility
-      # This preserves the full LetsEncrypt layout (live/, archive/, renewal/)
+      # SSL certificates - preserves full LetsEncrypt layout
+      # Match nginx's LetsEncrypt mount so renewed certs are visible immediately
       - ./infra/letsencrypt:/etc/letsencrypt:rw
-      # ACME challenge webroot
-      - ./infra/certbot/data:/var/www/certbot:rw
+      # Cloudflare API credentials for DNS-01 challenge
+      - ./infra/certbot/cloudflare.ini:/etc/letsencrypt/cloudflare.ini:ro
       # Mount Docker socket to signal nginx container on renewal
       - /var/run/docker.sock:/var/run/docker.sock:rw
     entrypoint: |
       /bin/sh -c '
-        # Deploy hook reloads nginx after successful renewal via Docker socket
-        # Uses docker exec to signal nginx from within the docker network
-        deploy_hook() {
-          echo "Deploy hook: reloading nginx after cert renewal..."
-          docker exec ytprocessor-nginx nginx -s reload 2>/dev/null || {
-            # Fallback: if nginx not reachable, try to reload via signal
-            echo "Docker exec failed, checking nginx status..."
-            docker exec ytprocessor-nginx sh -c "nginx -s reload" 2>/dev/null || echo "nginx reload attempted"
-          }
-        }
         trap exit TERM;
         while :; do
-          certbot renew --deploy-hook "bash -c deploy_hook" || true;
+          certbot renew \
+            --dns-cloudflare \
+            --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
+            --dns-cloudflare-propagation-seconds 30 \
+            --deploy-hook "docker exec ytprocessor-nginx nginx -s reload 2>/dev/null || echo '"'"'nginx reload attempted'"'"'" || true;
           sleep 12h;
         done;
       '
     profiles: [] # Always run in production
-    # Only run after nginx is up to ensure port 80 is available
-    depends_on:
-      nginx:
-        condition: service_started
 
   # ==========================================
   # Disable Non-Essential Services
