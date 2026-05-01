@@ -170,7 +170,16 @@ async def main() -> None:
     last_cleanup = datetime.now(UTC) - cleanup_interval
 
     # Outbox sync runs independently of cleanup for lower latency (default: 30s)
-    outbox_sync_interval_seconds: int = int(os.environ.get("OUTBOX_SYNC_INTERVAL_SECONDS", "30"))
+    try:
+        outbox_sync_interval_seconds = int(os.environ.get("OUTBOX_SYNC_INTERVAL_SECONDS", "30"))
+    except (ValueError, TypeError):
+        outbox_sync_interval_seconds = 30
+        logger.warning(
+            "invalid_outbox_sync_interval",
+            value=os.environ.get("OUTBOX_SYNC_INTERVAL_SECONDS"),
+            fallback=30,
+        )
+    outbox_sync_interval_seconds = max(1, min(outbox_sync_interval_seconds, 3600))
     outbox_sync_interval = timedelta(seconds=outbox_sync_interval_seconds)
     last_outbox_sync = datetime.now(UTC) - outbox_sync_interval
 
