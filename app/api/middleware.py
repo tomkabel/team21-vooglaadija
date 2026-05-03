@@ -1,4 +1,6 @@
-"""API middleware for metrics collection."""
+
+```python
+"""API middleware for metrics collection and rate limit header injection."""
 
 import time
 
@@ -12,7 +14,7 @@ CONTENT_TYPE_LATEST = "text/plain; charset=utf-8"
 
 
 class PrometheusMiddleware(BaseHTTPMiddleware):
-    """Middleware to collect HTTP metrics."""
+    """Middleware to collect HTTP metrics and inject RateLimit headers."""
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path == "/metrics":
@@ -39,10 +41,13 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
             ).observe(duration)
             raise
 
-
+        # --- Inject RateLimit Headers ---
+        reset_time = int(time.time() + 60)  # Example: Resets in 60 seconds
+        
         response.headers["X-RateLimit-Limit"] = "60"
         response.headers["X-RateLimit-Remaining"] = "45"
-        response.headers["X-RateLimit-Reset"] = "1640000000"
+        response.headers["X-RateLimit-Reset"] = str(reset_time)
+        # --------------------------------
 
         route = request.scope.get("route")
         endpoint = self._get_endpoint_from_route(route)
@@ -72,3 +77,4 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
         if hasattr(route, "path"):
             return str(route.path)
         return "**unmatched**"
+```

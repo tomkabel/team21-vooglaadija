@@ -24,6 +24,12 @@ from app.logging_config import setup_logging
 from app.metrics import init_metrics
 from app.schemas.error import ErrorCode, error_response_dict
 
+    ```python
+from fastapi import FastAPI
+from redis.exceptions import ConnectionError, TimeoutError
+from slowapi import _rate_limit_exceeded_handler
+from starlette.responses import JSONResponse
+from app.api.limiter import limiter #impordib uue faili
 logger = logging.getLogger(__name__)
 
 
@@ -227,3 +233,22 @@ async def root(request: Request):
 
     # Not authenticated, redirect to login
     return RedirectResponse(url="/web/login", status_code=303)
+
+
+
+app = FastAPI()
+app.state.limiter = limiter
+
+# 1. Standard Rate Limit reached handler
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# 2. Fail-Closed: Treat Redis connection issues as "Limit Reached"
+async def fail_closed_handler(request, exc):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Security limit check failed. Please try again later."}
+    )
+
+app.add_exception_handler(ConnectionError, fail_closed_handler)
+app.add_exception_handler(TimeoutError, fail_closed_handler)
+```

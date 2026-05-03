@@ -8,6 +8,9 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from slowapi.util import get_remote_address
+from slowapi.extension import NoOpLimiter
+from slowapi.storages import RedisStorage
 
 from app.schemas.error import ErrorCode, error_response_dict
 
@@ -30,8 +33,12 @@ class NoOpLimiter:
         """Allow all requests."""
 
 
-# Use NoOpLimiter in test mode, real limiter otherwise
-limiter = NoOpLimiter() if is_testing else Limiter(key_func=get_remote_address)
+if is_testing:
+    limiter = NoOpLimiter()
+else:
+    # Use Redis storage for production/shared state across replicas
+    redis_storage = RedisStorage.from_url(REDIS_URL)
+    limiter = Limiter(key_func=get_remote_address, storage=redis_storage)
 
 
 def _parse_retry_after(detail: str) -> int:
