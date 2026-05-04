@@ -514,3 +514,41 @@ async def root(request: Request) -> RedirectResponse:
 
     # Not authenticated, redirect to login
     return RedirectResponse(url="/web/login", status_code=303)
+
+
+@app.middleware("http")
+async def set_rate_limit_key(request: Request, call_next):
+    # Tõmbame tokeni kukkidest ja paneme ID staati
+    token = request.cookies.get("access_token")
+    user_id = "anonymous"
+    
+    if token:
+        payload = verify_token(token)
+        if payload:
+            user_id = payload.get("sub", "anonymous")
+    
+    request.state.user_id = user_id
+    return await call_next(request)
+
+# Define the key identifier
+def get_dual_identifier(request: Request) -> str:
+    ip = get_remote_address(request)
+    # Nüüd see user_id tegelikult ka eksisteerib staadis
+    user_id = getattr(request.state, "user_id", "anonymous")
+    return f"{ip}:{user_id}"
+
+is_testing = os.getenv("APP_ENV") == "test"
+redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+if is_testing:
+    limiter = NoOpLimiter()
+else:
+    # strategy="moving-window" provides atomic sliding window via Lua
+    storage = RedisStorage.from_url(redis_url)
+    limiter = Limiter(
+        key_func=get_dual_identifier,
+        storage=storage,
+        strategy="moving-window", 
+        headers_enabled=True,
+        swallow_errors=False  # Crucial for Fail-Closed
+    )
