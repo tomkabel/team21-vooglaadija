@@ -1,5 +1,3 @@
-
-```python
 """API middleware for metrics collection and rate limit header injection."""
 
 import time
@@ -42,11 +40,12 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
             raise
 
         # --- Inject RateLimit Headers ---
-        reset_time = int(time.time() + 60)  # Example: Resets in 60 seconds
+        # Arvutame UNIX-i ajatempli (näiteks 60 sekundit praegusest hetkest)
+        unix_timestamp = int(time.time() + 60)
         
         response.headers["X-RateLimit-Limit"] = "60"
         response.headers["X-RateLimit-Remaining"] = "45"
-        response.headers["X-RateLimit-Reset"] = str(reset_time)
+        response.headers["X-RateLimit-Reset"] = str(unix_timestamp)
         # --------------------------------
 
         route = request.scope.get("route")
@@ -77,4 +76,3 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
         if hasattr(route, "path"):
             return str(route.path)
         return "**unmatched**"
-```

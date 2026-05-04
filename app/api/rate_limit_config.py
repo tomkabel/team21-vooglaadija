@@ -2,14 +2,13 @@
 
 import os
 import re
+import time  # Lisatud UNIX timestampi jaoks
 
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from slowapi.util import get_remote_address
-from slowapi.extension import NoOpLimiter
 from slowapi.storages import RedisStorage
 
 from app.schemas.error import ErrorCode, error_response_dict
@@ -37,6 +36,8 @@ if is_testing:
     limiter = NoOpLimiter()
 else:
     # Use Redis storage for production/shared state across replicas
+    # Eeldame, et REDIS_URL on kättesaadav (näiteks os.environ kaudu)
+    REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
     redis_storage = RedisStorage.from_url(REDIS_URL)
     limiter = Limiter(key_func=get_remote_address, storage=redis_storage)
 
@@ -70,9 +71,18 @@ async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONR
     """Handle rate limit exceeded errors with standardized error response."""
     if not isinstance(exc, RateLimitExceeded):
         raise exc
+        
     retry_after = _parse_retry_after(str(exc.detail))
+    # Arvutame hetke aja põhjal uue UNIX-i ajatempli
+    unix_timestamp = int(time.time() + retry_after)
+
     return JSONResponse(
         status_code=429,
         content=error_response_dict(ErrorCode.RATE_LIMIT_EXCEEDED, str(exc.detail)),
-        headers={"Retry-After": str(retry_after)},
+        headers={
+            "Retry-After": str(retry_after),
+            "X-RateLimit-Limit": "60",
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": str(unix_timestamp),
+        },
     )
