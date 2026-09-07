@@ -646,7 +646,7 @@ except Exception:
 set_environment() {
   log_step "Phase 8: Environment variables (generated secrets)"
 
-  local db_password redis_password secret_key grafana_password
+  local db_password redis_password secret_key grafana_password db_replication_password
   if [[ "${APP_EXISTED:-false}" == "true" ]]; then
     # Re-run over an existing deployment: keep the stored credentials so the
     # already-initialized PostgreSQL volume and Redis instance stay in sync.
@@ -659,29 +659,32 @@ try:
     envs = d if isinstance(d, list) else d.get('envs', d.get('data', []))
     vals = {e['key']: e.get('value', '') for e in envs}
     print('|'.join(vals.get(k, '') for k in
-                   ('DB_PASSWORD', 'REDIS_PASSWORD', 'SECRET_KEY', 'GF_SECURITY_ADMIN_PASSWORD')))
+                   ('DB_PASSWORD', 'REDIS_PASSWORD', 'SECRET_KEY', 'GF_SECURITY_ADMIN_PASSWORD', 'DB_REPLICATION_PASSWORD')))
 except Exception:
-    print('||||')
+    print('|||||')
 " || true)
     db_password=$(printf '%s' "$values" | cut -d'|' -f1)
     redis_password=$(printf '%s' "$values" | cut -d'|' -f2)
     secret_key=$(printf '%s' "$values" | cut -d'|' -f3)
     grafana_password=$(printf '%s' "$values" | cut -d'|' -f4)
+    db_replication_password=$(printf '%s' "$values" | cut -d'|' -f5)
   fi
   # Generate secrets for fresh deployments (or for any key missing above).
   [[ -n "${db_password:-}" ]] || db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
   [[ -n "${redis_password:-}" ]] || redis_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
   [[ -n "${secret_key:-}" ]] || secret_key=$(openssl rand -hex 32)
   [[ -n "${grafana_password:-}" ]] || grafana_password=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 24)
+  [[ -n "${db_replication_password:-}" ]] || db_replication_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
 
   local payload
-  payload=$(python3 - "$db_password" "$redis_password" "$secret_key" "$grafana_password" "$DEPLOY_DOMAIN" <<'PY'
+  payload=$(python3 - "$db_password" "$redis_password" "$secret_key" "$grafana_password" "$DEPLOY_DOMAIN" "$db_replication_password" <<'PY'
 import json, sys
-db_pw, redis_pw, secret, gf_pw, domain = sys.argv[1:6]
+db_pw, redis_pw, secret, gf_pw, domain, db_repl_pw = sys.argv[1:7]
 envs = {
     "DB_USER": "postgres",
     "DB_PASSWORD": db_pw,
     "DB_NAME": "ytprocessor",
+    "DB_REPLICATION_PASSWORD": db_repl_pw,
     "REDIS_PASSWORD": redis_pw,
     "SECRET_KEY": secret,
     "SECRET_KEY_PREVIOUS": "",

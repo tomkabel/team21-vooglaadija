@@ -88,6 +88,7 @@ test = [
     "httpx>=0.27.0",  # floor must match the main dependency, not be lower
     "testcontainers[postgres]>=4.0.0",
     "psycopg[binary]>=3.1.0",
+    "aiosqlite",  # sqlite+aiosqlite test paths (Settings testing default, alembic-head test)
 ]
 lint = [
     "ruff==0.16.3",  # pinned: matches uv.lock; lint gates must be deterministic
@@ -120,6 +121,7 @@ test = [
     "httpx>=0.27.0",  # floor must match the main dependency, not be lower
     "testcontainers[postgres]>=4.0.0",
     "psycopg[binary]>=3.1.0",
+    "aiosqlite",  # sqlite+aiosqlite test paths (Settings testing default, alembic-head test)
 ]
 lint = [
     "ruff==0.16.3",  # pinned: matches uv.lock; lint gates must be deterministic
@@ -740,7 +742,7 @@ skips = [
 #   urllib3, idna, mako, pyasn1, authlib
 # - Test-exercised runtime deps (candidate removals if observability drops):
 #   orjson, tenacity
-per_rule_ignores = { "DEP002" = ["ruff", "mypy", "bandit", "safety", "detect-secrets", "vulture", "deptry", "pytest", "pytest-asyncio", "pytest-cov", "pytest-xdist", "testcontainers", "psycopg", "types-redis", "types-python-jose", "vooglaadija", "asyncpg", "bcrypt", "cryptography", "ecdsa", "email-validator", "jinja2", "orjson", "pygments", "python-multipart", "tenacity", "yt-dlp", "urllib3", "idna", "mako", "pyasn1", "authlib"] }
+per_rule_ignores = { "DEP002" = ["ruff", "mypy", "bandit", "safety", "detect-secrets", "vulture", "deptry", "pytest", "pytest-asyncio", "pytest-cov", "pytest-xdist", "testcontainers", "psycopg", "types-redis", "types-python-jose", "vooglaadija", "asyncpg", "aiosqlite", "bcrypt", "cryptography", "ecdsa", "email-validator", "jinja2", "orjson", "pygments", "python-multipart", "tenacity", "yt-dlp", "urllib3", "idna", "mako", "pyasn1", "authlib"] }
 # Module name differs from package name; required because the detached audit
 # env runs deptry without the project installed (no auto-detection possible).
 package_module_name_map = { "python-jose" = ["jose"] }

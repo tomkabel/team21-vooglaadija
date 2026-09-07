@@ -6,6 +6,7 @@ from typing import TypedDict
 from fastapi import APIRouter, Response, status
 from pydantic import BaseModel
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.schemas.error import ErrorCode, error_response_doc, success_response_doc
@@ -41,7 +42,16 @@ async def _check_database(database_url: str) -> str:
     if not database_url:
         return "missing DATABASE_URL"
 
-    engine = create_async_engine(database_url)
+    # PostgreSQL traffic is routed through PgBouncer in transaction-pooling
+    # mode, which does not preserve server-side prepared statements across
+    # pooled connections. Disable asyncpg's statement cache so this one-shot
+    # engine never reuses a prepared statement that PgBouncer has recycled.
+    connect_args: dict[str, object] = {}
+    url = make_url(database_url)
+    if url.get_backend_name() == "postgresql" and url.get_driver_name() == "asyncpg":
+        connect_args = {"statement_cache_size": 0}
+
+    engine = create_async_engine(database_url, connect_args=connect_args)
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))

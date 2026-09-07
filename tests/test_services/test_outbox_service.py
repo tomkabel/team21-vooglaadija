@@ -1,18 +1,18 @@
 """Tests for outbox service."""
 
-import uuid
-
 import pytest
 from sqlalchemy import select
 
 from app.services.outbox_service import write_job_to_outbox
 from core.models.outbox import Outbox
+from tests.conftest import seed_download_job
 
 
 @pytest.mark.asyncio
 async def test_write_job_to_outbox_creates_entry(db_session):
     """Test that write_job_to_outbox creates a new outbox entry."""
-    job_id = uuid.uuid4()
+    job = await seed_download_job(db_session)
+    job_id = job.id
 
     result = await write_job_to_outbox(
         db_session,
@@ -38,7 +38,7 @@ async def test_write_job_to_outbox_creates_entry(db_session):
 @pytest.mark.asyncio
 async def test_write_job_to_outbox_idempotent_skips_duplicate(db_session):
     """Test that write_job_to_outbox returns None if pending entry already exists."""
-    job_id = uuid.uuid4()
+    job_id = (await seed_download_job(db_session)).id
 
     first_result = await write_job_to_outbox(db_session, job_id=job_id)
     assert first_result is not None
@@ -56,7 +56,7 @@ async def test_write_job_to_outbox_idempotent_skips_duplicate(db_session):
 @pytest.mark.asyncio
 async def test_write_job_to_outbox_allows_after_processed(db_session):
     """Test that write_job_to_outbox allows new entry after existing is processed."""
-    job_id = uuid.uuid4()
+    job_id = (await seed_download_job(db_session)).id
 
     first_result = await write_job_to_outbox(db_session, job_id=job_id)
     assert first_result is not None
@@ -79,7 +79,7 @@ async def test_write_job_to_outbox_allows_after_processed(db_session):
 @pytest.mark.asyncio
 async def test_write_job_to_outbox_default_event_type(db_session):
     """Test that write_job_to_outbox uses default event_type."""
-    job_id = uuid.uuid4()
+    job_id = (await seed_download_job(db_session)).id
 
     result = await write_job_to_outbox(db_session, job_id=job_id)
 
@@ -90,7 +90,7 @@ async def test_write_job_to_outbox_default_event_type(db_session):
 @pytest.mark.asyncio
 async def test_write_job_to_outbox_with_none_payload(db_session):
     """Test that write_job_to_outbox works with None payload."""
-    job_id = uuid.uuid4()
+    job_id = (await seed_download_job(db_session)).id
 
     result = await write_job_to_outbox(db_session, job_id=job_id, payload=None)
 
@@ -113,7 +113,9 @@ async def test_write_job_to_outbox_concurrent_writers_keep_one_pending_row():
     from app.services import outbox_service
     from tests.conftest import TestingSessionLocal
 
-    job_id = uuid.uuid4()
+    async with TestingSessionLocal() as seed_session:
+        job_id = (await seed_download_job(seed_session)).id
+        await seed_session.commit()
 
     async with TestingSessionLocal() as session_a, TestingSessionLocal() as session_b:
         # session_a wins the race and commits its pending row.

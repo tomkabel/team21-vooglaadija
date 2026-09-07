@@ -256,6 +256,13 @@ services:
   # ==========================================
   # PostgreSQL Primary
   # ==========================================
+  # NOTE: this service was bumped from postgres:15-alpine to postgres:17-alpine.
+  # PostgreSQL major versions cannot start against a data directory initialized
+  # by an older major version — an existing postgres_data volume from a pre-P17
+  # deployment MUST be dumped/restored (or pg_upgrade'd) into a fresh volume
+  # before this image is deployed against it. See docs/OPS.md "PostgreSQL
+  # major-version upgrades" for the procedure. Fresh/CI environments are
+  # unaffected since their volume is empty on first start.
   db:
     container_name: ytprocessor-db
     image: postgres:17-alpine
@@ -266,10 +273,15 @@ services:
       POSTGRES_DB: ${DB_NAME:-ytprocessor}
       # PostgreSQL tuning for containers
       POSTGRES_INITDB_ARGS: '--data-checksums'
+      # Replication role for db-replica (infra/postgresql/init-replication.sh
+      # creates it on first initialization only).
+      DB_REPLICATION_USER: ${DB_REPLICATION_USER:-replicator}
+      DB_REPLICATION_PASSWORD: ${DB_REPLICATION_PASSWORD:?DB_REPLICATION_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data:Z
       - ./infra/postgresql/postgresql.conf:/etc/postgresql/postgresql.conf:ro
       - ./infra/postgresql/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./infra/postgresql/init-replication.sh:/docker-entrypoint-initdb.d/init-replication.sh:ro
     ports: []
     command: >
       postgres
@@ -306,13 +318,23 @@ services:
     environment:
       PGUSER: ${DB_USER:-postgres}
       PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      # Consumed by replica-entrypoint.sh to pg_basebackup from the primary.
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_REPLICATION_USER: ${DB_REPLICATION_USER:-replicator}
+      DB_REPLICATION_PASSWORD: ${DB_REPLICATION_PASSWORD:?DB_REPLICATION_PASSWORD is required}
     volumes:
       - postgres_replica_data:/var/lib/postgresql/data:Z
       - ./infra/postgresql/replica.conf:/etc/postgresql/postgresql.conf:ro
+      - ./infra/postgresql/replica-entrypoint.sh:/usr/local/bin/replica-entrypoint.sh:ro
     ports: []
+    entrypoint: ['/usr/local/bin/replica-entrypoint.sh']
     command: >
       postgres
         -c config_file=/etc/postgresql/postgresql.conf
+    depends_on:
+      db:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -338,14 +360,20 @@ services:
   # ==========================================
   pgbouncer:
     container_name: ytprocessor-pgbouncer
-    image: pgbouncer/pgbouncer:1.24
+    # pgbouncer/pgbouncer on Docker Hub is unmaintained (last tag 1.15.0, 2020)
+    # and has no 1.24 manifest. edoburu/pgbouncer is the actively maintained
+    # community image and is configured entirely via DATABASE_URL, not
+    # DATABASES_* variables (those aren't recognized by its entrypoint).
+    image: edoburu/pgbouncer:v1.24.1-p1
     restart: unless-stopped
     environment:
-      DATABASES_HOST: db
-      DATABASES_PORT: 5432
-      DATABASES_DATABASE: ${DB_NAME:-ytprocessor}
-      DATABASES_USER: ${DB_USER:-postgres}
-      DATABASES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?DB_PASSWORD is required}@db:5432/${DB_NAME:-ytprocessor}
+      # postgres:17-alpine stores role passwords as SCRAM-SHA-256 by default.
+      # edoburu's default AUTH_TYPE (md5) writes an MD5-only userlist entry
+      # that can't answer the server's SCRAM challenge ("cannot do SCRAM
+      # authentication: wrong password type"). scram-sha-256 stores the
+      # plaintext password instead, letting PgBouncer do real SCRAM to `db`.
+      AUTH_TYPE: scram-sha-256
       POOL_MODE: transaction
       MAX_CLIENT_CONN: 1000
       DEFAULT_POOL_SIZE: 25
@@ -588,7 +616,9 @@ services:
         max-file: '3'
 
   backup-cron:
-    image: alpine:3.20
+    # postgresql17-client is only packaged starting with Alpine 3.21; 3.20's
+    # main repo tops out at postgresql16-client.
+    image: alpine:3.21
     profiles: ['backup']
     restart: unless-stopped
     volumes:
@@ -605,7 +635,7 @@ services:
     entrypoint: |
       /bin/sh -c "
         set -e
-        apk add --no-cache postgresql17-client >/dev/null 2>&1
+        apk add --no-cache postgresql17-client
         echo '0 2 * * * /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1' > /etc/crontabs/root
         crond -f -l 2
       "

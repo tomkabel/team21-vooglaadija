@@ -16,6 +16,7 @@ from sqlalchemy import select, update
 
 from core.database import get_async_session_factory
 from core.models.download_job import DownloadJob
+from tests.conftest import seed_user
 
 
 class TestAtomicClaims:
@@ -27,9 +28,11 @@ class TestAtomicClaims:
         return UUID("550e8400-e29b-41d4-a716-446655440099")
 
     @pytest.fixture
-    def user_id(self) -> UUID:
-        """Fixed user ID for consistent testing."""
-        return UUID("550e8400-e29b-41d4-a716-446655440001")
+    async def user_id(self, db_session) -> UUID:
+        """Fixed user ID for consistent testing (persisted for the users FK)."""
+        fixed_id = UUID("550e8400-e29b-41d4-a716-446655440001")
+        await seed_user(db_session, user_id=fixed_id)
+        return fixed_id
 
     @pytest.fixture
     async def pending_job(self, db_session, job_id, user_id) -> DownloadJob:
@@ -247,6 +250,7 @@ class TestAtomicClaims:
         session_factory = get_async_session_factory()
         job_ids = [uuid4() for _ in range(3)]
         user_id = uuid4()
+        await seed_user(db_session, user_id=user_id)
 
         # Create 3 pending jobs
         for job_id in job_ids:
@@ -295,6 +299,7 @@ class TestAtomicClaimsIntegration:
 
         job_id = UUID("550e8400-e29b-41d4-a716-446655440098")
         user_id = UUID("550e8400-e29b-41d4-a716-446655440097")
+        await seed_user(db_session, user_id=user_id)
 
         # Create pending job
         job = DownloadJob(

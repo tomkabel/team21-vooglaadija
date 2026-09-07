@@ -1,6 +1,5 @@
 """Worker processor chaos injection tests (db_failover, zombie sweep)."""
 
-import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -9,6 +8,7 @@ from sqlalchemy import select
 
 from core.metrics import RECOVERIES
 from core.models.download_job import DownloadJob
+from tests.conftest import seed_download_job
 from worker.main import shutdown_event
 
 
@@ -39,14 +39,12 @@ class TestDBFailoverTrigger:
         """When chaos:db_failover exists, OperationalError is raised after job claim."""
         from worker.processor import process_next_job
 
-        job_id = uuid.uuid4()
-        job = DownloadJob(
-            id=job_id,
-            user_id=uuid.uuid4(),
+        job = await seed_download_job(
+            db_session,
             url="https://www.youtube.com/watch?v=test123",
             status="pending",
         )
-        db_session.add(job)
+        job_id = job.id
         await db_session.commit()
 
         with (
@@ -67,14 +65,12 @@ class TestDBFailoverTrigger:
         """When chaos:db_failover is not present, normal processing occurs."""
         from worker.processor import process_next_job
 
-        job_id = uuid.uuid4()
-        job = DownloadJob(
-            id=job_id,
-            user_id=uuid.uuid4(),
+        job = await seed_download_job(
+            db_session,
             url="https://www.youtube.com/watch?v=test456",
             status="pending",
         )
-        db_session.add(job)
+        job_id = job.id
         await db_session.commit()
 
         with (
@@ -121,14 +117,12 @@ class TestZombieSweepTrigger:
         """When zombie trigger is active, job stays in processing state after claim."""
         from worker.processor import process_next_job
 
-        job_id = uuid.uuid4()
-        job = DownloadJob(
-            id=job_id,
-            user_id=uuid.uuid4(),
+        job = await seed_download_job(
+            db_session,
             url="https://www.youtube.com/watch?v=test789",
             status="pending",
         )
-        db_session.add(job)
+        job_id = job.id
         await db_session.commit()
 
         mock_redis = AsyncMock()
@@ -161,14 +155,12 @@ class TestZombieSweepTrigger:
         """When zombie trigger is not present, normal error handling occurs."""
         from worker.processor import process_next_job
 
-        job_id = uuid.uuid4()
-        job = DownloadJob(
-            id=job_id,
-            user_id=uuid.uuid4(),
+        job = await seed_download_job(
+            db_session,
             url="https://www.youtube.com/watch?v=test456",
             status="pending",
         )
-        db_session.add(job)
+        job_id = job.id
         await db_session.commit()
 
         with (
@@ -199,15 +191,12 @@ class TestZombieSweepRecoveryMetrics:
         """reset_stuck_jobs increments RECOVERIES when it finds and resets stuck jobs."""
         from worker.dlq_manager import reset_stuck_jobs
 
-        job_id = uuid.uuid4()
-        stuck_job = DownloadJob(
-            id=job_id,
-            user_id=uuid.uuid4(),
+        await seed_download_job(
+            db_session,
             url="https://www.youtube.com/watch?v=stuck001",
             status="processing",
             updated_at=datetime.now(UTC) - timedelta(minutes=30),
         )
-        db_session.add(stuck_job)
         await db_session.commit()
 
         initial = RECOVERIES.labels(reason="zombie_sweep_recovery")._value.get()

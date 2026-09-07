@@ -21,6 +21,8 @@ BASE_COMPOSE_SERVICES = {
     "worker",
     "browser-downloader",
     "db",
+    "db-replica",
+    "pgbouncer",
     "redis",
     "otel-collector",
     "prometheus",

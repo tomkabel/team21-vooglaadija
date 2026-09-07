@@ -17,12 +17,19 @@ from sqlalchemy import select
 
 from core.models.download_job import DownloadJob
 from core.models.outbox import Outbox
+from tests.conftest import seed_user
 
 
 @pytest.fixture
-def user_id() -> UUID:
-    """Fixed user ID for consistent testing."""
-    return UUID("550e8400-e29b-41d4-a716-446655440010")
+async def user_id(db_session) -> UUID:
+    """Fixed user ID for consistent testing.
+
+    PostgreSQL enforces download_jobs.user_id -> users.id (SQLite did not),
+    so the row must actually exist.
+    """
+    fixed_id = UUID("550e8400-e29b-41d4-a716-446655440010")
+    await seed_user(db_session, user_id=fixed_id)
+    return fixed_id
 
 
 @pytest.fixture
@@ -353,6 +360,7 @@ class TestOutboxRecovery:
         """Test that sync_outbox uses FOR UPDATE SKIP LOCKED."""
         job_ids = [uuid4() for _ in range(3)]
         user_id = uuid4()
+        await seed_user(db_session, user_id=user_id)
 
         for job_id in job_ids:
             job = DownloadJob(
@@ -446,6 +454,7 @@ class TestOutboxBatchProcessing:
                 db_session: Database session used to create and inspect test records.
         """
         user_id = uuid4()
+        await seed_user(db_session, user_id=user_id)
         job_ids = [uuid4() for _ in range(5)]
 
         for job_id in job_ids:

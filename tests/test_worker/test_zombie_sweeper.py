@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from core.models.download_job import DownloadJob
 from core.models.outbox import Outbox
+from tests.conftest import seed_user
 
 
 @pytest.fixture(autouse=True)
@@ -25,9 +26,11 @@ def no_chaos_zombie_trigger():
 
 
 @pytest.fixture
-def user_id() -> UUID:
-    """Fixed user ID for consistent testing."""
-    return UUID("550e8400-e29b-41d4-a716-446655440001")
+async def user_id(db_session) -> UUID:
+    """Fixed user ID for consistent testing (persisted for the users FK)."""
+    fixed_id = UUID("550e8400-e29b-41d4-a716-446655440001")
+    await seed_user(db_session, user_id=fixed_id)
+    return fixed_id
 
 
 @pytest.fixture
@@ -423,9 +426,11 @@ class TestRequeueStuckJobsEdgeCases:
     """Edge case tests for requeue_stuck_jobs."""
 
     @pytest.fixture
-    def user_id(self) -> UUID:
-        """Fixed user ID for consistent testing."""
-        return UUID("550e8400-e29b-41d4-a716-446655440002")
+    async def user_id(self, db_session) -> UUID:
+        """Fixed user ID for consistent testing (persisted for the users FK)."""
+        fixed_id = UUID("550e8400-e29b-41d4-a716-446655440002")
+        await seed_user(db_session, user_id=fixed_id)
+        return fixed_id
 
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_empty_database(self, db_session):

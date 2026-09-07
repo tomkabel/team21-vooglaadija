@@ -34,6 +34,9 @@ EXPECTED_HEAD_INDEXES = {
         "ix_download_jobs_status_updated_at",
         "ix_download_jobs_user_id_created_at",
         "ix_download_jobs_user_id_status",
+        "ix_download_jobs_status",
+        "ix_download_jobs_user_id",
+        "ix_download_jobs_created_at",
     },
     "failed_jobs": {
         "ix_failed_jobs_error_category",
