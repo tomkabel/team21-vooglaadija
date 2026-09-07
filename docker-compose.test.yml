@@ -12,13 +12,13 @@ services:
     image: postgres:15-alpine
     container_name: ytprocessor-test-db
     environment:
-      POSTGRES_USER: test_user
-      POSTGRES_PASSWORD: test_pass
-      POSTGRES_DB: test_db
+      POSTGRES_USER: ${TEST_DB_USER:-test_user}
+      POSTGRES_PASSWORD: ${TEST_DB_PASSWORD:-test_pass}
+      POSTGRES_DB: ${TEST_DB_NAME:-test_db}
     ports:
       - "127.0.0.1:5433:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U test_user -d test_db"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5

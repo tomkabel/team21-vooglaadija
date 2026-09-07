@@ -14,14 +14,42 @@ os.environ["BCRYPT_ROUNDS"] = "4"  # min rounds for test speed (prod default: 12
 _test_db_url = os.environ.get("TEST_DATABASE_URL")
 _using_postgres = _test_db_url is not None
 
-# Unique per-xdist-worker identity, used for SQLite file naming below and for
-# PostgreSQL schema isolation (see `_pg_schema`) so concurrent workers never
+# Unique per-xdist-worker identity, used for SQLite file naming and for the
+# PostgreSQL per-worker database name below, so concurrent workers never
 # share tables — a shared database would let one worker's teardown drop
 # another worker's in-flight tables.
 _worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
-_pg_schema: str | None = f"test_{_worker_id}" if _using_postgres else None
 
-if not _using_postgres:
+if _using_postgres:
+    # Isolate each xdist worker in its own *database* (not merely a schema):
+    # `settings.database_url` is a module-global read by every engine created
+    # anywhere in the app/worker code, not just this module's `test_engine`,
+    # so schema-only isolation (via search_path) would only cover this
+    # module's own connections and leave other engines pointed at the shared
+    # default schema. A per-worker database, baked into the URL itself,
+    # isolates every consumer uniformly.
+    import asyncio as _asyncio
+
+    import asyncpg as _asyncpg
+
+    _pg_worker_db = f"test_{_worker_id}"
+    _admin_dsn = _test_db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+    async def _recreate_worker_database(admin_dsn: str, db_name: str) -> None:
+        conn = await _asyncpg.connect(admin_dsn)
+        try:
+            # Drop any stale database from a previous run (mirrors the
+            # SQLite stale-file cleanup below) before recreating it fresh.
+            await conn.execute(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)')
+            await conn.execute(f'CREATE DATABASE "{db_name}"')
+        finally:
+            await conn.close()
+
+    _asyncio.run(_recreate_worker_database(_admin_dsn, _pg_worker_db))
+
+    _base_url = _test_db_url.rsplit("/", 1)[0]
+    _test_db_url = f"{_base_url}/{_pg_worker_db}"
+else:
     # Determine unique database URL per xdist worker to avoid race conditions
     _test_db_path = os.path.abspath(f"test_{_worker_id}.db")
     _test_db_url = f"sqlite+aiosqlite:///{_test_db_path}"
@@ -42,7 +70,7 @@ core.config.settings.database_url = _test_db_url
 from collections.abc import AsyncGenerator  # noqa: E402
 
 import pytest  # noqa: E402
-from sqlalchemy import delete, text  # noqa: E402
+from sqlalchemy import delete  # noqa: E402
 from sqlalchemy.ext.asyncio import (  # noqa: E402
     AsyncSession,
     async_sessionmaker,
@@ -61,11 +89,7 @@ from app.main import app as fastapi_app  # noqa: E402
 TEST_DATABASE_URL = _test_db_url
 
 _engine_kwargs = {"poolclass": NullPool}
-if _using_postgres:
-    # Pin each xdist worker's connections to its own schema so concurrent
-    # workers' create_all/drop_all cycles never race on shared tables.
-    _engine_kwargs["connect_args"] = {"server_settings": {"search_path": _pg_schema}}
-else:
+if not _using_postgres:
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
 
 test_engine = create_async_engine(
@@ -103,22 +127,15 @@ async def setup_database() -> AsyncGenerator[None, None]:
 
     Per-test isolation is provided by the autouse ``_cleanup_test_tables`` fixture,
     which deletes all rows before each test. Combined with per-worker DB files
-    (SQLite) or per-worker schemas (PostgreSQL, via ``_pg_schema``) and NullPool
-    connections, schema isolation per test is unnecessary and costs ~270s for
-    972 tests (0.28s DDL x 2 ops x 972 tests).
+    (SQLite) or per-worker databases (PostgreSQL) and NullPool connections,
+    schema isolation per test is unnecessary and costs ~270s for 972 tests
+    (0.28s DDL x 2 ops x 972 tests).
     """
     async with test_engine.begin() as conn:
-        if _using_postgres:
-            # Each xdist worker owns its own schema so a worker's drop at
-            # teardown can never race against another worker's live tables.
-            await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{_pg_schema}"'))
         await conn.run_sync(Base.metadata.create_all)
     yield
     async with test_engine.begin() as conn:
-        if _using_postgres:
-            await conn.execute(text(f'DROP SCHEMA IF EXISTS "{_pg_schema}" CASCADE'))
-        else:
-            await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.drop_all)
 
 
 @pytest.fixture(autouse=True)
