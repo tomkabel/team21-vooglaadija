@@ -26,8 +26,10 @@ from app.services.error_classifier import (
     [
         # Generic yt-dlp 403 — the classic transient throttling signature.
         (
-            "yt-dlp extraction failed: ERROR: unable to download video data: "
-            "HTTP Error 403: Forbidden",
+            (
+                "yt-dlp extraction failed: ERROR: unable to download video data: "
+                "HTTP Error 403: Forbidden"
+            ),
             ErrorCategory.TRANSIENT,
         ),
         # Bare 403 code.
@@ -54,7 +56,9 @@ def test_classify_error_routes_transient_403_to_transient(error_str, expected):
 
 @pytest.mark.unit
 def test_generic_403_is_retryable_while_blocked_markers_are_not():
-    transient_403 = classify_error("ERROR: unable to download video data: HTTP Error 403: Forbidden")
+    transient_403 = classify_error(
+        "ERROR: unable to download video data: HTTP Error 403: Forbidden"
+    )
     assert not is_non_retryable(transient_403.category)
     assert CATEGORY_POLICIES[transient_403.category].max_retries > 0
 
@@ -68,7 +72,10 @@ def test_geo_unavailable_in_your_country_routes_to_blocked():
     # "unavailable in your country" is a permanent, request-specific condition.
     # The BLOCKED pattern "unavailable in your" matches it before NOT_FOUND,
     # and BLOCKED is non-retryable — which is the correct terminal verdict.
-    assert classify_error("This video is unavailable in your country").category == ErrorCategory.BLOCKED
+    assert (
+        classify_error("This video is unavailable in your country").category
+        == ErrorCategory.BLOCKED
+    )
     assert is_non_retryable(ErrorCategory.BLOCKED)
 
 
@@ -77,6 +84,30 @@ def test_known_permanent_categories_remain_non_retryable():
     for category in (ErrorCategory.BLOCKED, ErrorCategory.NOT_FOUND):
         assert is_non_retryable(category)
         assert CATEGORY_POLICIES[category].max_retries == 0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "error_str",
+    [
+        "Requested format is not available",
+        "[youtube] All formats failed. Last error: Requested format is not available",
+        # Emitted by the single-pass format fallback (issue #169) when yt-dlp
+        # returns no info object at all; must stay format_unavailable, not UNKNOWN.
+        "[youtube] No video info returned",
+        "[tiktok] No video info returned",
+    ],
+)
+def test_format_failure_signals_route_to_format_unavailable(error_str):
+    """Exhausted format chains keep classifying as FORMAT_UNAVAILABLE (0 retries).
+
+    This guards the #169 rewrite: the old per-spec loop emitted an
+    "All formats failed" summary that matched the classifier; the native
+    single-pass chain must not silently degrade these to UNKNOWN.
+    """
+    result = classify_error(error_str)
+    assert result.category == ErrorCategory.FORMAT_UNAVAILABLE
+    assert is_non_retryable(result.category)
 
 
 @pytest.mark.unit

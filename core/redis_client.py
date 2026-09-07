@@ -11,7 +11,7 @@ so connections are reused rather than created per call.
 from __future__ import annotations
 
 import asyncio
-from typing import cast
+from typing import Any, cast
 
 import redis.asyncio as aioredis
 
@@ -49,6 +49,7 @@ def get_pubsub_redis_client() -> aioredis.Redis:
         retry_on_timeout=False,
     )
     return cast("aioredis.Redis", _redis_state["pubsub_client"])
+
 
 # Chaos Engineering Redis key constants — single source of truth
 CHAOS_CIRCUIT_BREAKER_KEY = "chaos:circuit_breaker_override"
@@ -112,13 +113,13 @@ def reset_redis_client() -> None:
         if live is None:
             continue
 
-        close = getattr(live, "close", None)
-        if not callable(close):
+        close_fn = getattr(live, "close", None)
+        if not callable(close_fn):
             continue
 
-        async def _close() -> None:
+        async def _close(fn: Any = close_fn) -> None:
             try:
-                await close()
+                await fn()
             except Exception:
                 logger.warning("redis_reset_close_failed", exc_info=True)
 
