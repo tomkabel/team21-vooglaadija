@@ -26,6 +26,8 @@ module.exports = {
     'card',
     'download-btn',
     'hover-lift',
+    'progress-percent',
+    'progress-eta',
     'status-badge',
     'status-pending',
     'status-processing',
