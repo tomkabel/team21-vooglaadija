@@ -233,7 +233,7 @@ async def bulk_delete_download_form(
     request: Request,
     current_user: CurrentUserFromCookie,
     db: DbSession,
-    job_ids: Annotated[list[str], Form(...)] = [],
+    job_ids: Annotated[list[str], Form(default_factory=list)],
 ) -> HTMLResponse:
     """
     Delete multiple selected download jobs from an HTMX bulk action.

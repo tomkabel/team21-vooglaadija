@@ -408,6 +408,90 @@ async def test_bulk_delete_downloads_success():
 
 
 @pytest.mark.asyncio
+async def test_bulk_delete_downloads_skips_uncompletable_jobs():
+    """Test that missing, foreign-owned, and wrong-status jobs are skipped.
+
+    A mixed batch (one deletable job, one blocked-status job, one job owned
+    by a different user, and one nonexistent id) should delete only the
+    deletable job and report the other three as skipped, without aborting
+    the batch. Also verifies the `skipped` ids serialize as plain UUID
+    strings in the response.
+    """
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = await create_test_user_and_login(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        user_id = _user_id_from_token(token)
+
+        other_token = await create_test_user_and_login(client)
+        other_user_id = _user_id_from_token(other_token)
+
+        deletable_id = uuid.uuid4()
+        blocked_id = uuid.uuid4()
+        foreign_id = uuid.uuid4()
+        missing_id = uuid.uuid4()
+
+        async with TestingSessionLocal() as session:
+            session.add(
+                DownloadJob(
+                    id=deletable_id,
+                    user_id=user_id,
+                    url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                    status="completed",
+                    created_at=datetime.now(UTC),
+                ),
+            )
+            session.add(
+                DownloadJob(
+                    id=blocked_id,
+                    user_id=user_id,
+                    url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                    status="processing",
+                    created_at=datetime.now(UTC),
+                ),
+            )
+            session.add(
+                DownloadJob(
+                    id=foreign_id,
+                    user_id=other_user_id,
+                    url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                    status="completed",
+                    created_at=datetime.now(UTC),
+                ),
+            )
+            await session.commit()
+
+        response = await client.post(
+            "/api/v1/downloads/bulk-delete",
+            json={
+                "job_ids": [
+                    str(deletable_id),
+                    str(blocked_id),
+                    str(foreign_id),
+                    str(missing_id),
+                ],
+            },
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["requested"] == 4
+    assert body["deleted"] == [str(deletable_id)]
+    assert all(isinstance(id_, str) for id_ in body["skipped"])
+    assert {uuid.UUID(id_) for id_ in body["skipped"]} == {blocked_id, foreign_id, missing_id}
+
+    # The deletable job is gone; the blocked and foreign jobs are untouched.
+    async with TestingSessionLocal() as session:
+        remaining = await session.execute(
+            select(DownloadJob.id).where(
+                DownloadJob.id.in_([deletable_id, blocked_id, foreign_id]),
+            ),
+        )
+        remaining_ids = {row[0] for row in remaining.all()}
+    assert remaining_ids == {blocked_id, foreign_id}
+
+
+@pytest.mark.asyncio
 async def test_bulk_delete_downloads_requires_auth():
     """Test that bulk deleting downloads requires authentication."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -415,7 +499,6 @@ async def test_bulk_delete_downloads_requires_auth():
             "/api/v1/downloads/bulk-delete",
             json={"job_ids": [str(uuid.uuid4())]},
         )
-    assert response  # endpoint defined
     assert response.status_code == 401
 
 

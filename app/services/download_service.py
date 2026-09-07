@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.services.outbox_service import write_job_to_outbox
 from app.services.yt_dlp_service import resolve_video_title
@@ -312,8 +313,9 @@ class DownloadService:
         """
         Delete many user-owned download jobs, skipping those that cannot be deleted.
 
-        Jobs that are missing, not owned by the user, or in a status that is not
-        allowed are collected as skipped rather than aborting the whole batch.
+        Jobs that are missing, not owned by the user, in a status that is not
+        allowed, have an unsafe stored file path, or hit a concurrent-modification
+        error are collected as skipped rather than aborting the whole batch.
 
         Parameters:
             job_ids (list[str | uuid.UUID]): Identifiers of the download jobs to delete.
@@ -321,25 +323,58 @@ class DownloadService:
             fail_on_file_delete (bool): Whether to raise when an associated file cannot be deleted.
 
         Returns:
-            BulkDeleteResult: The deleted, skipped, and requested job id counts.
+            BulkDeleteResult: The deleted, skipped, and requested (deduplicated) job id counts.
         """
+        # Deduplicate while preserving order so a duplicate id in the request can't
+        # land in both deleted_ids (first pass) and skipped_ids (second pass, now
+        # DownloadNotFoundError), and so `requested` reflects unique ids only.
+        unique_job_ids = list(dict.fromkeys(job_ids))
         deleted_ids: list[str] = []
         skipped_ids: list[str] = []
-        for job_id in job_ids:
+        for job_id in unique_job_ids:
             try:
                 await self.delete(
                     job_id,
                     allowed_statuses=allowed_statuses,
                     fail_on_file_delete=fail_on_file_delete,
                 )
-            except (InvalidDownloadIdError, DownloadNotFoundError, InvalidDownloadStatusError):
+            except StaleDataError as exc:
+                # Raised during flush/commit (e.g. the row was deleted by a
+                # concurrent request between our lookup and the DELETE). The
+                # session's transaction is now unusable until rolled back, so
+                # do that before moving on to the next job.
+                await self.db.rollback()
+                logger.warning(
+                    "bulk_delete_skipped_job",
+                    job_id=str(job_id),
+                    error_type=type(exc).__name__,
+                )
+                skipped_ids.append(str(job_id))
+                continue
+            except (
+                InvalidDownloadIdError,
+                DownloadNotFoundError,
+                InvalidDownloadStatusError,
+                UnsafeDownloadPathError,
+                DownloadFileDeleteFailedError,
+            ) as exc:
+                # Per-job problems raised before any flush happens (bad id,
+                # missing/foreign job, disallowed status, unsafe path, file
+                # cleanup failure). No rollback is needed to keep the session
+                # usable, so skip it here to avoid expiring other objects
+                # already loaded in the caller's session.
+                logger.warning(
+                    "bulk_delete_skipped_job",
+                    job_id=str(job_id),
+                    error_type=type(exc).__name__,
+                )
                 skipped_ids.append(str(job_id))
                 continue
             deleted_ids.append(str(job_id))
         return BulkDeleteResult(
             deleted_ids=deleted_ids,
             skipped_ids=skipped_ids,
-            requested=len(job_ids),
+            requested=len(unique_job_ids),
         )
 
     async def resolve_errors(

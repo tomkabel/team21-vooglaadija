@@ -44,6 +44,7 @@
     hx-post="/web/downloads/bulk-delete"
     hx-include="[data-bulk-checkbox]:checked, [data-csrf-token]"
     hx-swap="none"
+    hx-disabled-elt="this"
     hx-confirm="Delete the selected downloads? This action cannot be undone."
     disabled
     aria-label="Delete selected downloads"
@@ -68,7 +69,7 @@
     {% include 'partials/_download_item.html' %}
   {% endfor %}
 {% else %}
-  <div class="text-center py-16">
+  <div id="download-empty-state" class="text-center py-16">
     <div
       class="mx-auto h-16 w-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mb-5"
     >

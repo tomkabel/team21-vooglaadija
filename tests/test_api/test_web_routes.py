@@ -1723,7 +1723,79 @@ class TestBulkDeleteDownload:
 
         payload = _json.loads(trigger)
         assert set(payload["bulk-delete-complete"]["deleted"]) == set(created_ids)
+        assert payload["bulk-delete-complete"]["skipped"] == []
         assert payload["bulk-delete-complete"]["requested"] == 2
+
+    @pytest.mark.asyncio
+    async def test_bulk_delete_reports_skipped_jobs(self):
+        """Test that blocked-status and missing job ids are reported as skipped."""
+        from core.models.user import User
+
+        email = f"bulkskip_{uuid.uuid4().hex[:8]}@example.com"
+        password = "securepassword123"
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+        ) as client:
+            await do_register(client, email, password)
+            csrf_token = await do_login(client, email, password)
+
+            login_resp = await client.post(
+                "/web/login",
+                data={"email": email, "password": password},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+            access_token = login_resp.cookies.get("access_token", "")
+            csrf_token = (
+                login_resp.cookies.get("csrf_token")
+                or client.cookies.get("csrf_token")
+                or csrf_token
+            )
+
+            async with TestingSessionLocal() as session:
+                user_result = await session.execute(select(User).where(User.email == email))
+                user = user_result.scalar_one()
+                deletable = DownloadJob(
+                    id=uuid.uuid4(),
+                    user_id=user.id,
+                    url="https://www.youtube.com/watch?v=bulkskip-ok",
+                    status="completed",
+                    created_at=datetime.now(UTC),
+                )
+                blocked = DownloadJob(
+                    id=uuid.uuid4(),
+                    user_id=user.id,
+                    url="https://www.youtube.com/watch?v=bulkskip-blocked",
+                    status="processing",
+                    created_at=datetime.now(UTC),
+                )
+                session.add(deletable)
+                session.add(blocked)
+                await session.commit()
+
+            missing_id = uuid.uuid4()
+
+            headers = {"HX-Request": "true", "X-CSRF-Token": csrf_token}
+            cookies = {"access_token": access_token}
+            response = await client.post(
+                "/web/downloads/bulk-delete",
+                data={
+                    "job_ids": [str(deletable.id), str(blocked.id), str(missing_id)],
+                    "csrf_token": csrf_token,
+                },
+                headers=headers,
+                cookies=cookies,
+            )
+
+        assert response.status_code == 200
+        trigger = response.headers.get("HX-Trigger")
+        assert trigger is not None
+        import json as _json
+
+        payload = _json.loads(trigger)["bulk-delete-complete"]
+        assert payload["deleted"] == [str(deletable.id)]
+        assert set(payload["skipped"]) == {str(blocked.id), str(missing_id)}
+        assert payload["requested"] == 3
 
     @pytest.mark.asyncio
     async def test_bulk_delete_requires_csrf(self):

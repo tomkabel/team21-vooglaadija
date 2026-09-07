@@ -392,11 +392,14 @@ async def bulk_delete_downloads(
     db: DbSession,
 ) -> BulkDeleteResponse:
     """Delete multiple download jobs for the authenticated user in one batch."""
-    result = await DownloadService(db, current_user.id).bulk_delete(
-        [str(job_id) for job_id in data.job_ids],
-        allowed_statuses={"completed", "failed", "cancelled"},
-        fail_on_file_delete=False,
-    )
+    try:
+        result = await DownloadService(db, current_user.id).bulk_delete(
+            [str(job_id) for job_id in data.job_ids],
+            allowed_statuses={"completed", "failed", "cancelled"},
+            fail_on_file_delete=False,
+        )
+    except Exception as exc:
+        raise _map_download_service_error(exc) from exc
     return BulkDeleteResponse(
         deleted=[uuid.UUID(id_) for id_ in result.deleted_ids],
         skipped=[uuid.UUID(id_) for id_ in result.skipped_ids],
