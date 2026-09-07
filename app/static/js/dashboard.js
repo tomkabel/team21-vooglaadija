@@ -618,6 +618,14 @@
     return s === 'completed' || s === 'failed' || s === 'deferred' || s === 'cancelled';
   }
 
+  function hasDeterminateProgress(progress) {
+    // yt-dlp reports `percent: 0` (not null) whenever the total size is
+    // unknown (`total_bytes` falsy), so a real, renderable percentage
+    // requires both a non-null percent AND a known total size — otherwise
+    // treat it as indeterminate instead of freezing the bar at "0%".
+    return !!(progress && progress.percent != null && progress.total_bytes);
+  }
+
   function createProgressContainer(progress) {
     const container = document.createElement('div');
     container.className = 'progress-container';
@@ -632,7 +640,7 @@
 
     const bar = document.createElement('div');
     bar.className = 'progress-bar';
-    const hasPercent = !!(progress && progress.percent != null);
+    const hasPercent = hasDeterminateProgress(progress);
     if (hasPercent) {
       const pct = Math.min(progress.percent, 100);
       bar.style.width = `${pct}%`;
@@ -782,10 +790,21 @@
       if (title) announceDownloadUpdate(`${title} - ${visibleStatus}`);
     }
 
+    const nextStatusLower = normalizeStatus(data.status).toLowerCase();
     if (isTerminalStatus(data.status)) {
+      removeDownloadProgress(row);
+    } else if (nextStatusLower === 'pending') {
+      // Job was requeued (preemptive throttle, shutdown grace, or a
+      // cancelled-and-requeued run) — drop any stale, still-animating
+      // progress bar. A fresh one is created once it starts processing again.
       removeDownloadProgress(row);
     } else if (data.progress) {
       updateDownloadProgress(row, data.progress);
+    } else if (nextStatusLower === 'processing' && !row.querySelector('.progress-container')) {
+      // job_update payloads don't carry progress data, so show an
+      // indeterminate bar immediately rather than waiting for the first
+      // progress_update SSE event.
+      updateDownloadProgress(row, {});
     }
 
     const ts = row.querySelector('.timestamp');
@@ -826,7 +845,7 @@
     }
     const bar = container.querySelector('.progress-bar');
     const track = container.querySelector('.progress-track');
-    if (bar && progress.percent != null) {
+    if (bar && hasDeterminateProgress(progress)) {
       bar.classList.remove('progress-bar--indeterminate');
       const pct = Math.min(progress.percent, 100);
       bar.style.width = `${pct}%`;
