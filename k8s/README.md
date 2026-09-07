@@ -1,10 +1,11 @@
 # Vooglaadija Kubernetes Deployment
 
-This directory contains the Kubernetes deployment configuration for Vooglaadija using Helm, ArgoCD, and associated infrastructure components.
+This directory contains the Kubernetes deployment configuration for Vooglaadija using Helm, ArgoCD,
+and associated infrastructure components.
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                        Ingress (nginx)                       │
 │                    TLS via cert-manager                      │
@@ -41,44 +42,44 @@ This directory contains the Kubernetes deployment configuration for Vooglaadija 
 
 ### Helm Chart (`k8s/helm/vooglaadija/`)
 
-| File | Description |
-|------|-------------|
-| `Chart.yaml` | Chart metadata and dependencies (PostgreSQL, Redis) |
-| `values.yaml` | Default configuration values |
-| `values-production.yaml` | Production overrides |
-| `templates/api-deployment.yaml` | API deployment with rolling updates |
-| `templates/api-service.yaml` | API ClusterIP service |
-| `templates/api-hpa.yaml` | API horizontal pod autoscaler |
-| `templates/api-ingress.yaml` | API ingress with TLS |
-| `templates/worker-deployment.yaml` | Worker deployment |
-| `templates/worker-service.yaml` | Worker health service |
-| `templates/worker-hpa.yaml` | Worker HPA with queue-depth metric |
-| `templates/browser-downloader-deployment.yaml` | Browser downloader deployment |
-| `templates/browser-downloader-service.yaml` | Browser downloader service |
-| `templates/migration-job.yaml` | Database migration Job (Helm hook) |
-| `templates/configmap.yaml` | Shared configuration |
-| `templates/secret.yaml` | Secrets (or use External Secrets) |
-| `templates/pdb.yaml` | Pod Disruption Budgets |
-| `templates/networkpolicy.yaml` | Network policies |
-| `templates/pvc.yaml` | Persistent Volume Claims |
-| `templates/serviceaccount.yaml` | Service account |
-| `templates/prometheus.yaml` | Prometheus deployment |
-| `templates/grafana.yaml` | Grafana deployment |
+| File                                           | Description                                         |
+| ---------------------------------------------- | --------------------------------------------------- |
+| `Chart.yaml`                                   | Chart metadata and dependencies (PostgreSQL, Redis) |
+| `values.yaml`                                  | Default configuration values                        |
+| `values-production.yaml`                       | Production overrides                                |
+| `templates/api-deployment.yaml`                | API deployment with rolling updates                 |
+| `templates/api-service.yaml`                   | API ClusterIP service                               |
+| `templates/api-hpa.yaml`                       | API horizontal pod autoscaler                       |
+| `templates/api-ingress.yaml`                   | API ingress with TLS                                |
+| `templates/worker-deployment.yaml`             | Worker deployment                                   |
+| `templates/worker-service.yaml`                | Worker health service                               |
+| `templates/worker-hpa.yaml`                    | Worker HPA with queue-depth metric                  |
+| `templates/browser-downloader-deployment.yaml` | Browser downloader deployment                       |
+| `templates/browser-downloader-service.yaml`    | Browser downloader service                          |
+| `templates/migration-job.yaml`                 | Database migration Job (Helm hook)                  |
+| `templates/configmap.yaml`                     | Shared configuration                                |
+| `templates/secret.yaml`                        | Secrets (or use External Secrets)                   |
+| `templates/pdb.yaml`                           | Pod Disruption Budgets                              |
+| `templates/networkpolicy.yaml`                 | Network policies                                    |
+| `templates/pvc.yaml`                           | Persistent Volume Claims                            |
+| `templates/serviceaccount.yaml`                | Service account                                     |
+| `templates/prometheus.yaml`                    | Prometheus deployment                               |
+| `templates/grafana.yaml`                       | Grafana deployment                                  |
 
 ### ArgoCD (`k8s/argocd/`)
 
-| File | Description |
-|------|-------------|
-| `application.yaml` | ArgoCD Application for main chart |
-| `app-of-apps.yaml` | App-of-apps pattern with project |
-| `monitoring-app.yaml` | ArgoCD Application for monitoring |
+| File                               | Description                         |
+| ---------------------------------- | ----------------------------------- |
+| `application.yaml`                 | ArgoCD Application for main chart   |
+| `app-of-apps.yaml`                 | App-of-apps pattern with project    |
+| `monitoring-app.yaml`              | ArgoCD Application for monitoring   |
 | `monitoring/prometheus-rules.yaml` | ServiceMonitors and PrometheusRules |
 
 ### Infrastructure (`k8s/infra/`)
 
-| File | Description |
-|------|-------------|
-| `cert-manager.yaml` | Let's Encrypt ClusterIssuers |
+| File                    | Description                      |
+| ----------------------- | -------------------------------- |
+| `cert-manager.yaml`     | Let's Encrypt ClusterIssuers     |
 | `external-secrets.yaml` | External Secrets Operator config |
 
 ## Prerequisites
@@ -161,20 +162,20 @@ existingSecret: "vooglaadija-secrets"
 
 ### Autoscaling
 
-| Service | Metric | Min | Max |
-|---------|--------|-----|-----|
-| API | CPU 60%, Memory 70% | 3 | 20 |
-| Worker | CPU 60%, Memory 70%, Queue Depth 15 | 2 | 15 |
+| Service | Metric                              | Min | Max |
+| ------- | ----------------------------------- | --- | --- |
+| API     | CPU 60%, Memory 70%                 | 3   | 20  |
+| Worker  | CPU 60%, Memory 70%, Queue Depth 15 | 2   | 15  |
 
 ### Resource Limits
 
-| Service | CPU Request | CPU Limit | Memory Request | Memory Limit |
-|---------|-------------|-----------|----------------|--------------|
-| API | 500m | 2000m | 512Mi | 2Gi |
-| Worker | 500m | 1500m | 256Mi | 1Gi |
-| Browser Downloader | 500m | 2000m | 512Mi | 2Gi |
-| PostgreSQL | 500m | 1500m | 256Mi | 1Gi |
-| Redis | 250m | 500m | 64Mi | 256Mi |
+| Service            | CPU Request | CPU Limit | Memory Request | Memory Limit |
+| ------------------ | ----------- | --------- | -------------- | ------------ |
+| API                | 500m        | 2000m     | 512Mi          | 2Gi          |
+| Worker             | 500m        | 1500m     | 256Mi          | 1Gi          |
+| Browser Downloader | 500m        | 2000m     | 512Mi          | 2Gi          |
+| PostgreSQL         | 500m        | 1500m     | 256Mi          | 1Gi          |
+| Redis              | 250m        | 500m      | 64Mi           | 256Mi        |
 
 ## Monitoring
 
@@ -240,12 +241,12 @@ kubectl delete -f k8s/argocd/application.yaml
 
 ## Migration from Docker Compose
 
-| Docker Compose | Kubernetes |
-|----------------|------------|
-| `restart: unless-stopped` | Liveness probes + restartPolicy |
-| `deploy.resources` | Container resources |
-| `healthcheck` | Liveness/Readiness probes |
-| `volumes` | PersistentVolumeClaims |
-| `networks` | NetworkPolicies |
-| `profiles` | Separate values files |
-| Manual `docker-compose up` | ArgoCD GitOps automation |
+| Docker Compose             | Kubernetes                      |
+| -------------------------- | ------------------------------- |
+| `restart: unless-stopped`  | Liveness probes + restartPolicy |
+| `deploy.resources`         | Container resources             |
+| `healthcheck`              | Liveness/Readiness probes       |
+| `volumes`                  | PersistentVolumeClaims          |
+| `networks`                 | NetworkPolicies                 |
+| `profiles`                 | Separate values files           |
+| Manual `docker-compose up` | ArgoCD GitOps automation        |

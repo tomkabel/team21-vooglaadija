@@ -2,33 +2,27 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-nameOverride: ""
-fullnameOverride: ""
+nameOverride: ''
+fullnameOverride: ''
 
 imagePullSecrets: []
 
 # Database configuration (external)
 db:
-  host: ""
-  port: "5432"
-  name: "vooglaadija"
-  user: "vooglaadija"
-  password: "changeme"
-
-# Redis configuration (external)
-redis:
-  host: ""
-  port: "6379"
-  password: "changeme"
+  host: ''
+  port: '5432'
+  name: 'vooglaadija'
+  user: 'vooglaadija'
+  password: 'changeme'
 
 # Existing secret (if not provided, one will be created)
-existingSecret: ""
+existingSecret: ''
 
 # Service Account
 serviceAccount:
   create: true
   annotations: {}
-  name: ""
+  name: ''
 
 # Network Policy
 networkPolicy:
@@ -45,27 +39,27 @@ podDisruptionBudget:
 
 # Feature flags
 featureFlags:
-  metricsEnabled: "true"
-  tracingEnabled: "false"
-  chaosApiEnabled: "false"
+  metricsEnabled: 'true'
+  tracingEnabled: 'false'
+  chaosApiEnabled: 'false'
 
 # OpenTelemetry
 otel:
-  endpoint: "http://otel-collector:4317"
+  endpoint: 'http://otel-collector:4317'
 
 # API configuration
 api:
   replicaCount: 2
   image:
     repository: ghcr.io/tomkabel/vooglaadija
-    tag: ""
+    tag: ''
     pullPolicy: IfNotPresent
 
-  secretKey: "change-me-to-a-secure-random-string-min-32-chars"
-  corsOrigins: "https://youtube.tomabel.ee"
-  cookieSecure: "true"
-  accessTokenExpireMinutes: "30"
-  refreshTokenExpireDays: "7"
+  secretKey: 'change-me-to-a-secure-random-string-min-32-chars'
+  corsOrigins: 'https://youtube.tomabel.ee'
+  cookieSecure: 'true'
+  accessTokenExpireMinutes: '30'
+  refreshTokenExpireDays: '7'
 
   service:
     type: ClusterIP
@@ -76,9 +70,9 @@ api:
     className: nginx
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt-prod
-      nginx.ingress.kubernetes.io/proxy-body-size: "100m"
-      nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
-      nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-body-size: '100m'
+      nginx.ingress.kubernetes.io/proxy-read-timeout: '300'
+      nginx.ingress.kubernetes.io/proxy-send-timeout: '300'
     hosts:
       - host: youtube.tomabel.ee
         paths:
@@ -108,7 +102,7 @@ api:
     enabled: true
     accessMode: ReadWriteOnce
     size: 10Gi
-    storageClass: ""
+    storageClass: ''
 
   nodeSelector: {}
   tolerations: []
@@ -119,7 +113,7 @@ worker:
   replicaCount: 2
   image:
     repository: ghcr.io/tomkabel/vooglaadija
-    tag: "worker-latest"
+    tag: 'worker-latest'
     pullPolicy: IfNotPresent
 
   service:
@@ -132,7 +126,7 @@ worker:
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
-    targetQueueDepth: "20"
+    targetQueueDepth: '20'
 
   resources:
     limits:
@@ -146,11 +140,11 @@ worker:
     enabled: true
     accessMode: ReadWriteOnce
     size: 5Gi
-    storageClass: ""
+    storageClass: ''
 
-  gracePeriod: "25"
-  zombieThreshold: "900"
-  maxRetries: "3"
+  gracePeriod: '25'
+  zombieThreshold: '900'
+  maxRetries: '3'
 
   nodeSelector: {}
   tolerations: []
@@ -162,11 +156,11 @@ browserDownloader:
   replicaCount: 1
   image:
     repository: ghcr.io/tomkabel/vooglaadija
-    tag: "browser-downloader-latest"
+    tag: 'browser-downloader-latest'
     pullPolicy: IfNotPresent
 
-  concurrency: "2"
-  requestTimeout: "300"
+  concurrency: '2'
+  requestTimeout: '300'
 
   service:
     type: ClusterIP
@@ -208,14 +202,14 @@ prometheus:
     enabled: true
     accessMode: ReadWriteOnce
     size: 10Gi
-    storageClass: ""
+    storageClass: ''
 
 # Monitoring - Grafana
 grafana:
   enabled: true
   image:
     repository: grafana/grafana
-    tag: "11.3.0"
+    tag: '11.3.0'
     pullPolicy: IfNotPresent
 
   service:
@@ -234,14 +228,14 @@ grafana:
     enabled: true
     accessMode: ReadWriteOnce
     size: 5Gi
-    storageClass: ""
+    storageClass: ''
 
 # Subchart configuration for Bitnami PostgreSQL
 postgresql:
   enabled: true
   auth:
     username: vooglaadija
-    password: "changeme"
+    password: 'changeme'
     database: vooglaadija
   primary:
     resources:
@@ -255,11 +249,17 @@ postgresql:
       enabled: true
       size: 20Gi
 
-# Subchart configuration for Bitnami Redis
+# Redis configuration. When redis.enabled is true, the Bitnami subchart below
+# is deployed and vooglaadija.redisHost/redisPort resolve to the in-cluster
+# service; host/port/password here are only used when enabled is false
+# (external managed Redis, see values-production.yaml).
 redis:
   enabled: true
+  host: ''
+  port: '6379'
+  password: 'changeme'
   auth:
-    password: "changeme"
+    password: 'changeme'
   master:
     resources:
       limits:
