@@ -472,9 +472,16 @@ async def main() -> None:
                 synced = await sync_outbox_to_queue()
                 if synced > 0:
                     logger.info("outbox_sync_completed", synced=synced)
-                last_outbox_sync = now
             except Exception as e:
                 logger.error("outbox_sync_error", error=str(e))
+            finally:
+                # Always advance the sync deadline, even on failure, so a
+                # persistently failing sync backs off to the configured
+                # interval instead of retrying on every main-loop iteration.
+                # Use a fresh timestamp rather than the pre-sync `now`: if
+                # sync_outbox_to_queue() itself takes >= the sync interval,
+                # reusing `now` would store an already-expired deadline.
+                last_outbox_sync = datetime.now(UTC)
 
         if now - last_cleanup >= cleanup_interval:
             try:
