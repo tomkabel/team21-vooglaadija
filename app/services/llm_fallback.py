@@ -101,7 +101,12 @@ async def _fetch_page_html(url: str, fetch_timeout: float = 30.0) -> str:
         ) as client:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
-            return response.text
+            # Explicit annotation (not `cast`) so this stays correct whether
+            # httpx's inline types are resolved (str) or not (Any under a
+            # stricter mypy invocation without httpx installed) — a `cast`
+            # would be flagged as redundant in the former case.
+            text: str = response.text
+            return text
     except httpx.HTTPError as e:
         logger.warning("llm_fallback_fetch_failed", url=url[:80], error=str(e))
         return ""

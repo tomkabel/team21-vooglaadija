@@ -111,7 +111,7 @@ class TestIsLlmFallbackAvailable:
     def test_not_available_when_disabled(self) -> None:
         with patch("app.services.llm_fallback.settings") as mock_settings:
             mock_settings.llm_fallback_enabled = False
-            mock_settings.llm_fallback_api_key = "test-key"
+            mock_settings.llm_fallback_api_key = "test-key"  # pragma: allowlist secret
             assert is_llm_fallback_available() is False
 
     def test_not_available_when_no_api_key(self) -> None:
@@ -123,7 +123,7 @@ class TestIsLlmFallbackAvailable:
     def test_available_when_enabled_with_key(self) -> None:
         with patch("app.services.llm_fallback.settings") as mock_settings:
             mock_settings.llm_fallback_enabled = True
-            mock_settings.llm_fallback_api_key = "test-key"
+            mock_settings.llm_fallback_api_key = "test-key"  # pragma: allowlist secret
             assert is_llm_fallback_available() is True
 
 
@@ -178,7 +178,7 @@ class TestExtractWithLlmFallback:
             patch("httpx.AsyncClient", return_value=mock_client),
         ):
             mock_settings.llm_fallback_enabled = True
-            mock_settings.llm_fallback_api_key = "test-key"
+            mock_settings.llm_fallback_api_key = "test-key"  # pragma: allowlist secret
             mock_settings.llm_fallback_api_base = "https://api.example.com/v1"
             mock_settings.llm_fallback_model = "test-model"
             mock_settings.llm_fallback_referer = ""
@@ -219,7 +219,7 @@ class TestExtractWithLlmFallback:
             ),
         ):
             mock_settings.llm_fallback_enabled = True
-            mock_settings.llm_fallback_api_key = "test-key"
+            mock_settings.llm_fallback_api_key = "test-key"  # pragma: allowlist secret
             mock_settings.llm_fallback_api_base = "https://api.example.com/v1"
             mock_settings.llm_fallback_model = "test-model"
             mock_settings.llm_fallback_referer = ""
@@ -263,7 +263,7 @@ class TestExtractWithLlmFallback:
             ),
         ):
             mock_settings.llm_fallback_enabled = True
-            mock_settings.llm_fallback_api_key = "test-key"
+            mock_settings.llm_fallback_api_key = "test-key"  # pragma: allowlist secret
             mock_settings.llm_fallback_api_base = "https://api.example.com/v1"
             mock_settings.llm_fallback_model = "test-model"
             mock_settings.llm_fallback_referer = ""
@@ -288,7 +288,7 @@ class TestExtractWithLlmFallback:
             patch("httpx.AsyncClient", return_value=mock_client),
         ):
             mock_settings.llm_fallback_enabled = True
-            mock_settings.llm_fallback_api_key = "test-key"
+            mock_settings.llm_fallback_api_key = "test-key"  # pragma: allowlist secret
             mock_settings.llm_fallback_api_base = "https://api.example.com/v1"
             mock_settings.llm_fallback_model = "test-model"
             mock_settings.llm_fallback_referer = ""
@@ -325,7 +325,7 @@ class TestExtractWithLlmFallback:
             patch("httpx.AsyncClient", return_value=mock_client),
         ):
             mock_settings.llm_fallback_enabled = True
-            mock_settings.llm_fallback_api_key = "test-key"
+            mock_settings.llm_fallback_api_key = "test-key"  # pragma: allowlist secret
             mock_settings.llm_fallback_api_base = "https://api.example.com/v1"
             mock_settings.llm_fallback_model = "test-model"
             mock_settings.llm_fallback_referer = ""
