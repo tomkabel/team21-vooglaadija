@@ -121,12 +121,16 @@ def _sanitize_html(html: str) -> str:
     The goal is to reduce token count while preserving structure and any
     embedded JSON/config objects that might contain media URLs.
     """
-    # Remove <script>...</script> tags and their contents. The closing tag's
-    # regex must tolerate whitespace before the ">" (e.g. "</script >"),
-    # which the naive pattern would otherwise fail to match.
-    html = re.sub(r"<script[^>]*>.*?</script\s*>", "", html, flags=re.DOTALL | re.IGNORECASE)
-    # Remove <style>...</style> tags and their contents (same whitespace caveat).
-    html = re.sub(r"<style[^>]*>.*?</style\s*>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    # Remove <script>...</script> tags and their contents. Browsers treat any
+    # "</script" followed by junk up to the next ">" as a valid close tag
+    # (e.g. "</script >" or the malformed-but-accepted "</script foo=\"bar\">"),
+    # so the closing-tag pattern must tolerate arbitrary characters before
+    # ">", exactly like the opening-tag pattern already does — a bare
+    # "</script>" match would let content following a bogus-attribute close
+    # tag survive sanitization (CodeQL py/bad-tag-filter).
+    html = re.sub(r"<script[^>]*>.*?</script[^>]*>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    # Remove <style>...</style> tags and their contents (same caveat).
+    html = re.sub(r"<style[^>]*>.*?</style[^>]*>", "", html, flags=re.DOTALL | re.IGNORECASE)
     # Remove HTML comments
     html = re.sub(r"<!--.*?-->", "", html, flags=re.DOTALL)
     # Remove noscript, iframe, object, embed tags (but keep their content if any)
