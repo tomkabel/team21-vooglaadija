@@ -8,12 +8,13 @@ from pathlib import Path
 import pytest
 
 from core.database import Base as DatabaseBase
-from core.models import DownloadJob, FailedJob, Outbox, User, not_deleted
+from core.models import ApiKey, DownloadJob, FailedJob, Outbox, User, not_deleted
 from core.models.base import Base
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CORE_MODEL_FILES = {
     "__init__.py",
+    "api_key.py",
     "base.py",
     "download_job.py",
     "failed_job.py",
@@ -98,7 +99,13 @@ def test_app_models_package_is_removed():
 def test_app_database_reexports_core_base():
     """The canonical core database module exports the shared model base."""
     assert DatabaseBase is Base
-    assert set(Base.metadata.tables) == {"download_jobs", "failed_jobs", "outbox", "users"}
+    assert set(Base.metadata.tables) == {
+        "api_keys",
+        "download_jobs",
+        "failed_jobs",
+        "outbox",
+        "users",
+    }
 
 
 def test_core_models_package_contains_expected_story_files():
@@ -113,12 +120,14 @@ def test_core_models_package_exports_expected_names():
     """The core models package should own the public model export list."""
     import core.models as core_model_package
 
+    assert core_model_package.ApiKey is ApiKey
     assert core_model_package.DownloadJob is DownloadJob
     assert core_model_package.FailedJob is FailedJob
     assert core_model_package.Outbox is Outbox
     assert core_model_package.User is User
     assert core_model_package.not_deleted is not_deleted
     assert core_model_package.__all__ == [
+        "ApiKey",
         "DownloadJob",
         "FailedJob",
         "Outbox",

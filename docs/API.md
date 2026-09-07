@@ -18,42 +18,40 @@ authentication. `/metrics` may be IP-restricted in production deployments.
 
 ## Machine Authentication (Personal Access Tokens)
 
-For headless agents, CLI tools, and the official MCP server, Vooglaadija supports
-**long-lived, scoped Personal Access Tokens (PATs)**. A PAT authenticates as its
-owning user but is subject to the scopes granted at creation time, so an agent can
-be given read-only or narrowly-scoped access instead of a full account.
+For headless agents, CLI tools, and the official MCP server, Vooglaadija supports **long-lived,
+scoped Personal Access Tokens (PATs)**. A PAT authenticates as its owning user but is subject to the
+scopes granted at creation time, so an agent can be given read-only or narrowly-scoped access
+instead of a full account.
 
-A PAT is a bearer token prefixed `vlj_pat_`. It is accepted anywhere a JWT access
-token is, via the same header:
+A PAT is a bearer token prefixed `vlj_pat_`. It is accepted anywhere a JWT access token is, via the
+same header:
 
 ```text
 Authorization: Bearer vlj_pat_xxxxxxxxxxxxxxxxxxxx
 ```
 
-PATs are detected by their prefix; no signature is verified, so they remain valid
-until revoked or expired. The raw token is returned **once** at creation and
-cannot be recovered.
+PATs are detected by their prefix; no signature is verified, so they remain valid until revoked or
+expired. The raw token is returned **once** at creation and cannot be recovered.
 
 ### Scopes
 
-| Scope             | Grants                                                        |
-| ----------------- | ------------------------------------------------------------- |
-| `downloads:read`  | List/get/download jobs and failed-job queues.                 |
-| `downloads:write` | Create, retry, replay, and delete jobs.                       |
-| `keys:admin`      | Create, list, and revoke API keys (machine auth management).  |
-| `*`               | Wildcard — every scope above (default for new keys).          |
+| Scope             | Grants                                                       |
+| ----------------- | ------------------------------------------------------------ |
+| `downloads:read`  | List/get/download jobs and failed-job queues.                |
+| `downloads:write` | Create, retry, replay, and delete jobs.                      |
+| `keys:admin`      | Create, list, and revoke API keys (machine auth management). |
+| `*`               | Wildcard — every scope above (default for new keys).         |
 
-When a PAT is used, every endpoint enforces the relevant scope and returns
-`403 FORBIDDEN` with `Insufficient scope` otherwise. JWT sessions are treated as
-holding the wildcard scope.
+When a PAT is used, every endpoint enforces the relevant scope and returns `403 FORBIDDEN` with
+`Insufficient scope` otherwise. JWT sessions are treated as holding the wildcard scope.
 
 ### Key management endpoints
 
-| Method   | Endpoint              | Scope needed (PAT) | Description                       |
-| -------- | --------------------- | ------------------ | --------------------------------- |
-| `POST`   | `/api/v1/keys`        | `keys:admin`       | Create a key; returns the raw token once. |
-| `GET`    | `/api/v1/keys`        | any                | List your keys (never includes the secret). |
-| `DELETE` | `/api/v1/keys/{id}`   | `keys:admin`       | Revoke a key immediately.         |
+| Method   | Endpoint            | Scope needed (PAT) | Description                                 |
+| -------- | ------------------- | ------------------ | ------------------------------------------- |
+| `POST`   | `/api/v1/keys`      | `keys:admin`       | Create a key; returns the raw token once.   |
+| `GET`    | `/api/v1/keys`      | any                | List your keys (never includes the secret). |
+| `DELETE` | `/api/v1/keys/{id}` | `keys:admin`       | Revoke a key immediately.                   |
 
 Example — create a read/write key:
 
@@ -85,11 +83,10 @@ Response (note `token` appears only here):
 
 ## MCP Server
 
-Vooglaadija ships an official [Model Context Protocol](https://modelcontextprotocol.io)
-server in [`packages/mcp-server`](../packages/mcp-server), exposing the core API
-as MCP **tools**, **resources**, and **prompts** over **stdio** and **SSE**
-transports. It is dependency-free and authenticates with a PAT, so agents no
-longer have to parse raw endpoints.
+Vooglaadija ships an official [Model Context Protocol](https://modelcontextprotocol.io) server in
+[`packages/mcp-server`](../packages/mcp-server), exposing the core API as MCP **tools**,
+**resources**, and **prompts** over **stdio** and **SSE** transports. It is dependency-free and
+authenticates with a PAT, so agents no longer have to parse raw endpoints.
 
 Configure it for Claude Desktop / Cursor:
 
@@ -108,9 +105,9 @@ Configure it for Claude Desktop / Cursor:
 }
 ```
 
-The server returns deterministic error envelopes
-(`{ "error_code", "retryable", "suggestion" }`) so an agent can decide whether to
-retry a failed tool call. See [`packages/mcp-server/README.md`](../packages/mcp-server/README.md).
+The server returns deterministic error envelopes (`{ "error_code", "retryable", "suggestion" }`) so
+an agent can decide whether to retry a failed tool call. See
+[`packages/mcp-server/README.md`](../packages/mcp-server/README.md).
 
 ---
 
