@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from typing import Any
 
 from .client import VooglaadijaClient
@@ -62,10 +63,12 @@ class VooglaadijaMCPServer:
             # No method and no id: nothing meaningful to respond to.
             return None
         if msg_id is None:
+            # Notifications never produce a response, even on failure --
+            # just surface the error on stderr so it isn't swallowed silently.
             try:
                 self._dispatch(method, self._coerce_params(message))
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"Error handling notification {method!r}: {exc}", file=sys.stderr)
             return None
 
         try:
@@ -200,11 +203,7 @@ class VooglaadijaMCPServer:
             "State its current status, any error and category if failed, and the "
             "next recommended action (e.g. retry_download if failed)."
         )
-        return {
-            "messages": [
-                {"role": "user", "content": {"type": "text", "text": text}}
-            ]
-        }
+        return {"messages": [{"role": "user", "content": {"type": "text", "text": text}}]}
 
 
 def _require_str(arguments: dict[str, Any], key: str) -> str:

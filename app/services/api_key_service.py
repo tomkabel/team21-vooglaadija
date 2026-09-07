@@ -81,9 +81,7 @@ class ApiKeyService:
 
     async def list_for_user(self, user_id: object) -> list[ApiKey]:
         result = await self.db.execute(
-            select(ApiKey)
-            .where(ApiKey.user_id == user_id)
-            .order_by(ApiKey.created_at.desc())
+            select(ApiKey).where(ApiKey.user_id == user_id).order_by(ApiKey.created_at.desc())
         )
         return list(result.scalars().all())
 
@@ -91,7 +89,8 @@ class ApiKeyService:
         result = await self.db.execute(
             select(ApiKey).where(ApiKey.id == key_id, ApiKey.user_id == user_id)
         )
-        return result.scalar_one_or_none()
+        key: ApiKey | None = result.scalar_one_or_none()
+        return key
 
     async def revoke(self, user_id: object, key_id: object) -> bool:
         """Revoke a key owned by the user. Returns False if not found."""
@@ -117,7 +116,7 @@ class ApiKeyService:
 
         key_hash = cls._hash_token(raw_token)
         result = await db.execute(select(ApiKey).where(ApiKey.key_hash == key_hash))
-        api_key = result.scalar_one_or_none()
+        api_key: ApiKey | None = result.scalar_one_or_none()
         if api_key is None or not api_key.is_active:
             return None
 

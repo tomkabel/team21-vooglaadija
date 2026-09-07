@@ -1,6 +1,7 @@
 """Shared API dependencies for authentication and authorization."""
 
-from typing import Annotated
+from collections.abc import Callable, Coroutine
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
@@ -96,7 +97,7 @@ async def _resolve_user_from_api_key(
     # Load the owning user explicitly rather than relying on the lazy `user`
     # relationship, which is unsafe under the async session (MissingGreenlet).
     result = await db.execute(select(User).where(User.id == api_key.user_id, not_deleted()))
-    user = result.scalar_one_or_none()
+    user: User | None = result.scalar_one_or_none()
     if user is None:
         raise credentials_exception
     if not user.is_active:
@@ -157,7 +158,7 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentUserFromCookie = Annotated[User, Depends(get_current_user_from_cookie)]
 
 
-def require_scope(required: str):
+def require_scope(required: str) -> Callable[[Request, User], Coroutine[Any, Any, None]]:
     """
     Build a dependency that enforces a concrete API-key scope.
 

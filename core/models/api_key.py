@@ -67,7 +67,7 @@ class ApiKey(Base):
     def is_expired(self) -> bool:
         if self.expires_at is None:
             return False
-        return self.expires_at <= datetime.now(self.expires_at.tzinfo)
+        return bool(self.expires_at <= datetime.now(self.expires_at.tzinfo))
 
     @property
     def is_active(self) -> bool:
