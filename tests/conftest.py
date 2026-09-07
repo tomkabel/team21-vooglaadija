@@ -7,13 +7,15 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
 os.environ["TESTING"] = "1"
 os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-not-for-production-use-32chars"
+os.environ["BCRYPT_ROUNDS"] = "4"  # min rounds for test speed (prod default: 12)
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 from testcontainers.postgres import PostgresContainer
@@ -161,8 +163,15 @@ async def _session_cleanup():
     shutil.rmtree(_coord_dir, ignore_errors=True)
 
 
-@pytest.fixture(scope="function", autouse=True)
-async def setup_database():
+@pytest.fixture(scope="session", autouse=True)
+async def setup_database() -> AsyncGenerator[None, None]:
+    """Create tables once per xdist worker, drop at end.
+
+    Per-test isolation is provided by the autouse ``_cleanup_test_tables`` fixture,
+    which deletes all rows before each test. Combined with the shared Postgres
+    container and NullPool connections, schema isolation per test is unnecessary
+    and costs real time across a large suite.
+    """
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
@@ -194,6 +203,24 @@ def _disable_token_blacklist_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("app.api.dependencies.is_token_blacklisted", _not_blacklisted)
     monkeypatch.setattr("app.services.token_blacklist.reserve_token_jti", _reserve_ok)
+
+
+@pytest.fixture(autouse=True)
+async def _cleanup_test_tables() -> AsyncGenerator[None, None]:
+    """Delete all table rows before each test to ensure test isolation.
+
+    With session-scoped table creation, truncating/deleting rows between tests
+    guarantees a clean database slate (no PK, unique, FK, or count leaks).
+    """
+    from core.models import DownloadJob, FailedJob, Outbox, User
+
+    async with TestingSessionLocal() as session:
+        await session.execute(delete(Outbox))
+        await session.execute(delete(FailedJob))
+        await session.execute(delete(DownloadJob))
+        await session.execute(delete(User))
+        await session.commit()
+    yield
 
 
 @pytest.fixture

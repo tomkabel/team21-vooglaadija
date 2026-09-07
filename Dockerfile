@@ -83,6 +83,8 @@ COPY core ./core
 COPY scripts ./scripts
 COPY alembic.ini .
 COPY alembic ./alembic
+# yt-dlp plugin extractors (yt_dlp_plugins package on PYTHONPATH=/app)
+COPY yt_dlp_plugins ./yt_dlp_plugins
 
 # Install the local package (wheel build only, no dependency resolution)
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -137,6 +139,7 @@ COPY --from=app-builder /app/core ./core
 COPY --from=app-builder /app/scripts ./scripts
 COPY --from=app-builder /app/alembic.ini /app/alembic.ini
 COPY --from=app-builder /app/alembic /app/alembic
+COPY --from=app-builder /app/yt_dlp_plugins /app/yt_dlp_plugins
 
 # Create non-root user
 RUN groupadd -r appuser -g 1000 && \
@@ -157,8 +160,9 @@ ENV PYTHONPATH=/app \
 
 COPY entrypoint.sh /app/entrypoint.sh
 COPY migrate.sh /app/migrate.sh
-RUN chmod +x /app/entrypoint.sh /app/migrate.sh && \
-    chown appuser:appuser /app/entrypoint.sh /app/migrate.sh
+COPY seed_demo.sh /app/seed_demo.sh
+RUN chmod +x /app/entrypoint.sh /app/migrate.sh /app/seed_demo.sh && \
+    chown appuser:appuser /app/entrypoint.sh /app/migrate.sh /app/seed_demo.sh
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD ["curl", "-fsS", "-o", "/dev/null", "http://localhost:8000/health"]
@@ -198,6 +202,12 @@ COPY --from=app-builder /app/worker/entrypoint-worker.sh ./entrypoint-worker.sh
 COPY migrate.sh /app/migrate.sh
 RUN chmod +x ./entrypoint-worker.sh /app/migrate.sh && \
     chown appuser:appuser ./entrypoint-worker.sh /app/migrate.sh
+
+# Named volumes inherit the ownership of the image path they're mounted over
+# on first use, but only if that path already exists in the image — an
+# unknown path is created root-owned instead, which the non-root appuser
+# below cannot write into. celery-beat mounts celery_beat_data here.
+RUN mkdir -p /var/lib/celerybeat && chown appuser:appuser /var/lib/celerybeat
 
 # Note: When using bind mounts (not named volumes), the host directory must be
 # pre-created with UID/GID 1000 ownership, or the container will fail to write.

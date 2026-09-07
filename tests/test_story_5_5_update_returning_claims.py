@@ -15,6 +15,8 @@ from core.models.download_job import DownloadJob
 from core.models.outbox import Outbox
 from tests.conftest import seed_user
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.mark.unit
 def test_claim_next_uses_update_returning_without_follow_up_select() -> None:

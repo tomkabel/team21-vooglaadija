@@ -15,6 +15,8 @@ from core.models.failed_job import FailedJob
 from core.models.outbox import Outbox
 from tests.conftest import seed_user
 
+pytestmark = pytest.mark.slow
+
 
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:

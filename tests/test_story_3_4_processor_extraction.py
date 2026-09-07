@@ -12,6 +12,8 @@ from core.database import get_async_session_factory
 from core.models.download_job import DownloadJob
 from tests.conftest import seed_user
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.mark.unit
 def test_worker_extraction_modules_import_directly() -> None:

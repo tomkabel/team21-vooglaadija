@@ -4,22 +4,22 @@
 # This is the SINGLE source of truth for the application stack.
 #
 # Deployment:
-#   - Production (recommended): deploy/bootstrap.sh provisions Docker + Coolify on
-#     any VPS, deploys this file via Coolify, assigns the domain to the api service
-#     and auto-provisions a wildcard TLS certificate (Cloudflare DNS-01 challenge,
-#     auto-renewed by Coolify's Caddy proxy).
+#   - Production (recommended): deploy/bootstrap.sh provisions Docker on any
+#     VPS, generates secrets into ./.env, sets up the Caddyfile + TLS origin
+#     cert and deploys this file together with docker-compose.local.yml and
+#     docker-compose.caddy.yml (standalone Caddy reverse proxy, no Coolify).
 #   - Local development:
 #       cp .env.example .env   # set secrets
 #       docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 #
 # Design notes (2026 best practices):
-#   - No custom networks: Coolify creates and manages the network. Custom networks
-#     break Coolify routing (containers end up on two networks; proxy may pick the
-#     wrong IP -> intermittent 504s).
-#   - No host port bindings here: the reverse proxy (Coolify's Caddy) is the only
-#     public entry point. Debug ports live in docker-compose.local.yml.
-#   - api/worker are registry-first: images are built in CI and pushed to GHCR
-#     (.github/workflows/docker.yml); the server only pulls them (never builds).
+#   - No custom networks: the default compose network is used; the standalone
+#     Caddy service (docker-compose.caddy.yml) joins it and forwards to api:8000.
+#   - No host port bindings here: Caddy (docker-compose.caddy.yml) is the only
+#     public entry point on ports 80/443. Debug ports live in
+#     docker-compose.local.yml (loopback only).
+#   - api/worker can pull registry images (GHCR, built in CI) or build locally
+#     via docker-compose.local.yml build targets.
 #   - Profiles: 'monitoring' (Prometheus + Grafana), 'backup' (PostgreSQL dumps).
 #   - json-file logging with rotation on every service (no host plugin required).
 # ============================================
@@ -96,6 +96,8 @@ services:
     restart: 'no'
     volumes:
       - storage:/app/storage:rw
+    # Named volumes are now bind-mounted to the HDDs via the volume
+    # definitions at the bottom of this file (see DATA_ROOT doc).
     command: |
       sh -c "
         echo 'Fixing storage permissions...';
@@ -124,13 +126,19 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-True}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
       REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      # Rate-limit counters share the same Redis the queue uses. Leave
+      # RATE_LIMIT_REDIS_URL empty (default) to let the app derive the URL
+      # from REDIS_HOST/REDIS_PORT/REDIS_PASSWORD in Python, quote_plus-
+      # encoding the password exactly like core/config.py — no manual
+      # URL-encoding, and it stays in sync when REDIS_HOST/REDIS_PORT change.
+      RATE_LIMIT_REDIS_URL: ${RATE_LIMIT_REDIS_URL:-}
       # Enable observability
       OTEL_PYTHON_TRACER_PROVIDER: otel
       OTEL_PYTHON_METER_PROVIDER: otel
     expose:
       - '8000'
     volumes:
-      - storage:/app/storage:Z # SELinux label
+      - storage:/app/storage # bind-mounted to HDD (see volumes: block)
     depends_on:
       storage-init:
         condition: service_completed_successfully
@@ -157,24 +165,28 @@ services:
         max-file: '3'
 
   # ==========================================
-  # Worker — background job processor (yt-dlp)
+  # Celery Worker — background job processor
   # ==========================================
   worker:
-    container_name: ytprocessor-worker
+    # NOTE: no static container_name — it blocks `deploy.replicas` (Compose
+    # requires unique names per replica). The container is named
+    # `vooglaadija-worker-N` automatically; inter-service comms and Prometheus
+    # use the service name `worker`, so removing this is safe.
     image: ghcr.io/tomkabel/vooglaadija:worker-${IMAGE_TAG:-latest}
-    restart: unless-stopped
+    # Scale out by setting WORKER_REPLICAS>1 in the environment (each replica
+    # runs the bounded concurrency pool from #160, so total parallelism is
+    # WORKER_REPLICAS * WORKER_CONCURRENCY).
     environment:
       <<: *common-env
-      WORKER_ID: ${HOSTNAME:-worker-1}
+      CELERY_QUEUES: ${CELERY_QUEUES:-downloads,retries,dlq}
+      CELERY_CONCURRENCY: ${CELERY_CONCURRENCY:-2}
       WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-8082}
-      DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-3}
       DB_MAX_OVERFLOW: ${WORKER_DB_MAX_OVERFLOW:-2}
-      # Phase 2: route TikTok/Instagram/Twitter to the browser-downloader
-      # microservice; yt-dlp remains the fallback for everything else.
+      DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-3}
       BROWSER_DOWNLOADER_ENABLED: ${BROWSER_DOWNLOADER_ENABLED:-true}
       BROWSER_DOWNLOADER_ENDPOINT: ${BROWSER_DOWNLOADER_ENDPOINT:-http://browser-downloader:3000}
     volumes:
-      - storage:/app/storage:Z
+      - storage:/app/storage
     depends_on:
       storage-init:
         condition: service_completed_successfully
@@ -185,6 +197,115 @@ services:
       browser-downloader:
         condition: service_started
     <<: *base-service
+    command: ['python', '-m', 'worker.celery_main', 'worker']
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
+      resources:
+        # Raised from 0.75 CPU / 512M to back the concurrency pool (#160/#161):
+        # ~2 concurrent yt-dlp/ffmpeg jobs need ~1-1.5 CPU and ~1-1.5 GB during
+        # format negotiation. A single replica now sustains WORKER_CONCURRENCY=2.
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request;
+          urllib.request.urlopen(''http://localhost:8082/health'', timeout=5)" || exit 1',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ==========================================
+  # Celery Beat — scheduled tasks
+  # ==========================================
+  celery-beat:
+    container_name: ytprocessor-celery-beat
+    image: ghcr.io/tomkabel/vooglaadija:worker-${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      # core.config.Settings requires DB_POOL_SIZE + DB_MAX_OVERFLOW >=
+      # WORKER_CONCURRENCY + 2 for every process, including beat (which
+      # never runs downloads and leaves WORKER_CONCURRENCY at its default
+      # of 2, so the pool must total >= 4). Lowering WORKER_CONCURRENCY
+      # instead would also lower YT_DLP_EXTRACTION_CONCURRENCY's default,
+      # which the yt-dlp pool-size validator checks against — so the pool
+      # is bumped here rather than touching worker-role settings.
+      DB_POOL_SIZE: '2'
+      DB_MAX_OVERFLOW: '2'
+    volumes:
+      - storage:/app/storage:Z
+      # Named volume holds the PersistentScheduler schedule file
+      # (`/tmp/celerybeat-schedule`) so last-run state survives restarts.
+      - celery_beat_data:/var/lib/celerybeat:z
+    tmpfs:
+      - /var/run
+      - /var/cache
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    <<: *base-service
+    command: ['python', '-m', 'worker.celery_main', 'beat']
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    healthcheck:
+      test: ['CMD-SHELL', 'test -f /var/lib/celerybeat/celerybeat-schedule && exit 0 || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # ==========================================
+  # Flower — Celery monitoring dashboard
+  # ==========================================
+  flower:
+    container_name: ytprocessor-flower
+    image: ghcr.io/tomkabel/vooglaadija:worker-${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      FLOWER_PORT: ${FLOWER_PORT:-5555}
+      FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:?FLOWER_BASIC_AUTH is required}
+    # Flower doesn't touch downloaded files, but importing core.config
+    # (via worker.celery_main) validates STORAGE_PATH is writable for every
+    # process — without this mount, the read-only root filesystem below
+    # makes that validation fail and the container crash-loops on startup.
+    volumes:
+      - storage:/app/storage:Z
+    expose:
+      - '5555'
+    depends_on:
+      - worker
+      - redis
+    <<: *base-service
+    command: ['python', '-m', 'worker.celery_main', 'flower']
     logging:
       driver: json-file
       options:
@@ -193,19 +314,19 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.75'
+          cpus: '0.5'
           memory: 512M
         reservations:
-          cpus: '0.25'
+          cpus: '0.1'
           memory: 128M
     healthcheck:
       test:
         [
           'CMD-SHELL',
           'python -c "import urllib.request;
-          urllib.request.urlopen(''http://localhost:8082/health'', timeout=5)" || exit 1',
+          urllib.request.urlopen(''http://localhost:5555/healthcheck'', timeout=5)" || exit 1',
         ]
-      interval: 15s
+      interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -278,7 +399,7 @@ services:
       DB_REPLICATION_USER: ${DB_REPLICATION_USER:-replicator}
       DB_REPLICATION_PASSWORD: ${DB_REPLICATION_PASSWORD:?DB_REPLICATION_PASSWORD is required}
     volumes:
-      - postgres_data:/var/lib/postgresql/data:Z
+      - postgres_data:/var/lib/postgresql/data
       - ./infra/postgresql/postgresql.conf:/etc/postgresql/postgresql.conf:ro
       - ./infra/postgresql/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
       - ./infra/postgresql/init-replication.sh:/docker-entrypoint-initdb.d/init-replication.sh:ro
@@ -324,7 +445,7 @@ services:
       DB_REPLICATION_USER: ${DB_REPLICATION_USER:-replicator}
       DB_REPLICATION_PASSWORD: ${DB_REPLICATION_PASSWORD:?DB_REPLICATION_PASSWORD is required}
     volumes:
-      - postgres_replica_data:/var/lib/postgresql/data:Z
+      - postgres_replica_data:/var/lib/postgresql/data
       - ./infra/postgresql/replica.conf:/etc/postgresql/postgresql.conf:ro
       - ./infra/postgresql/replica-entrypoint.sh:/usr/local/bin/replica-entrypoint.sh:ro
     ports: []
@@ -431,7 +552,7 @@ services:
       - --appendfilename
       - 'appendonly.aof'
     volumes:
-      - redis_data:/data:Z
+      - redis_data:/data
     environment:
       REDISCLI_AUTH: '${REDIS_PASSWORD}'
     security_opt:
@@ -470,6 +591,13 @@ services:
       # local/dev only; production should set a real OTLP/gRPC backend target.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-localhost:4317}
       OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-false}
+      # Pipeline exporter selector. Defaults to "debug" so the collector prints
+      # received telemetry and does NOT forward back to its own plain gRPC
+      # receiver (which previously caused a continuous TLS handshake error loop).
+      # Set to "otlp" ONLY when a real downstream OTLP backend is configured via
+      # OTEL_EXPORTER_OTLP_ENDPOINT (TLS-capable, not this collector's own
+      # receiver).
+      OTEL_SELF_EXPORT_ENABLED: debug
     expose:
       - '4317' # OTLP gRPC
       - '4318' # OTLP HTTP
@@ -596,7 +724,7 @@ services:
     restart: 'no'
     volumes:
       - ./infra/backup/backup.sh:/usr/local/bin/backup.sh:ro
-      - ./infra/backup/backup-data:/var/backup/ytprocessor
+      - backup_data:/var/backup/ytprocessor
     environment:
       PGHOST: db
       PGPORT: 5432
@@ -623,7 +751,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./infra/backup/backup.sh:/usr/local/bin/backup.sh:ro
-      - ./infra/backup/backup-data:/var/backup/ytprocessor
+      - backup_data:/var/backup/ytprocessor
     environment:
       PGHOST: db
       PGPORT: 5432
@@ -650,16 +778,73 @@ services:
         max-size: '10m'
         max-file: '3'
 
+# ============================================================
+# DATA_ROOT — all large/persistent data lives on the HDDs, NOT the root SSD
+# ============================================================
+# The named volumes below are backed by host bind mounts on the HDDs so that
+# Docker stores every byte of real data under /mnt/<disk>/... instead of
+# /var/lib/docker/volumes/ (which is on the root SSD).
+#
+#   /dev/vdb2 (2.0T, empty) -> /mnt/new_storage  (general blob storage)
+#   /dev/vdb1 (6.0T)        -> /mnt/db_storage   (PostgreSQL data)
+#
+# The host directories were pre-created with the correct ownership/permissions
+# for each service's runtime UID (postgres 70:70, redis 999:1000,
+# prometheus 65534, grafana 472, app 1000:1000).
+#
+# To relocate later, change the `device:` paths below AND move the host
+# directories (e.g. rsync /mnt/new_storage/* to the new path).
+# ============================================================
+
 volumes:
   postgres_data:
     name: ytprocessor-postgres-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/db_storage/postgres
   postgres_replica_data:
     name: ytprocessor-postgres-replica-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/db_storage/postgres-replica
   redis_data:
     name: ytprocessor-redis-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/new_storage/redis
   storage:
     name: ytprocessor-storage
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/new_storage/storage
   prometheus_data:
     name: ytprocessor-prometheus-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/new_storage/prometheus
   grafana_data:
     name: ytprocessor-grafana-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/new_storage/grafana
+  backup_data:
+    name: ytprocessor-backup-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/new_storage/backups
+  celery_beat_data:
+    name: ytprocessor-celery-beat-data
