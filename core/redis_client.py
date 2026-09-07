@@ -1,0 +1,235 @@
+"""Shared Redis client with connection pooling — single source of truth.
+
+Provides a singleton Redis client instance used by both the API server
+and the worker process. Eliminates the multiple-Redis-client anti-pattern
+that previously existed in the codebase.
+
+redis-py's from_url() manages an internal connection pool internally,
+so connections are reused rather than created per call.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any, cast
+
+import redis.asyncio as aioredis
+
+from core.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+_redis_state: dict[str, object] = {"client": None, "pubsub_client": None}
+
+
+def get_pubsub_redis_client() -> aioredis.Redis:
+    """Get a Redis client dedicated to pub/sub subscriptions.
+
+    Long-lived subscriptions call ``pubsub.listen()`` and block reading from a
+    connection for unbounded time. The shared client is configured with
+    ``socket_timeout=5`` so that short command round-trips fail fast on a dead
+    connection — but that same timeout also kills a healthy idle subscription
+    every 5 seconds, raising ``Timeout reading from redis`` and forcing the SSE
+    layer into reconnect/fallback. Pub/sub therefore gets its own client with
+    no socket timeout: an idle subscription is a normal state, not a stall.
+    ``None`` (NOT ``0``) means "no timeout" — redis-py treats ``socket_timeout=0``
+    as an *immediate* timeout, which made every connect/publish/subscribe fail
+    with ``TimeoutError: Timeout reading from redis``.
+    """
+    if _redis_state["pubsub_client"] is not None:
+        return cast("aioredis.Redis", _redis_state["pubsub_client"])
+
+    from core.config import settings
+
+    _redis_state["pubsub_client"] = aioredis.from_url(
+        settings.redis_url,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=None,
+        retry_on_timeout=False,
+    )
+    return cast("aioredis.Redis", _redis_state["pubsub_client"])
+
+
+# Chaos Engineering Redis key constants — single source of truth
+CHAOS_CIRCUIT_BREAKER_KEY = "chaos:circuit_breaker_override"
+CHAOS_ZOMBIE_JOB_KEY = "chaos:zombie_job_trigger"
+CHAOS_DB_FAILOVER_KEY = "chaos:db_failover"
+CHAOS_THROTTLE_SPIKE_KEY = "chaos:throttle_spike"
+CHAOS_SLOW_PROCESSING_KEY = "chaos:slow_processing"
+
+CHAOS_KEY_PREFIX = "chaos:"
+
+SCENARIO_KEY_MAP: dict[str, str] = {
+    "circuit_breaker_open": CHAOS_CIRCUIT_BREAKER_KEY,
+    "worker_crash": CHAOS_ZOMBIE_JOB_KEY,
+    "db_failover": CHAOS_DB_FAILOVER_KEY,
+    "throttle_spike": CHAOS_THROTTLE_SPIKE_KEY,
+    "slow_processing": CHAOS_SLOW_PROCESSING_KEY,
+}
+
+KEY_TO_SCENARIO_FIELD: dict[str, str] = {
+    CHAOS_CIRCUIT_BREAKER_KEY: "circuit_breaker_open",
+    CHAOS_ZOMBIE_JOB_KEY: "worker_crash",
+    CHAOS_DB_FAILOVER_KEY: "db_failover",
+    CHAOS_THROTTLE_SPIKE_KEY: "throttle_spike",
+    CHAOS_SLOW_PROCESSING_KEY: "slow_processing",
+}
+
+
+def get_redis_client() -> aioredis.Redis:
+    """
+    Get the shared asynchronous Redis client, creating it when needed.
+
+    Returns:
+        aioredis.Redis: The shared Redis client for the current process.
+    """
+    if _redis_state["client"] is not None:
+        return cast("aioredis.Redis", _redis_state["client"])
+
+    from core.config import settings
+
+    _redis_state["client"] = aioredis.from_url(
+        settings.redis_url,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry_on_timeout=False,
+    )
+    return cast("aioredis.Redis", _redis_state["client"])
+
+
+def reset_redis_client() -> None:
+    """Reset the singletons (for testing only).
+
+    Closes any live clients first so their connection pools are not leaked across
+    repeated test/setup cycles, then clears the cached references.
+    """
+    client = _redis_state["client"]
+    _redis_state["client"] = None
+    pubsub_client = _redis_state["pubsub_client"]
+    _redis_state["pubsub_client"] = None
+    for live in (client, pubsub_client):
+        if live is None:
+            continue
+
+        close_fn = getattr(live, "close", None)
+        if not callable(close_fn):
+            continue
+
+        async def _close(fn: Any = close_fn) -> None:
+            try:
+                await fn()
+            except Exception:
+                logger.warning("redis_reset_close_failed", exc_info=True)
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # No current event loop (e.g. called from a non-main thread): run the
+            # close on a controlled throwaway loop so the pool is still released
+            # instead of silently leaking it.
+            try:
+                new_loop = asyncio.new_event_loop()
+                try:
+                    new_loop.run_until_complete(_close())
+                finally:
+                    new_loop.close()
+            except Exception:
+                logger.warning("redis_reset_close_failed", exc_info=True)
+            return
+        if loop.is_running():
+            task = loop.create_task(_close())
+            # Retain a reference so the task is not garbage-collected before it runs.
+            _pending_closes.add(task)
+            task.add_done_callback(_pending_closes.discard)
+        else:
+            try:
+                loop.run_until_complete(_close())
+            except RuntimeError:
+                pass
+
+
+_pending_closes: set[object] = set()
+
+
+async def close_redis_client() -> None:
+    """Close both shared Redis client connection pools."""
+    if _redis_state["client"] is not None:
+        await cast("aioredis.Redis", _redis_state["client"]).close()
+        _redis_state["client"] = None
+    if _redis_state["pubsub_client"] is not None:
+        await cast("aioredis.Redis", _redis_state["pubsub_client"]).close()
+        _redis_state["pubsub_client"] = None
+
+
+async def check_worker_health() -> bool:
+    """
+    Determine whether any worker has a current heartbeat in Redis.
+
+    Returns:
+        bool: `True` if at least one worker heartbeat has a positive TTL,
+        `False` if no current heartbeat exists or Redis access fails.
+    """
+    try:
+        client = get_redis_client()
+        async for key in client.scan_iter(match="worker:health:*", count=10):
+            ttl = await client.ttl(key)
+            if ttl is not None and ttl > 0:
+                return True
+        return False
+    except Exception:
+        logger.warning("worker_health_check_failed", exc_info=True)
+        return False
+
+
+async def check_chaos_key(key: str) -> bool:
+    """Check if a chaos Redis key exists, with structured error handling.
+
+    Returns False on any error (fail-closed to avoid cascading failures).
+    """
+    try:
+        client = get_redis_client()
+        exists = await client.exists(key)
+        return bool(exists)
+    except Exception:
+        logger.warning("chaos_key_check_failed", key=key, exc_info=True)
+        return False
+
+
+async def get_all_chaos_status() -> dict[str, bool]:
+    """Return status for all chaos scenarios by checking Redis keys.
+
+    Returns a dict mapping scenario field names to boolean active states.
+    """
+    status: dict[str, bool] = dict.fromkeys(KEY_TO_SCENARIO_FIELD.values(), False)
+    try:
+        client = get_redis_client()
+        for key, field in KEY_TO_SCENARIO_FIELD.items():
+            exists = await client.exists(key)
+            status[field] = bool(exists)
+    except Exception:
+        logger.warning("chaos_status_check_failed", exc_info=True)
+    return status
+
+
+async def delete_chaos_keys() -> int:
+    """Delete all chaos keys using SCAN (non-blocking) instead of KEYS.
+
+    Uses incremental SCAN with count=100 to avoid blocking the Redis event loop.
+    Returns the number of deleted keys.
+    """
+    deleted = 0
+    try:
+        client = get_redis_client()
+        cursor = 0
+        while True:
+            cursor, keys = await client.scan(cursor=cursor, match=f"{CHAOS_KEY_PREFIX}*", count=100)
+            if keys:
+                await client.delete(*keys)
+                deleted += len(keys)
+            if cursor == 0:
+                break
+    except Exception:
+        logger.warning("chaos_cleanup_failed", exc_info=True)
+    return deleted

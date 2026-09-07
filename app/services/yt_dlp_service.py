@@ -1,43 +1,312 @@
 import asyncio
+import contextlib
 import json
 import os
 import re
 import signal
 import sys
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import urlparse
 
-from app.logging_config import get_logger
+from app.utils.exceptions import StorageError
+from app.utils.validators import validate_url_not_ssrf
+from core.config import settings
+from core.logging_config import get_logger
+from core.utils.security import validate_path
 
 logger = get_logger(__name__)
 
 # Timeout for yt-dlp operations in seconds (5 minutes)
 YT_DLP_TIMEOUT = 300
 
-FORMAT_FALLBACK_CHAIN = [
-    {"format": "bestvideo*+bestaudio/best", "S": ["res:1080", "codec:h264"]},
-    {"format": "bestvideo+bestaudio/best", "S": ["res", "codec"]},
-    {"format": "worstvideo*+bestaudio/best", "S": ["res:720"]},
-    {"format": "best", "S": ["quality"]},
-    {"format": "worst", "S": ["quality"]},
-]
+# Timeout for lightweight metadata-only extraction (no download)
+YT_DLP_METADATA_TIMEOUT = 15
+
+THROTTLE_PATTERN = re.compile(r"HTTP Error 429", re.IGNORECASE)
+
+# Native single-pass YouTube format selection.
+#
+# Historically this was a list of format specs iterated in a `for` loop, but
+# `extract_info(download=True)` resolves AND downloads in one shot, so the loop
+# was a sequence of independent full-selection attempts — only the first spec
+# ever ran, and the "chain" collapsed to a single 1080p/h264 selector (see
+# issue #169). yt-dlp already does progressive degradation across a "/"-
+# separated format string in a single call, so we encode the whole chain there
+# and issue ONE extract_info. The trailing `/best` / `/worst` give yt-dlp
+# built-in fallback when the merged combos are unavailable.
+#
+# `format_sort` (below) carries the resolution/codec preference; bare
+# `res:N`/codec-name tokens are format-ID selectors, not filters, so no
+# `res:1080+h264`-style fragments appear here.
+YOUTUBE_FORMAT = "bestvideo*+bestaudio / bestvideo+bestaudio / worstvideo*+bestaudio / best / worst"
+YOUTUBE_FORMAT_SORT = ["res:1080", "codec:h264"]
+
+# Progressive-first variant (used when YT_DLP_PREFER_PROGRESSIVE is enabled):
+# try a single-stream (no ffmpeg merge) progressive file *before* the merged
+# combos. Lighter CPU/storage and smaller failure surface, but YouTube
+# progressive mp4 caps ~720p, so this trades resolution ceiling for weight.
+# `[protocol!*=dash]` excludes every DASH protocol (http_dash_segments and
+# variants) — the bare `dash` string is never used as a protocol value.
+YOUTUBE_FORMAT_PROGRESSIVE = (
+    "best[ext=mp4][protocol!*=dash]"
+    " / best[protocol!*=dash]"
+    " / bestvideo*+bestaudio"
+    " / bestvideo+bestaudio"
+    " / worstvideo*+bestaudio"
+    " / best"
+    " / worst"
+)
+
+# Non-YouTube platforms use single-stream progressive formats (no merging).
+GENERIC_FORMAT = "best"
+GENERIC_FORMAT_SORT = ["quality"]
 
 
-class StorageError(Exception):
-    """Raised when storage operations fail."""
+def _format_spec_for(platform: str) -> tuple[str, list[str]]:
+    """Return (format_string, format_sort) for a platform.
+
+    YouTube uses the merged-combo chain above (or the progressive-first variant
+    when ``settings.yt_dlp_prefer_progressive`` is enabled); everything else gets
+    a single progressive ``best`` stream.
+    """
+    if platform == "youtube":
+        if getattr(settings, "yt_dlp_prefer_progressive", False):
+            return YOUTUBE_FORMAT_PROGRESSIVE, YOUTUBE_FORMAT_SORT
+        return YOUTUBE_FORMAT, YOUTUBE_FORMAT_SORT
+    return GENERIC_FORMAT, GENERIC_FORMAT_SORT
 
 
-async def _kill_process_group(process: asyncio.subprocess.Process) -> None:
-    """Kill a process group and wait for it to terminate."""
+# Max bytes for a single stdout line from the yt-dlp subprocess.
+# YouTube video metadata JSON can exceed the default 64KB StreamReader limit
+# when a video has many format variants, causing LimitOverrunError.
+_STREAM_READER_LIMIT = 1024 * 1024  # 1MB
+
+# Fields to extract from the yt-dlp sanitized_info dict.
+# Sending the full sanitized_info over stdout can exceed pipe buffer limits.
+_OUTPUT_FIELDS = frozenset({"title", "ext", "duration", "webpage_url", "thumbnail"})
+
+# Semaphore to limit concurrent yt-dlp subprocesses for metadata resolution.
+# Each subprocess uses ~50-100MB RAM — 5 concurrent avoids OOM on constrained hosts.
+_metadata_semaphore = asyncio.Semaphore(5)
+
+# Semaphore to limit concurrent yt-dlp extraction subprocesses (download + format negotiation).
+# Each extraction subprocess consumes ~50-100MB RAM during format negotiation and download
+# — N concurrent avoids OOM on constrained hosts.
+# Defaults to the worker's concurrency so the effective extraction capacity
+# matches WORKER_CONCURRENCY unless explicitly overridden; overridable via the
+# YT_DLP_EXTRACTION_CONCURRENCY env var (default follows worker_concurrency).
+_EXTRACTION_CONCURRENCY_DEFAULT = max(1, int(getattr(settings, "worker_concurrency", 2) or 2))
+_EXTRACTION_CONCURRENCY = max(
+    1,
+    int(os.environ.get("YT_DLP_EXTRACTION_CONCURRENCY", _EXTRACTION_CONCURRENCY_DEFAULT)),
+)
+_EXTRACTION_SEMAPHORE = asyncio.Semaphore(_EXTRACTION_CONCURRENCY)
+
+
+class SSRFError(Exception):
+    """Raised when a URL resolves to a private/internal IP address."""
+
+
+async def _check_ssrf(url: str) -> None:
+    """Validate URL does not resolve to a private IP (SSRF prevention).
+
+    Raises SSRFError if the URL resolves to an RFC 1918, loopback, link-local,
+    or other private address range.
+    """
+    if not await validate_url_not_ssrf(url):
+        parsed = urlparse(url)
+        hostname = parsed.hostname or ""
+        raise SSRFError(f"URL resolves to a private or internal address: {hostname}")
+
+
+async def resolve_video_title(url: str) -> str | None:
+    """
+    Resolve a video title from a URL without downloading the media.
+
+    Parameters:
+        url (str): Video URL to inspect.
+
+    Returns:
+        str | None: The extracted title, or `None` if the URL is blocked or metadata extraction fails.
+    """
     try:
+        await _check_ssrf(url)
+    except SSRFError:
+        logger.warning("ssrf_blocked_metadata", url=url[:80])
+        return None
+
+    url_json = json.dumps(url)
+    platform = _get_platform(url)
+    cookies_opts = _build_cookies_opts()
+    cookies_opts_json = json.dumps(cookies_opts)
+
+    if platform in _COOKIE_REQUIRED_PLATFORMS and not cookies_opts:
+        logger.info(
+            "metadata_without_cookies",
+            platform=platform,
+            url=url[:80],
+            hint="Set YT_DLP_COOKIES_FILE or YT_DLP_COOKIES_BROWSER to enable cookies for this platform",
+        )
+
+    # Warm-pool fast path: ship a metadata job to a pooled driver (imports yt_dlp
+    # once) and fall back to the per-job python -c subprocess on any failure.
+    pool = _get_pool()
+    if pool is not None:
+        job = {
+            "job_id": str(uuid.uuid4()),
+            "mode": "metadata",
+            "url": url,
+            "platform": platform,
+            "cookies_opts": cookies_opts,
+        }
+        try:
+            await pool.ensure_started()
+            pool_result = await pool.run_job(job, job_timeout=YT_DLP_METADATA_TIMEOUT)
+            raw = pool_result.get("title") if isinstance(pool_result, dict) else None
+            if isinstance(raw, str) and raw:
+                return raw
+            return None
+        except Exception as exc:
+            logger.warning(
+                "warm_pool_metadata_fallback",
+                error=str(exc),
+                hint="yt-dlp warm pool metadata failed; using per-job subprocess",
+            )
+
+    script = f"""
+import sys
+import json
+import yt_dlp
+url = {url_json}
+cookies_opts = {cookies_opts_json}
+if "cookiesfrombrowser" in cookies_opts and isinstance(cookies_opts["cookiesfrombrowser"], list):
+    cookies_opts["cookiesfrombrowser"] = tuple(cookies_opts["cookiesfrombrowser"])
+try:
+    ydl_opts = {{
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "socket_timeout": 10,
+        "retries": 1,
+    }}
+    ydl_opts.update(cookies_opts)
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        sanitized = ydl.sanitize_info(info)
+        title = sanitized.get("title")
+        if title:
+            print(json.dumps({{"title": title}}))
+            sys.exit(0)
+        print(json.dumps({{"error": "no_title"}}))
+        sys.exit(1)
+except Exception as e:
+    print(json.dumps({{"error": str(e)}}))
+    sys.exit(1)
+"""
+    process = None
+    try:
+        async with _metadata_semaphore:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-c",
+                script,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+
+            stdout_bytes, _ = await asyncio.wait_for(
+                process.communicate(),
+                timeout=YT_DLP_METADATA_TIMEOUT,
+            )
+
+        if process.returncode != 0:
+            return None
+
+        result: dict = json.loads(stdout_bytes.decode().strip())
+        raw = result.get("title")
+        if isinstance(raw, str) and raw:
+            return raw
+        return None
+
+    except TimeoutError:
+        logger.warning("metadata_extraction_timeout", url=url[:80])
+        return None
+    except json.JSONDecodeError:
+        logger.debug("metadata_json_parse_failed", url=url[:80], exc_info=True)
+        return None
+    except OSError:
+        logger.warning("metadata_subprocess_failed", url=url[:80], exc_info=True)
+        return None
+    finally:
+        if process and process.returncode is None:
+            await _kill_process_group(process, graceful=True)
+
+
+async def _kill_process_group(process: asyncio.subprocess.Process, graceful: bool = True) -> None:
+    """Kill a process group with SIGTERM grace window before SIGKILL.
+
+    Args:
+        process: The subprocess to terminate.
+        graceful: If True, sends SIGTERM first and waits 5s for clean shutdown.
+                  If False, skips straight to SIGKILL (for use when SIGTERM
+                  was already sent by the caller, e.g. the timeout handler).
+
+    """
+    if process.returncode is not None:
+        return
+
+    try:
+        if graceful:
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+                return
+            except TimeoutError:
+                pass
+
         os.killpg(process.pid, signal.SIGKILL)
         try:
             await asyncio.wait_for(process.wait(), timeout=5)
         except TimeoutError:
-            # Process is stuck, but we've already sent SIGKILL, so just continue
             pass
     except (ProcessLookupError, OSError):
-        pass  # Process already terminated
+        pass
+
+
+async def _walk_and_kill_orphaned_children(process: asyncio.subprocess.Process) -> None:
+    """Walk /proc for child processes that detached from the process group.
+
+    yt-dlp may spawn ffmpeg with its own session/process group via
+    preexec_fn=os.setpgrp. These children won't be reached by killpg.
+    This walks /proc/{pid}/task/{pid}/children to find and kill them.
+
+    Best-effort; silent on failure.
+    """
+    try:
+        children_path = f"/proc/{process.pid}/task/{process.pid}/children"
+        children_text: str | None = None
+        try:
+            children_text = await asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda: open(children_path).read(),
+            )
+        except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+            return
+
+        if not children_text:
+            return
+
+        for child_pid_str in children_text.strip().split():
+            try:
+                child_pid = int(child_pid_str.strip())
+                os.kill(child_pid, signal.SIGKILL)
+            except (ValueError, ProcessLookupError, OSError):
+                pass
+    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+        pass
 
 
 def _extract_error_message(error_msg: str, fallback: str) -> str:
@@ -46,7 +315,7 @@ def _extract_error_message(error_msg: str, fallback: str) -> str:
         stripped = error_line.strip()
         if "ERROR" in stripped or "error" in stripped.lower():
             return stripped
-    return fallback if fallback else error_msg
+    return fallback or error_msg
 
 
 def _sanitize_title(title: str) -> str:
@@ -60,19 +329,614 @@ def _sanitize_title(title: str) -> str:
     return sanitized or "download"
 
 
-async def _extract_via_subprocess(url: str, output_template: str) -> dict:
-    """
-    Extract media info via subprocess that can be forcibly killed on timeout.
+_YOUTUBE_DOMAINS = frozenset(
+    {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"},
+)
+_YOUTUBE_SHORT_DOMAINS = frozenset({"youtu.be"})
+_YOUTUBE_NOCOOKIE = frozenset({"youtube-nocookie.com", "www.youtube-nocookie.com"})
+_VIMEO_HOSTS = frozenset({"vimeo.com", "www.vimeo.com"})
+_DAILYMOTION_HOSTS = frozenset({"dailymotion.com", "www.dailymotion.com"})
+_TWITCH_HOSTS = frozenset({"twitch.tv", "www.twitch.tv", "m.twitch.tv", "clips.twitch.tv"})
+_TIKTOK_HOSTS = frozenset(
+    {"tiktok.com", "www.tiktok.com", "m.tiktok.com", "vm.tiktok.com", "tiktokv.com"},
+)
+_INSTAGRAM_HOSTS = frozenset({"instagram.com", "www.instagram.com", "instagr.am"})
 
-    This runs yt-dlp as a separate OS process so that on TimeoutError,
-    process.kill() can terminate it immediately rather than leaving a thread running.
 
-    Uses a format fallback chain to handle "Requested format is not available" errors
-    that occur when YouTube doesn't have the exact formats needed for merging.
+def _get_platform(url: str) -> str:
     """
+    Identify the media platform associated with a URL hostname.
+
+    Returns:
+        str: The platform identifier, `"youtube"` for recognized YouTube or
+            unrecognized hosts, `"unknown"` for suspicious platform-like hostnames,
+            or the matching supported platform identifier.
+    """
+    hostname = (urlparse(url).hostname or "").lower()
+    if not hostname:
+        return "youtube"
+
+    youtube_all = _YOUTUBE_DOMAINS | _YOUTUBE_SHORT_DOMAINS | _YOUTUBE_NOCOOKIE
+
+    def _host_matches(domains: frozenset[str]) -> bool:
+        """
+        Determine whether the hostname matches a supported domain or its subdomain.
+
+        Parameters:
+            domains (frozenset[str]): Domains to match against the hostname.
+
+        Returns:
+            bool: `true` if the hostname matches a domain or valid subdomain, `false` otherwise.
+        """
+        return hostname in domains or any(hostname.endswith("." + d) for d in domains)
+
+    if _host_matches(youtube_all):
+        return "youtube"
+    if _host_matches(_VIMEO_HOSTS):
+        return "vimeo"
+    if _host_matches(_DAILYMOTION_HOSTS):
+        return "dailymotion"
+    if _host_matches(_TWITCH_HOSTS):
+        return "twitch"
+    if _host_matches(_TIKTOK_HOSTS):
+        return "tiktok"
+    if _host_matches(_INSTAGRAM_HOSTS):
+        return "instagram"
+    # Subdomain-bypass detection: a hostname like youtube.com.evil.com
+    # contains a platform domain but doesn't end with a valid suffix.
+    # Truly unknown domains (e.g. example.com) default to "youtube"
+    # since yt-dlp handles most URLs.
+    all_platform_domains = (
+        youtube_all
+        | _VIMEO_HOSTS
+        | _DAILYMOTION_HOSTS
+        | _TWITCH_HOSTS
+        | _TIKTOK_HOSTS
+        | _INSTAGRAM_HOSTS
+    )
+    for domain in all_platform_domains:
+        if hostname.startswith(domain + ".") or hostname.endswith("." + domain):
+            return "unknown"
+    return "youtube"
+
+
+# Alias for backward compatibility — throttle-tracking uses the same platform key.
+_service_from_url = _get_platform
+
+
+def _build_cookies_opts() -> dict:
+    """Build cookies-related yt-dlp options from environment configuration.
+
+    Supports two modes (checked in order):
+    1. YT_DLP_COOKIES_FILE — path to a Netscape-format cookies file
+    2. YT_DLP_COOKIES_BROWSER — browser name for cookiesfrombrowser (e.g. chrome, firefox)
+
+    Returns an empty dict if neither is configured or the cookie file doesn't exist.
+    Logs a warning when the configured cookie file path is absent from disk.
+    """
+    opts: dict = {}
+    cookies_file = os.environ.get("YT_DLP_COOKIES_FILE", "").strip()
+    cookies_browser = os.environ.get("YT_DLP_COOKIES_BROWSER", "").strip()
+
+    if cookies_file:
+        resolved = os.path.abspath(cookies_file)
+        if os.path.isfile(resolved):
+            opts["cookiefile"] = resolved
+        else:
+            logger.warning(
+                "cookies_file_not_found",
+                configured=cookies_file,
+                resolved=resolved,
+                hint="Set YT_DLP_COOKIES_FILE to an existing Netscape-format cookies file",
+            )
+    elif cookies_browser:
+        opts["cookiesfrombrowser"] = (cookies_browser,)
+
+    return opts
+
+
+# Platform format selection is handled by `_format_spec_for()` (defined above):
+# YouTube uses the merged-combo chain; every other platform gets a single
+# progressive `best` stream. Both are encoded as a single yt-dlp format string
+# (with "/" fallback) so yt-dlp does the degradation in one extract_info call.
+
+# Extractor args per platform. Only YouTube benefits from player-client hints.
+_PLATFORM_EXTRACTOR_ARGS: dict[str, dict] = {
+    "youtube": {
+        "youtube": {
+            "player_client": ["tv", "web", "default", "mobile"],
+        },
+    },
+}
+
+# Platforms that require cookies for reliable extraction. Cookies are included
+# automatically when configured via YT_DLP_COOKIES_FILE or YT_DLP_COOKIES_BROWSER.
+_COOKIE_REQUIRED_PLATFORMS = frozenset({"tiktok", "instagram"})
+
+
+async def _check_throttle(stderr_text: str, service: str = "youtube") -> None:
+    """
+    Record a throttling response when subprocess output indicates HTTP status 429.
+
+    Parameters:
+        stderr_text (str): Subprocess error output to inspect.
+        service (str): Service associated with the response.
+    """
+    if not stderr_text:
+        return
+    if THROTTLE_PATTERN.search(stderr_text):
+        from app.services.throttle_predictor import record_response
+
+        await record_response(service, 429)
+
+
+class YtDlpProcessPool:
+    """Pool of warm, long-lived yt-dlp driver subprocesses.
+
+    Each slot is a single driver process (``app.services.yt_dlp_worker_driver``)
+    that imported ``yt_dlp`` once and processes one job at a time over stdin/stdout.
+    This eliminates the per-job ``python -c "import yt_dlp"`` cold start.
+
+    Slots are checked out exclusively: a process handles exactly one job until it
+    emits a terminal response, so the existing process-group kill semantics (used
+    on timeout) always target the correct owning pid.
+
+    The pool is crash-tolerant: if a driver process dies, its slot is marked dead
+    and the next checkout spawns a replacement. Callers treat pool unavailability
+    as a signal to fall back to the per-job subprocess path.
+
+    Process startup/handshake happens *outside* the pool lock (reserved via the
+    ``starting`` flag) so one slow handshake cannot stall ``_release`` or other
+    checkouts; ``ensure_started`` starts slots concurrently via ``asyncio.gather``.
+    """
+
+    def __init__(
+        self,
+        size: int,
+        startup_timeout: float = 30.0,
+        driver_module: str = "app.services.yt_dlp_worker_driver",
+    ) -> None:
+        """Set up the pool with ``size`` idle driver slots and a startup timeout."""
+        self._size = max(1, size)
+        self._startup_timeout = startup_timeout
+        self._driver_module = driver_module
+        self._lock = asyncio.Lock()
+        # Each slot: {"proc": Process|None, "ready": bool, "busy": bool,
+        #             "starting": bool, "stderr_task": Task|None, "stderr_lines": list[str]}
+        self._slots: list[dict] = [
+            {
+                "proc": None,
+                "ready": False,
+                "busy": False,
+                "starting": False,
+                "stderr_task": None,
+                "stderr_lines": [],
+            }
+            for _ in range(self._size)
+        ]
+        self._started = False
+        self._shutting_down = False
+
+    async def _drain_stderr(self, slot: dict) -> None:
+        """Continuously consume a slot's stderr, retaining recent lines.
+
+        The driver's stderr pipe is never otherwise read; a process that lives
+        for hours and accumulates yt-dlp warnings/tracebacks would otherwise
+        block on a full pipe buffer (~64KB) mid-job. Retained lines also give
+        the throttle detector (``_check_throttle``) back its 429 evidence.
+        """
+        proc = slot.get("proc")
+        if proc is None or proc.stderr is None:
+            return
+        try:
+            async for line_bytes in proc.stderr:
+                line = line_bytes.decode(errors="replace").strip()
+                if not line:
+                    continue
+                slot["stderr_lines"].append(line)
+                if len(slot["stderr_lines"]) > 200:
+                    del slot["stderr_lines"][:-200]
+                logger.debug("warm_pool_stderr", line=line[:200])
+        except (asyncio.CancelledError, ValueError):
+            pass
+
+    async def _stop_stderr_reader(self, slot: dict) -> None:
+        """Cancel and await a slot's background stderr reader, if any."""
+        task = slot.get("stderr_task")
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        slot["stderr_task"] = None
+
+    async def _start_slot(self, slot: dict) -> bool:
+        """Spawn and readiness-check one driver process. Returns True on success.
+
+        The slot is reserved with the ``starting`` flag so concurrent callers
+        never double-spawn it; the spawn/handshake itself runs outside the lock.
+        """
+        if slot["starting"]:
+            return False
+        if self._shutting_down:
+            return False
+        slot["starting"] = True
+        try:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    "-m",
+                    self._driver_module,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    start_new_session=True,
+                    limit=_STREAM_READER_LIMIT,
+                )
+            except OSError:
+                return False
+
+            slot["proc"] = proc
+            slot["ready"] = False
+            slot["stderr_lines"] = []
+            slot["stderr_task"] = asyncio.create_task(self._drain_stderr(slot))
+
+            # The driver was spawned with stdout=PIPE, so the stream is always
+            # present; the guard keeps mypy happy and the behaviour explicit.
+            if proc.stdout is None:
+                await _kill_process_group(proc, graceful=True)
+                await self._stop_stderr_reader(slot)
+                slot["proc"] = None
+                return False
+
+            # Wait for the driver's {"_worker_ready": true} handshake.
+            try:
+                line_bytes = await asyncio.wait_for(
+                    proc.stdout.readline(), timeout=self._startup_timeout
+                )
+            except (TimeoutError, ValueError):
+                # No handshake in time — kill and treat as dead.
+                await _kill_process_group(proc, graceful=True)
+                await self._stop_stderr_reader(slot)
+                slot["proc"] = None
+                return False
+
+            if not line_bytes:
+                # Process exited before ready.
+                await _kill_process_group(proc, graceful=True)
+                await self._stop_stderr_reader(slot)
+                slot["proc"] = None
+                return False
+
+            try:
+                handshake = json.loads(line_bytes.decode().strip())
+            except json.JSONDecodeError:
+                handshake = {}
+
+            if not handshake.get("_worker_ready"):
+                await _kill_process_group(proc, graceful=True)
+                await self._stop_stderr_reader(slot)
+                slot["proc"] = None
+                return False
+
+            # A shutdown started while we were handshaking: kill the fresh
+            # driver so it never lands in the just-discarded pool.
+            if self._shutting_down:
+                await _kill_process_group(proc, graceful=True)
+                await self._stop_stderr_reader(slot)
+                slot["proc"] = None
+                return False
+
+            slot["ready"] = True
+            return True
+        finally:
+            slot["starting"] = False
+
+    async def ensure_started(self) -> None:
+        """Start all slots concurrently (idempotent). Best-effort: dead slots simply stay None.
+
+        Bails out once ``_shutting_down`` is set: a pool instance that has
+        been (or is being) shut down must never spawn drivers again — the
+        singleton is dropped and a fresh instance created on the next
+        ``_get_pool()`` call instead.
+        """
+        if self._started or self._shutting_down:
+            return
+        async with self._lock:
+            if self._started or self._shutting_down:
+                return
+            self._started = True
+        # Spawn/handshake outside the lock so a slow slot can't stall
+        # _checkout/_release for the rest of the pool; concurrent so startup
+        # cost is one handshake, not N serialized ones.
+        await asyncio.gather(*(self._start_slot(slot) for slot in self._slots))
+
+    def available_count(self) -> int:
+        """Return the number of ready, idle driver slots."""
+        return sum(1 for s in self._slots if s["proc"] is not None and s["ready"] and not s["busy"])
+
+    async def _checkout(self) -> dict | None:
+        """Return a free, ready slot, spawning replacements for dead ones.
+
+        Returns None if no slot is currently usable (caller should fall back).
+        The (re)spawn happens outside the lock so a slow handshake doesn't
+        block releases/other checkouts; the ``starting`` reservation flag keeps
+        concurrent checkouts from double-spawning a slot.
+        """
+        async with self._lock:
+            if self._shutting_down:
+                # Never spawn a replacement into a pool that has been (or is
+                # being) shut down: the fresh driver would be left to linger
+                # outside shutdown()'s kill loop.
+                return None
+            for slot in self._slots:
+                if slot["busy"] or slot["starting"]:
+                    continue
+                proc = slot["proc"]
+                if proc is not None and proc.returncode is None and slot["ready"]:
+                    slot["busy"] = True
+                    return slot
+            pending = None
+            for slot in self._slots:
+                if not slot["busy"] and not slot["starting"]:
+                    pending = slot
+                    break
+        if pending is None:
+            return None
+        if not await self._start_slot(pending):
+            return None
+        async with self._lock:
+            if (
+                pending["ready"]
+                and pending["proc"] is not None
+                and not pending["busy"]
+                and not pending["starting"]
+            ):
+                pending["busy"] = True
+                return pending
+        return None
+
+    async def _release(self, slot: dict) -> None:
+        """Return a slot to the free pool, dropping it if its driver died."""
+        async with self._lock:
+            slot["busy"] = False
+            proc = slot["proc"]
+            # If the driver exited during the job, drop it so the next checkout
+            # respawns a fresh one.
+            if proc is None or proc.returncode is not None or not slot["ready"]:
+                slot["proc"] = None
+                slot["ready"] = False
+
+    async def run_job(
+        self,
+        job: dict,
+        job_timeout: float,
+        progress_callback: Callable[[dict], Awaitable[None]] | None = None,
+        service: str = "youtube",
+    ) -> dict:
+        """Run one job on a pooled driver. Raises on failure so callers can fall back.
+
+        Reads stdout lines for this job_id until a terminal ``result``/``error``
+        line arrives. Progress lines are relayed to ``progress_callback``.
+        On timeout, applies the same process-group kill semantics as the
+        per-job path (SIGTERM grace -> SIGKILL + orphan walk). ``job_timeout``
+        is a wall-clock deadline for the whole job — progress output does not
+        reset it. Stderr drained during the job is checked for throttle signals.
+        """
+        slot = await self._checkout()
+        if slot is None or slot["proc"] is None:
+            raise RuntimeError("yt-dlp warm pool has no available slot")
+        proc = slot["proc"]
+        job_id = job.get("job_id", "")
+        stderr_mark = len(slot.get("stderr_lines", []))
+        deadline = asyncio.get_running_loop().time() + job_timeout
+
+        try:
+            proc.stdin.write((json.dumps(job) + "\n").encode())
+            await proc.stdin.drain()
+
+            result: dict | None = None
+            error: str | None = None
+            while True:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    await self._kill_busy_slot(slot, proc)
+                    raise TimeoutError(f"yt-dlp warm-pool job timed out after {job_timeout}s")
+                try:
+                    line_bytes = await asyncio.wait_for(proc.stdout.readline(), timeout=remaining)
+                except TimeoutError:
+                    await self._kill_busy_slot(slot, proc)
+                    raise TimeoutError(
+                        f"yt-dlp warm-pool job timed out after {job_timeout}s"
+                    ) from None
+                if not line_bytes:
+                    # Driver closed stdout unexpectedly.
+                    await _kill_process_group(proc, graceful=True)
+                    raise RuntimeError("yt-dlp warm-pool driver closed stdout")
+                try:
+                    parsed = json.loads(line_bytes.decode().strip())
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "warm_pool_stdout_non_json", line=line_bytes[:200].decode(errors="replace")
+                    )
+                    continue
+                if parsed.get("job_id") != job_id:
+                    continue
+                if parsed.get("progress") and progress_callback:
+                    try:
+                        await progress_callback(parsed)
+                    except Exception:
+                        # A failing progress callback must not release the slot
+                        # while its driver is still mid-download: kill it so no
+                        # other job interleaves stdout lines or races the same
+                        # output file, then re-raise.
+                        await self._kill_busy_slot(slot, proc)
+                        raise
+                elif "error" in parsed:
+                    error = parsed["error"]
+                    break
+                elif "result" in parsed:
+                    result = parsed["result"]
+                    break
+
+            # Relay 429 signals from this job's stderr so the preemptive
+            # throttle predictor keeps its signal on the pooled path.
+            stderr_text = "\n".join(slot.get("stderr_lines", [])[stderr_mark:])
+            if stderr_text:
+                await _check_throttle(stderr_text, service)
+
+            if error is not None:
+                raise RuntimeError(f"yt-dlp extraction failed: {error}")
+            if result is None:
+                raise RuntimeError("yt-dlp warm-pool produced no result")
+            return result
+        finally:
+            await self._release(slot)
+
+    async def _kill_busy_slot(self, slot: dict, proc: asyncio.subprocess.Process) -> None:
+        """Apply SIGTERM -> SIGKILL + orphan walk against a busy driver's group.
+
+        Marks the slot dead on *every* exit path (including a vanished process
+        or a wait that times out): a wedged or dying process must never return
+        to rotation with ``ready`` still True.
+        """
+        slot["ready"] = False
+        slot["proc"] = None
+        try:
+            pgid = os.getpgid(proc.pid)
+        except (ProcessLookupError, OSError):
+            return
+        for sig in (signal.SIGTERM, signal.SIGCONT):
+            try:
+                os.killpg(pgid, sig)
+            except (ProcessLookupError, OSError):
+                pass
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=3)
+        except TimeoutError:
+            pass
+        await _walk_and_kill_orphaned_children(proc)
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=3)
+        except TimeoutError:
+            pass
+
+    async def shutdown(self) -> None:
+        """Kill all live drivers, stop their stderr readers, and reset the pool."""
+        async with self._lock:
+            self._shutting_down = True
+            for slot in self._slots:
+                proc = slot["proc"]
+                if proc is not None and proc.returncode is None:
+                    await _kill_process_group(proc, graceful=True)
+                slot["proc"] = None
+                slot["ready"] = False
+            self._started = False
+        for slot in self._slots:
+            await self._stop_stderr_reader(slot)
+
+
+# Module-level singleton, created lazily from settings so importing this module
+# (e.g. in tests) does not spawn processes.
+_pool: YtDlpProcessPool | None = None
+_pool_failed = False
+
+
+def _get_pool() -> YtDlpProcessPool | None:
+    """Return the warm pool singleton, or None if disabled/unavailable."""
+    global _pool, _pool_failed
+    if _pool_failed:
+        return None
+    if os.environ.get("TESTING", "").lower() in ("1", "true", "yes", "on"):
+        # Under TESTING the subprocess layer is mocked, so spawning real driver
+        # processes (and waiting on their handshake) is both pointless and would
+        # hang. Callers fall back to the inline per-job subprocess path.
+        return None
+    if not settings.yt_dlp_warm_pool:
+        return None
+    if _pool is None:
+        try:
+            _pool = YtDlpProcessPool(size=settings.yt_dlp_pool_size)
+        except Exception as exc:
+            logger.warning("yt_dlp_warm_pool_init_failed", error=str(exc))
+            _pool_failed = True
+            return None
+    return _pool
+
+
+async def shutdown_yt_dlp_pool() -> None:
+    """Terminate the warm pool singleton and drop it (called on app shutdown).
+
+    A no-op when the pool was never created (disabled, unavailable, or under
+    TESTING). Idempotent: a second call finds ``_pool`` already None.
+    """
+    global _pool
+    if _pool is not None:
+        await _pool.shutdown()
+        _pool = None
+
+
+async def _extract_via_subprocess(
+    url: str,
+    output_template: str,
+    progress_callback: Callable[[dict], Awaitable[None]] | None = None,
+) -> dict:
+    """
+    Extract media information and download media using yt-dlp.
+
+    Supports platform-specific format fallbacks and optionally reports download progress
+    through the callback.
+
+    Parameters:
+        url (str): Media URL to validate and extract.
+        output_template (str): Template for the downloaded media file path.
+        progress_callback (Callable[[dict], Awaitable[None]] | None): Callback that receives
+                progress updates when provided.
+
+    Returns:
+        dict: Extracted media information.
+
+    Raises:
+        SSRFError: If the URL resolves to a private or internal address.
+        TimeoutError: If extraction exceeds the configured timeout.
+        RuntimeError: If extraction fails or produces no usable output.
+    """
+    await _check_ssrf(url)
+
     url_json = json.dumps(url)
     output_template_json = json.dumps(output_template)
-    fallback_chain_json = json.dumps(FORMAT_FALLBACK_CHAIN)
+    platform = _get_platform(url)
+    platform_json = json.dumps(platform)
+    cookies_opts = _build_cookies_opts()
+    cookies_opts_json = json.dumps(cookies_opts)
+    format_spec, format_sort = _format_spec_for(platform)
+    format_spec_json = json.dumps(format_spec)
+    format_sort_json = json.dumps(format_sort)
+    extractor_args = _PLATFORM_EXTRACTOR_ARGS.get(platform, {})
+    extractor_args_json = json.dumps(extractor_args)
+
+    if platform in _COOKIE_REQUIRED_PLATFORMS and not cookies_opts:
+        logger.info(
+            "extraction_without_cookies",
+            platform=platform,
+            url=url[:80],
+            hint="Set YT_DLP_COOKIES_FILE or YT_DLP_COOKIES_BROWSER to enable cookies for this platform",
+        )
+
+    output_fields_json = json.dumps(list(_OUTPUT_FIELDS))
+
+    # Only inject youtube-specific options when building the script for YouTube.
+    # Tests assert that non-YouTube platform scripts do not contain YouTube-only keys.
+    # Embedding them as dict entries keeps the options inside the ydl_opts dict definition.
+    if platform == "youtube":
+        youtube_opts = (
+            '            "prefer_free_formats": True,\n            "check_formats": "missable",\n'
+        )
+    else:
+        youtube_opts = ""
 
     extract_script = f"""
 import sys
@@ -81,52 +945,75 @@ import yt_dlp
 
 url = {url_json}
 output_template = {output_template_json}
-fallback_chain = {fallback_chain_json}
+platform = {platform_json}
+format_spec = {format_spec_json}
+format_sort = {format_sort_json}
+extractor_args = {extractor_args_json}
+cookies_opts = {cookies_opts_json}
+output_fields = {output_fields_json}
+
+if "cookiesfrombrowser" in cookies_opts and isinstance(cookies_opts["cookiesfrombrowser"], list):
+    cookies_opts["cookiesfrombrowser"] = tuple(cookies_opts["cookiesfrombrowser"])
 
 last_error = None
+_last_progress_pct = -1.0
 
-for i, format_spec in enumerate(fallback_chain):
-    ydl_opts = {{
-        "format": format_spec["format"],
-        "format_sort": format_spec.get("format_sort", []),
-        "outtmpl": output_template,
-        "quiet": True,
-        "no_warnings": True,
-        "socket_timeout": 60,
-        "retries": 3,
-        "prefer_free_formats": True,
-        "check_formats": "missable",
-        "extractor_args": {{
-            "youtube": {{
-                "player_client": ["tv", "web", "default", "mobile"],
-            }},
-        }},
-    }}
+def _progress_hook(d):
+    global _last_progress_pct
+    if d.get("status") == "downloading":
+        downloaded = d.get("downloaded_bytes", 0)
+        total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+        pct = (downloaded / total * 100) if total > 0 else 0
+        if pct - _last_progress_pct < 0.5:
+            return
+        _last_progress_pct = pct
+        print(json.dumps({{
+            "progress": True,
+            "percent": round(pct, 1),
+            "downloaded_bytes": downloaded,
+            "total_bytes": total,
+            "speed": d.get("speed"),
+            "eta": d.get("eta"),
+        }}), flush=True)
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            if info is None:
-                last_error = "No video info returned"
-                continue
-            sanitized_info = ydl.sanitize_info(info)
-            print(json.dumps(sanitized_info))
-            sys.exit(0)
-    except Exception as e:
-        err_str = str(e)
-        if "Requested format" in err_str and "not available" in err_str:
-            last_error = err_str
-            continue
-        print(json.dumps({{"error": err_str}}))
-        sys.exit(1)
+# Single extract_info call. The "/" in format_spec is yt-dlp's native fallback
+# across the whole chain, so degradation (merged-combo -> best -> worst) happens
+# inside one call instead of a per-spec loop that only ever ran the first entry.
+ydl_opts = {{
+    "format": format_spec,
+    "format_sort": format_sort,
+    "outtmpl": output_template,
+    "quiet": True,
+    "no_warnings": True,
+    "noprogress": True,
+    "socket_timeout": 60,
+    "retries": 3,
+    "progress_hooks": [_progress_hook],
+{youtube_opts}}}
 
-attempted_formats = [spec["format"] for spec in fallback_chain]
-print(json.dumps({{
-    "error": f"All formats failed. Last error: {{last_error}}. Attempted formats: {{attempted_formats}}"
-}}))
-sys.exit(1)
+ydl_opts.update(cookies_opts)
+if extractor_args:
+    ydl_opts["extractor_args"] = extractor_args
+
+try:
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        if info is None:
+            print(json.dumps({{"error": f"[{platform}] No video info returned"}}))
+            sys.exit(1)
+        sanitized_info = ydl.sanitize_info(info)
+        filtered = {{k: sanitized_info.get(k) for k in output_fields if k in sanitized_info}}
+        print(json.dumps(filtered))
+        sys.exit(0)
+except Exception as e:
+    print(json.dumps({{"error": f"[{platform}] {{str(e)}}"}}))
+    sys.exit(1)
 """
     process = None
+    stderr_lines: list[str] = []
+    result: dict[str, Any] | None = None
+    error_result: dict[str, Any] | None = None
+
     try:
         process = await asyncio.create_subprocess_exec(
             sys.executable,
@@ -135,38 +1022,87 @@ sys.exit(1)
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            limit=_STREAM_READER_LIMIT,
         )
 
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=YT_DLP_TIMEOUT)
-        except TimeoutError as e:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
+        async def _read_stdout() -> None:
+            """Consume the subprocess stdout, capturing result/error/progress lines."""
+            nonlocal result, error_result
+            if process.stdout is None:
+                return
+            async for line_bytes in process.stdout:
+                line = line_bytes.decode().strip()
+                if not line:
+                    continue
                 try:
-                    await asyncio.wait_for(process.wait(), timeout=5)
-                except TimeoutError:
-                    await _kill_process_group(process)
+                    parsed = json.loads(line)
+                    if parsed.get("progress") and progress_callback:
+                        await progress_callback(parsed)
+                    elif "error" in parsed:
+                        error_result = parsed
+                    else:
+                        result = parsed
+                except json.JSONDecodeError:
+                    logger.warning("stdout_non_json_line", line=line[:200])
+
+        async def _read_stderr() -> None:
+            """
+            Collects the subprocess's standard error output as decoded lines.
+            """
+            if process.stderr is None:
+                return
+            async for line_bytes in process.stderr:
+                stderr_lines.append(line_bytes.decode().strip())
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(_read_stdout(), _read_stderr()),
+                timeout=YT_DLP_TIMEOUT,
+            )
+        except TimeoutError as e:
+            pgid = os.getpgid(process.pid)
+            # Broadcast SIGTERM to the entire process group
+            for sig in (signal.SIGTERM, signal.SIGCONT):
+                try:
+                    os.killpg(pgid, sig)
+                except (ProcessLookupError, OSError):
+                    pass
+
+            # Give brief grace for clean shutdown
+            try:
+                await asyncio.wait_for(process.wait(), timeout=3)
+            except TimeoutError:
+                pass
+
+            # Walk /proc for survivors — catches ffmpeg that detached from process group
+            await _walk_and_kill_orphaned_children(process)
+
+            # Final escalation: SIGKILL the process group
+            try:
+                os.killpg(pgid, signal.SIGKILL)
             except (ProcessLookupError, OSError):
                 pass
+
+            try:
+                await asyncio.wait_for(process.wait(), timeout=3)
+            except TimeoutError:
+                pass
+
             raise TimeoutError(f"yt-dlp extraction timed out after {YT_DLP_TIMEOUT}s") from e
 
-        output = stdout.decode().strip()
+        stderr_text = "\n".join(stderr_lines)
+        service = _service_from_url(url)
+        await _check_throttle(stderr_text, service)
 
-        # Extract JSON from last non-empty line for reliability
-        lines = [line.strip() for line in output.splitlines() if line.strip()]
-        if lines:
-            json_str = lines[-1]
-            try:
-                result: dict[str, Any] = json.loads(json_str)
-                if "error" in result:
-                    raise RuntimeError(f"yt-dlp extraction failed: {result['error']}")
-                return result
-            except json.JSONDecodeError as e:
-                raise RuntimeError(f"yt-dlp produced malformed JSON: {json_str!r}") from e
+        if error_result:
+            raise RuntimeError(f"yt-dlp extraction failed: {error_result['error']}")
+
+        if result is not None:
+            return result
 
         if process.returncode != 0:
-            error_msg = stderr.decode().strip() if stderr else "Unknown error"
-            error_msg = _extract_error_message(error_msg, output if output else "")
+            error_msg = stderr_text or "Unknown error"
+            error_msg = _extract_error_message(error_msg, "")
             if not error_msg:
                 error_msg = "Unknown error"
             raise RuntimeError(f"yt-dlp failed: {error_msg}")
@@ -178,35 +1114,31 @@ sys.exit(1)
             await _kill_process_group(process)
 
 
-def _validate_path_within(base_path: str, target_path: str) -> str:
-    """Validate that target_path resolves within base_path.
-
-    Returns the resolved path if valid.
-    Raises StorageError if the path escapes the base directory.
+async def extract_media_url(
+    url: str,
+    storage_path: str,
+    progress_callback: Callable[[dict], Awaitable[None]] | None = None,
+) -> tuple[str, str, str | None]:
     """
-    resolved_base = os.path.realpath(base_path)
-    resolved_target = os.path.realpath(target_path)
-    # Ensure trailing separator for prefix matching
-    if not resolved_base.endswith(os.sep):
-        resolved_base += os.sep
-    if not resolved_target.startswith(resolved_base):
-        raise StorageError(
-            f"Path traversal detected: resolved path {resolved_target} "
-            f"is outside allowed directory {resolved_base}"
-        )
-    return resolved_target
+    Extract media from a supported video URL and store the resulting file.
 
+    Supports YouTube, Vimeo, Dailymotion, Twitch, TikTok, and Instagram. TikTok and
+    Instagram may require cookies configured through YT_DLP_COOKIES_FILE or
+    YT_DLP_COOKIES_BROWSER.
 
-async def extract_media_url(url: str, storage_path: str) -> tuple[str, str]:
-    """
-    Extract media URL from a YouTube URL using yt-dlp.
+    Parameters:
+        url (str): Video URL to extract.
+        storage_path (str): Base directory for downloaded files.
+        progress_callback (Callable[[dict], Awaitable[None]] | None): Optional
+            asynchronous callback receiving download progress updates.
 
     Returns:
-        tuple of (file_path, file_name) where file_path is always within storage_path
+        tuple[str, str, str | None]: The stored file path, display filename, and
+        extracted title, or None when no title is available.
 
     Raises:
-        StorageError: If the download directory cannot be created or path is invalid.
-        asyncio.TimeoutError: If the extraction takes longer than YT_DLP_TIMEOUT.
+        StorageError: If the download directory cannot be created, the output path
+            is invalid, or the extracted file is missing.
     """
     download_dir = os.path.join(storage_path, "downloads")
     try:
@@ -219,21 +1151,77 @@ async def extract_media_url(url: str, storage_path: str) -> tuple[str, str]:
     # Use ONLY the UUID for the filesystem path — never the title
     output_template = os.path.join(download_dir, f"{file_id}.%(ext)s")
 
-    # Run via subprocess so it can be killed on timeout
-    info = await _extract_via_subprocess(url, output_template)
+    # SSRF gate runs before ANY extraction path — including the warm pool,
+    # which sends the URL straight to a driver process. The API routes only
+    # validate scheme/hostname, so this is the last line of defense against
+    # private/internal targets regardless of which extraction path is used.
+    await _check_ssrf(url)
 
-    title = info.get("title") or file_id
+    # Run via subprocess so it can be killed on timeout. The extraction semaphore
+    # bounds total concurrent extraction (pool slots + inline) to avoid OOM from
+    # N concurrent ~50-100MB yt-dlp/ffmpeg processes.
+    async with _EXTRACTION_SEMAPHORE:
+        info: dict | None = None
+        pool = _get_pool()
+        if pool is not None:
+            platform = _get_platform(url)
+            format_spec, format_sort = _format_spec_for(platform)
+            extractor_args = _PLATFORM_EXTRACTOR_ARGS.get(platform, {})
+            cookies_opts = _build_cookies_opts()
+            job = {
+                "job_id": str(uuid.uuid4()),
+                "mode": "extract",
+                "url": url,
+                "output_template": output_template,
+                "platform": platform,
+                "format": format_spec,
+                "format_sort": format_sort,
+                "extractor_args": extractor_args,
+                "cookies_opts": cookies_opts,
+                "youtube_opts": platform == "youtube",
+            }
+            try:
+                await pool.ensure_started()
+                info = await pool.run_job(
+                    job,
+                    job_timeout=YT_DLP_TIMEOUT,
+                    progress_callback=progress_callback,
+                    service=_service_from_url(url),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "warm_pool_extract_fallback",
+                    error=str(exc),
+                    hint="yt-dlp warm pool failed; using per-job subprocess",
+                )
+
+        if info is None:
+            info = await _extract_via_subprocess(
+                url,
+                output_template,
+                progress_callback=progress_callback,
+            )
+
+    title: str | None = info.get("title") or None
     ext = info.get("ext") or "mp4"
+    # `ext` is derived from the remote media URL and reaches the
+    # Content-Disposition filename unsanitized (title goes through
+    # _sanitize_title, ext did not). Constrain it to a safe extension shape.
+    if not re.fullmatch(r"[a-z0-9]{1,8}", ext, re.IGNORECASE):
+        ext = "mp4"
     # Sanitize title for display only — never used in filesystem path
-    safe_title = _sanitize_title(str(title))
+    safe_title = _sanitize_title(str(title or file_id))
     file_name = f"{safe_title}.{ext}"
     file_path = os.path.join(download_dir, f"{file_id}.{ext}")
 
     # Validate the resolved path is within download_dir
-    file_path = _validate_path_within(download_dir, file_path)
+    try:
+        file_path = validate_path(download_dir, file_path)
+    except (ValueError, PermissionError) as e:
+        raise StorageError(str(e)) from e
 
     # Verify the file was actually created
     if not os.path.isfile(file_path):
         raise StorageError(f"Expected output file not found: {file_path}")
 
-    return file_path, file_name
+    return file_path, file_name, title

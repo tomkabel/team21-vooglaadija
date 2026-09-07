@@ -1,0 +1,204 @@
+name: Weekly Repo Audit
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Monday 06:00 UTC — before CodeQL (09:00)
+  workflow_dispatch:
+
+concurrency:
+  group: weekly-repo-audit
+  cancel-in-progress: false
+
+# Least privilege: no default permissions; each job declares only what it needs.
+permissions: {}
+
+jobs:
+  # ============================================
+  # AUTO-REMEDIATION - mechanical fixes become a PR (SWE@Google LSCs).
+  # Only safe fixes (ruff F401/F841 + formatting); judgment findings stay
+  # in the deep-scan issue. Maintainer merges; never force-merged.
+  # ============================================
+  auto-fix:
+    name: AUTO-BOT cleanup PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # contents: write   -> push the chore/auto-bot/weekly-cleanup branch
+    # pull-requests: write -> open the [AUTO-BOT] PR
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main # always audit the default branch, even on manual dispatch
+          persist-credentials: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Install hatch
+        run: uv tool install hatch==1.18.0
+
+      - name: Apply safe fixes (unused imports + formatting)
+        run: hatch run audit:fix
+
+      - name: Detect changes
+        id: changes
+        # Same scope as `git add -u` below: tracked modifications only. Untracked
+        # leftovers (coverage files, tool output) are never the auto-fix's work,
+        # and counting them here would stage nothing and fail `git commit`.
+        run: |
+          if git diff --quiet HEAD --; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push cleanup branch
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Fetch the existing bot branch (when present) so --force-with-lease
+          # is evaluated against current remote state; fail fast otherwise.
+          if git ls-remote --exit-code --heads origin chore/auto-bot/weekly-cleanup >/dev/null 2>&1; then
+            git fetch origin chore/auto-bot/weekly-cleanup
+          fi
+          git checkout -B chore/auto-bot/weekly-cleanup
+          # Stage only tracked, modified files (the mechanical fixes); never
+          # pick up unrelated untracked artifacts.
+          git add -u
+          git commit -m "chore: [AUTO-BOT] weekly cleanup (unused imports, formatting)"
+          git push origin chore/auto-bot/weekly-cleanup --force-with-lease
+
+      - name: Open or update pull request
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BODY="Automated safe fixes from the weekly repo audit. Mechanical changes only: unused imports/variables and formatting. Review and merge; do not rebase (force-updated weekly)."
+          if ! gh pr view chore/auto-bot/weekly-cleanup --json url -q .url >/dev/null 2>&1; then
+            gh pr create \
+              --base main \
+              --head chore/auto-bot/weekly-cleanup \
+              --title "[AUTO-BOT] Weekly cleanup (unused imports, formatting)" \
+              --body "$BODY"
+          fi
+
+  # ============================================
+  # DEEP SCAN - behavioral analysis (hotspots, temporal coupling, defensive
+  # density, duplication) + gate re-verification. Advisory: exit code never
+  # fails the workflow; the report lands in a single labeled issue + artifact.
+  # ============================================
+  deep-scan:
+    name: Deep scan + report issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # contents: read  -> check out the code for analysis
+    # issues: write   -> update the single repo-audit issue
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main # always audit the default branch, even on manual dispatch
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Install hatch
+        run: uv tool install hatch==1.18.0
+
+      - name: Install pinned JS tooling (jscpd)
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10.33.2
+          # run_install is a STRING input (YAML block scalar); a native mapping
+          # fails schema validation ("Expected a scalar got mapping").
+          run_install: |
+            args: [--frozen-lockfile]
+
+      - name: Add node_modules/.bin to PATH (jscpd)
+        run: echo "$(pwd)/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Run unit tests with coverage (hotspot x coverage correlation)
+        run: hatch run test:unit -- -m ''
+
+      - name: Run weekly audit
+        # Advisory: a failure here must not block the issue update or artifact
+        # upload, so the run still yields a report for maintainers to inspect.
+        continue-on-error: true
+        run: hatch run audit:weekly -- --out-dir audit-report
+
+      - name: Upload report artifact
+        # Artifact upload failing (e.g. storage hiccup) must not block the
+        # issue update below.
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: repo-audit-report
+          path: audit-report/
+          retention-days: 30
+
+      - name: Update repo-audit issue
+        # Keep advisory: never fail the workflow on a reporting error.
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = 'audit-report/audit-report.md';
+            let report;
+            if (fs.existsSync(reportPath)) {
+              report = fs.readFileSync(reportPath, 'utf8');
+            } else {
+              report = '_Weekly audit did not produce a report (see workflow logs)._';
+            }
+            // GitHub issue bodies are capped (~65536 chars); truncate with a
+            // pointer to the full JSON artifact to avoid a 422 on oversized posts.
+            const MAX_BODY = 65000;
+            if (report.length > MAX_BODY) {
+              report = report.slice(0, MAX_BODY) + '\n\n_… report truncated; full JSON in workflow artifacts._';
+            }
+            const label = 'repo-audit';
+            const runLink = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `${report}\n\n---\n_Generated by run [#${context.runNumber}](${runLink}) — full JSON report in workflow artifacts._`;
+            const title = `Weekly Repo Audit — ${new Date().toISOString().slice(0, 10)}`;
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: [label],
+              per_page: 1,
+            });
+            if (issues.length > 0) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues[0].number,
+                title,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: [label],
+              });
+            }

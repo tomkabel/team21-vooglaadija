@@ -1,55 +1,69 @@
 # ============================================
 # Local Development Override
-# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 #
-# This file overrides ports for local rootless environments
-# where privileged ports (80, 443) cannot be bound.
+# Adds local build targets (instead of pulling GHCR images) and exposes
+# debug ports bound to loopback only. Not used in production.
 # ============================================
 
 services:
-  # ==========================================
-  # Nginx - Local Testing with Non-Privileged Ports
-  # ==========================================
-  nginx:
+  api:
+    image: vooglaadija-api:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    environment:
+      # Local dev runs over plain HTTP, so cookies do not require HTTPS unless
+      # the operator opts in. Keep this override conditional: production writes
+      # COOKIE_SECURE=True into .env via the bootstrap, and compose interpolation
+      # resolves that value here, so production cookies stay Secure-flagged.
+      COOKIE_SECURE: ${COOKIE_SECURE:-False}
     ports:
-      - "8080:80"
-      - "8443:443"
-    # Increase start period for local environments
-    healthcheck:
-      test:
-        ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
-      start_period: 15s
+      # Caddy reverse-proxies to `api:8000` over the internal compose network.
+      # The host port matches what CI expects so health-check curls hit :8000.
+      - '127.0.0.1:8000:8000'
 
-  # ==========================================
-  # PostgreSQL - Local Debugging Port
-  # ==========================================
+  worker:
+    image: vooglaadija-worker:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    environment:
+      COOKIE_SECURE: 'False'
+
+  celery-beat:
+    image: vooglaadija-worker:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    environment:
+      COOKIE_SECURE: 'False'
+
+  flower:
+    image: vooglaadija-worker:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    ports:
+      - '127.0.0.1:5555:5555'
+    environment:
+      COOKIE_SECURE: 'False'
+      # Local dev only — production requires FLOWER_BASIC_AUTH via .env.
+      FLOWER_BASIC_AUTH: 'vooglaadija:vooglaadija'
+
   db:
     ports:
-      - "5432:5432"
+      - '127.0.0.1:5432:5432'
 
-  # ==========================================
-  # Redis - Local Debugging Port
-  # ==========================================
   redis:
     ports:
-      - "6379:6379"
+      - '127.0.0.1:6380:6379'
 
-  # ==========================================
-  # Swagger UI - Local accessible port
-  # ==========================================
-  swagger-ui:
-    profiles: []
-    restart: "no"
-    ports:
-      - "8081:8080"
-
-  # ==========================================
-  # Enable otel-collector locally
-  # ==========================================
   otel-collector:
-    profiles: []
-    restart: "no"
     ports:
-      - "4317:4317"
-      - "4318:4318"
-      - "8888:8888"
+      - '127.0.0.1:4317:4317'
+      - '127.0.0.1:4318:4318'

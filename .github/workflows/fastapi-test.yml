@@ -7,8 +7,8 @@ on:
     branches: [main, develop]
 
 env:
-  PYTHON_VERSION: "3.12"
-  HATCH_VERSION: "1.16.5"
+  PYTHON_VERSION: '3.12'
+  HATCH_VERSION: '1.18.0'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,17 +19,19 @@ jobs:
   # LINT - Code quality checks (fastest, fail first)
   # ============================================
   lint:
-    name: Lint with ruff
+    name: Lint (Python + JS + CSS + Markdown + YAML)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     permissions:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@a0b52019f16c97e3556f720a3c894238c92f87d7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -46,6 +48,50 @@ jobs:
       - name: Run ruff format check
         run: hatch run lint:format-check
 
+      # Architecture fitness functions (docs/ARCHITECTURE-STANDARD.md)
+      - name: Run boundary verifier (zone-aware import boundaries)
+        run: hatch run lint:boundary
+
+      - name: Check lockfile freshness (One-Version Rule)
+        run: hatch run lint:lock-check
+
+      - name: Run deptry (unused/undeclared dependencies)
+        run: hatch run lint:deps
+
+      - name: Run vulture (dead code)
+        run: hatch run lint:dead-code
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10 # v4.0.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Biome check (JS/CSS/JSON)
+        run: pnpm run lint:js:ci
+
+      - name: Run markdownlint
+        run: pnpm run lint:md:ci
+
+      - name: Run Prettier check (Markdown/YAML)
+        run: pnpm run format:check
+
+      - name: Install yamllint
+        run: uv tool install yamllint
+
+      - name: Run yamllint
+        run: yamllint --config-file .yamllint .github/ infra/ docker-compose*.yml
+
+      - name: Run ShellCheck
+        run: |
+          shellcheck --severity=warning scripts/*.sh entrypoint.sh migrate.sh worker/entrypoint-worker.sh
+
   # ============================================
   # TYPE CHECK - Static type analysis
   # ============================================
@@ -58,10 +104,12 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@a0b52019f16c97e3556f720a3c894238c92f87d7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -87,10 +135,12 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@a0b52019f16c97e3556f720a3c894238c92f87d7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -102,10 +152,10 @@ jobs:
         run: uv tool install hatch==${{ env.HATCH_VERSION }}
 
       - name: Run unit tests with coverage
-        run: hatch run test:unit
+        run: hatch run test:unit -- -m ''
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: ./coverage.xml
           flags: unittests
@@ -128,13 +178,10 @@ jobs:
         image: postgres:15
         env:
           POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_pass
+          POSTGRES_PASSWORD: test_pw
           POSTGRES_DB: test_db
         options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
           --health-start-period 10s
         ports:
           - 5432:5432
@@ -142,18 +189,17 @@ jobs:
       redis:
         image: redis:7-alpine
         options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
         ports:
           - 6379:6379
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@a0b52019f16c97e3556f720a3c894238c92f87d7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -168,20 +214,24 @@ jobs:
 
       - name: Create test environment
         run: |
+          SK="$(openssl rand -hex 32)"
           cp .env.example .env
-          sed -i 's|^DB_PASSWORD=.*|DB_PASSWORD=test_pass|' .env
-          sed -i 's|^SECRET_KEY=$|SECRET_KEY=test-secret-key-for-ci-at-least-32-chars-long|' .env
+          sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=test_pw|" .env
+          sed -i "s|^SECRET_KEY=.*|SECRET_KEY=${SK}|" .env
+          echo "PGPASSWORD=test_pw" >> "$GITHUB_ENV"
 
       - name: Create database schema
         run: |
           uv run python -c "
           import asyncio
+          import os
           from sqlalchemy.ext.asyncio import create_async_engine
-          from app.database import Base
-          from app.models import User, DownloadJob
+          from core.database import Base
+          from core.models import User, DownloadJob
 
           async def init_db():
-              engine = create_async_engine('postgresql+asyncpg://test_user:test_pass@localhost:5432/test_db')
+              db_pass = os.environ['PGPASSWORD']
+              engine = create_async_engine(f'postgresql+asyncpg://test_user:{db_pass}@localhost:5432/test_db')
               async with engine.begin() as conn:
                   await conn.run_sync(Base.metadata.create_all)
               await engine.dispose()
@@ -191,11 +241,11 @@ jobs:
 
       - name: Run API integration tests
         env:
-          CI_INTEGRATION: "true"
-        run: hatch run test:integration
+          CI_INTEGRATION: 'true'
+        run: hatch run test:integration -- -m ''
 
       - name: Upload integration coverage to Codecov
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: ./coverage.xml
           flags: integrationtests
@@ -214,10 +264,12 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@a0b52019f16c97e3556f720a3c894238c92f87d7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -228,15 +280,31 @@ jobs:
       - name: Install hatch
         run: uv tool install hatch==${{ env.HATCH_VERSION }}
 
+      - name: Run secret scan
+        run: |
+          set -e
+          uv tool install "detect-secrets==1.5.0"
+          hatch run security:scan-secrets
+
       - name: Run Bandit security scan
-        run: hatch run security:scan-bandit || true
+        run: |
+          set -e
+          uv tool install "bandit==1.7.0"
+          hatch run security:scan-bandit
 
       - name: Run Safety dependency check
-        run: hatch run ci:security-safety-check || true
+        env:
+          SAFETY_API_KEY: ${{ secrets.SAFETY_API_KEY }}
+        run: |
+          if [ -z "$SAFETY_API_KEY" ]; then
+            echo "SAFETY_API_KEY not set — skipping Safety dependency scan"
+          else
+            hatch run ci:security-safety-check
+          fi
 
       - name: Upload security report
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
-        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && hashFiles('security-report.json') != ''
         with:
           name: security-report
           path: security-report.json
@@ -254,13 +322,15 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@21162887f0d6e25b4e8eafb0cf44cf9bf7f6acd3
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Build API Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: .
           file: ./Dockerfile
@@ -271,7 +341,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build Worker Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: .
           file: ./Dockerfile

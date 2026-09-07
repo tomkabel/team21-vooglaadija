@@ -2,13 +2,15 @@
 
 # Vooglaadija
 
-*Pronounced voo-gla-tee-ya* — Media Link Processor
+_Pronounced voo-gla-tee-ya_ — Media Link Processor
 
 Async video media extraction API with job queue and real-time status streaming.
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-youtube.tomabel.ee-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://youtube.tomabel.ee)
+
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-GPLv3-A41E35?style=for-the-badge&logo=gnu&logoColor=white)](https://www.gnu.org/licenses/gpl-3.0.html)
-[![Version](https://img.shields.io/badge/Version-1.0.0-22D3EE?style=for-the-badge)](https://github.com/tomkabel/team21-vooglaadija)
+[![Version](https://img.shields.io/badge/Version-1.0.0-22D3EE?style=for-the-badge)](https://github.com/tomkabel/vooglaadija)
 [![FastAPI](https://img.shields.io/badge/FastAPI-26A69A?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
@@ -23,9 +25,18 @@ Async video media extraction API with job queue and real-time status streaming.
 
 <div align="center">
 
-**Built by** [![GitHub](https://img.shields.io/badge/@tomkabel-181717?style=flat&logo=github)](https://github.com/tomkabel) [![GitHub](https://img.shields.io/badge/@Kevindaman-181717?style=flat&logo=github)](https://github.com/Kevindaman) [![GitHub](https://img.shields.io/badge/@triinum-181717?style=flat&logo=github)](https://github.com/triinum)
+**Built by**
+[![GitHub](https://img.shields.io/badge/@tomkabel-181717?style=flat&logo=github)](https://github.com/tomkabel)
+[![GitHub](https://img.shields.io/badge/@Kevindaman-181717?style=flat&logo=github)](https://github.com/Kevindaman)
+[![GitHub](https://img.shields.io/badge/@triinum-181717?style=flat&logo=github)](https://github.com/triinum)
 
-**Acknowledgements** [![GitHub](https://img.shields.io/badge/@Migfive-181717?style=flat&logo=github)](https://github.com/Migfive) [![GitHub](https://img.shields.io/badge/@DrWarpMan-181717?style=flat&logo=github)](https://github.com/DrWarpMan) [![GitHub](https://img.shields.io/badge/@Snazzah-181717?style=flat&logo=github)](https://github.com/Snazzah) [![GitHub](https://img.shields.io/badge/@wukko-181717?style=flat&logo=github)](https://github.com/wukko) [![GitHub](https://img.shields.io/badge/@Blobadoodle-181717?style=flat&logo=github)](https://github.com/Blobadoodle) [![GitHub](https://img.shields.io/badge/@nexpid-181717?style=flat&logo=github)](https://github.com/nexpid)
+**Acknowledgements**
+[![GitHub](https://img.shields.io/badge/@Migfive-181717?style=flat&logo=github)](https://github.com/Migfive)
+[![GitHub](https://img.shields.io/badge/@DrWarpMan-181717?style=flat&logo=github)](https://github.com/DrWarpMan)
+[![GitHub](https://img.shields.io/badge/@Snazzah-181717?style=flat&logo=github)](https://github.com/Snazzah)
+[![GitHub](https://img.shields.io/badge/@wukko-181717?style=flat&logo=github)](https://github.com/wukko)
+[![GitHub](https://img.shields.io/badge/@Blobadoodle-181717?style=flat&logo=github)](https://github.com/Blobadoodle)
+[![GitHub](https://img.shields.io/badge/@nexpid-181717?style=flat&logo=github)](https://github.com/nexpid)
 
 </div>
 
@@ -46,15 +57,44 @@ Async video media extraction API with job queue and real-time status streaming.
 
 ## Overview
 
-Vooglaadija is an async REST API for extracting media from video URLs. It uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) as the extraction engine and currently accepts YouTube URLs. The architecture separates the FastAPI web layer from a Redis-backed worker process.
+Vooglaadija is an async REST API for extracting media from video URLs. It uses
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) as the extraction engine and currently accepts YouTube
+URLs. The architecture separates the FastAPI web layer from a Redis-backed worker process.
 
-The system includes JWT authentication, CSRF protection, rate limiting, structured logging, Prometheus metrics, OpenTelemetry tracing, and Sentry error tracking. A server-rendered web UI built with HTMX and Tailwind CSS provides job management with real-time status updates via Server-Sent Events.
+The system includes JWT authentication, CSRF protection, rate limiting, structured logging,
+Prometheus metrics, OpenTelemetry tracing, and Sentry error tracking. A server-rendered web UI built
+with HTMX and Tailwind CSS provides job management with real-time status updates via Server-Sent
+Events.
+
+### Legitimate Use Cases
+
+Vooglaadija is a tool. Examples of legitimate uses include:
+
+- Downloading your own YouTube content
+- Archival or backup of content you have created or have explicit permission to download
+- Downloading Creative Commons or public domain content
+- Offline access to content you are authorized to view
+
+### Legal Disclaimer
+
+**You are responsible for ensuring you have the right to download any content before using
+Vooglaadija.** Downloading copyrighted content without authorization may violate YouTube's Terms of
+Service and applicable copyright law, including the DMCA §1201 anti-circumvention provisions in the
+US.
+
+Vooglaadija is open-source software provided under GPLv3. The operators of this service do not
+endorse or encourage copyright infringement. This tool has substantial non-infringing uses and is
+designed for lawful purposes only. Users should consult qualified legal counsel if unsure about the
+legality of their use case.
+
+See the [Terms of Service](/web/terms) for full details.
 
 ---
 
 ## Features
 
 ### Core Processing
+
 - Media extraction via yt-dlp (YouTube-optimized)
 - Async job queue with Redis-backed worker
 - Job lifecycle: pending → processing → completed/failed
@@ -63,6 +103,7 @@ The system includes JWT authentication, CSRF protection, rate limiting, structur
 - Stale job reaper for orphaned processing jobs
 
 ### Security & Reliability
+
 - JWT access/refresh tokens with bcrypt hashing
 - CSRF token protection
 - Per-IP and per-user rate limiting
@@ -73,6 +114,7 @@ The system includes JWT authentication, CSRF protection, rate limiting, structur
 - Graceful worker shutdown with job draining
 
 ### Observability
+
 - SSE real-time status streaming
 - Prometheus metrics endpoint
 - Structured JSON logging (structlog)
@@ -83,22 +125,41 @@ The system includes JWT authentication, CSRF protection, rate limiting, structur
 
 ## Quick Start
 
-### Docker Compose (Recommended)
+### Production (any VPS — plug-n-play)
+
+Pull the repo onto any VPS and run the bootstrap. It asks for your domain and an optional Cloudflare
+API token, then provisions Docker, generates production secrets into `./.env`, sets up the
+Caddyfile + TLS origin cert and deploys the full stack behind a standalone Caddy reverse proxy
+(ports 80/443) — no Coolify:
 
 ```bash
-git clone https://github.com/tomkabel/team21-vooglaadija.git
-cd team21-vooglaadija
-docker compose up -d
+git clone https://github.com/tomkabel/vooglaadija.git
+cd vooglaadija
+sudo ./deploy/bootstrap.sh
 ```
 
-The stack runs API, Worker, PostgreSQL, Redis, nginx, OpenTelemetry Collector, and Swagger UI.
+> The domain's DNS must already point at the server (or you supply a Cloudflare token so the
+> bootstrap can create the records). The final public `https://<domain>/health` check requires a
+> proxied (orange-cloud) record so Cloudflare's edge certificate is presented.
+
+See [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md) for details.
+
+> **This VPS (`youtube.tomabel.ee`) uses a standalone Caddy proxy.** The
+> `docker compose ... -f docker-compose.local.yml up -d` command below starts only the app — it
+> omits the public entry point. On this server the stack must be started with the Caddy override or
+> Cloudflare returns HTTP 521:
+>
+> ```bash
+> docker compose -f docker-compose.yml -f docker-compose.local.yml -f docker-compose.caddy.yml up -d
+> ```
+>
+> See [Production deployment guide](docs/PRODUCTION_DEPLOYMENT.md) for the full standalone flow.
 
 ### Local Development
 
 ```bash
-git clone https://github.com/tomkabel/team21-vooglaadija.git
-cd team21-vooglaadija
-hatch env create
+git clone https://github.com/tomkabel/vooglaadija.git
+cd vooglaadija
 
 cp .env.example .env
 # Minimum required:
@@ -106,17 +167,24 @@ cp .env.example .env
 #   REDIS_PASSWORD=<strong-password>
 #   SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
 
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+```
+
+Or without Docker:
+
+```bash
+hatch env create
 hatch run db-migrate
 hatch run dev              # API
 python -m worker.main      # Worker (separate terminal)
 ```
 
-### Access Points
+### Access Points (local)
 
-- Web Dashboard: http://localhost:8000/web/downloads
-- Login: http://localhost:8000/web/login
-- API Docs: http://localhost:8000/docs
-- Standalone Swagger: http://localhost:8081
+- Web Dashboard: <http://localhost:8000/web/downloads>
+- Login: <http://localhost:8000/web/login>
+- API Docs: <http://localhost:8000/docs>
+- Grafana: <http://localhost:3000> (enable with `docker compose ... --profile monitoring up -d`)
 
 ---
 
@@ -159,6 +227,7 @@ curl -X POST http://localhost:8000/api/v1/downloads \
 ```
 
 Expected response:
+
 ```json
 {
   "error": {
@@ -177,36 +246,47 @@ Expected response:
 }
 ```
 
-See [docs/API.md](docs/API.md) for the full endpoint reference, request/response schemas, and status codes.
+See [docs/API.md](docs/API.md) for the full endpoint reference, request/response schemas, and status
+codes.
 
 ---
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [docs/API.md](docs/API.md) | Full API reference with auth requirements, status codes, and schemas |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture and component responsibilities |
-| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Development workflow, tests, and code standards |
-| [docs/OPS.md](docs/OPS.md) | Environment variables, deployment, and troubleshooting |
+| Document                                                       | Description                                                          |
+| -------------------------------------------------------------- | -------------------------------------------------------------------- |
+| [docs/API.md](docs/API.md)                                     | Full API reference with auth requirements, status codes, and schemas |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)                   | System architecture and component responsibilities                   |
+| [docs/ARCHITECTURE-STANDARD.md](docs/ARCHITECTURE-STANDARD.md) | Executable architecture standard (fitness functions)                 |
+| [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md) | Plug-n-play VPS deployment with standalone Caddy TLS                 |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)                   | Development workflow, tests, and code standards                      |
+| [docs/OPS.md](docs/OPS.md)                                     | Environment variables, deployment, and troubleshooting               |
+
+### Repository Governance
+
+The repo runs a weekly audit (Mondays 06:00 UTC) that applies safe cleanup as an automated
+`[AUTO-BOT]` PR and posts a hotspot-ranked advisory report to the `repo-audit` issue — cutting
+bloat, combining duplication, and flagging over-engineering against the architecture standard. See
+[docs/OPS.md](docs/OPS.md#weekly-repo-audit) and
+[docs/ARCHITECTURE-STANDARD.md](docs/ARCHITECTURE-STANDARD.md).
 
 ---
 
 ## Tech Stack
 
-| Technology | Purpose |
-|------------|---------|
-| Python 3.12+ | Runtime |
-| FastAPI | API framework |
-| SQLAlchemy | ORM |
-| PostgreSQL | Database |
-| Redis | Queue and cache |
-| Docker | Containerization |
-| nginx | Reverse proxy |
-| Tailwind CSS | Frontend styling |
-| Prometheus | Metrics |
-| sse-starlette | Real-time updates |
-| GitHub Actions | CI/CD |
+| Technology     | Purpose                          |
+| -------------- | -------------------------------- |
+| Python 3.12+   | Runtime                          |
+| FastAPI        | API framework                    |
+| SQLAlchemy     | ORM                              |
+| PostgreSQL     | Database                         |
+| Redis          | Queue and cache                  |
+| Docker         | Containerization                 |
+| Caddy          | Reverse proxy + TLS (standalone) |
+| Tailwind CSS   | Frontend styling                 |
+| Prometheus     | Metrics                          |
+| sse-starlette  | Real-time updates                |
+| GitHub Actions | CI/CD                            |
 
 ### Runtime Dependencies
 
@@ -233,8 +313,8 @@ See [docs/API.md](docs/API.md) for the full endpoint reference, request/response
 
 ```mermaid
 flowchart TD
-    Client([Client]) -->|HTTP/S| nginx[nginx]
-    nginx -->|Proxy| api[FastAPI API]
+    Client([Client]) -->|HTTP/S| proxy[Caddy proxy<br/>(standalone, TLS)]
+    proxy -->|Proxy| api[FastAPI API]
     api -->|SQL| db[(PostgreSQL)]
     api -->|Queue| redis[(Redis)]
     redis -->|Consume| worker[Worker<br/>yt-dlp]
@@ -244,7 +324,12 @@ flowchart TD
     api -.->|Errors| sentry[Sentry]
 ```
 
-The API server handles authentication, job management, HTMX rendering, SSE streaming, and observability. The worker consumes jobs from Redis, extracts media via yt-dlp, and manages file lifecycle. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full diagram and component details.
+The API server handles authentication, job management, HTMX rendering, SSE streaming, and
+observability. The worker consumes jobs from Redis, extracts media via yt-dlp, and manages file
+lifecycle. Production deployments run on any VPS behind a standalone Caddy reverse proxy (see
+[docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md)); Caddy terminates TLS with an origin
+certificate for Cloudflare. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full diagram
+and component details.
 
 ---
 
@@ -256,7 +341,7 @@ GNU General Public License v3.0. See [LICENSE](LICENSE).
 
 <div align="center">
 
-[![GitHub](https://img.shields.io/badge/View_on-GitHub-181717?style=for-the-badge&logo=github)](https://github.com/tomkabel/team21-vooglaadija)
-[![Issues](https://img.shields.io/badge/Report_Issue-EE3B3B?style=for-the-badge&logo=github)](https://github.com/tomkabel/team21-vooglaadija/issues)
+[![GitHub](https://img.shields.io/badge/View_on-GitHub-181717?style=for-the-badge&logo=github)](https://github.com/tomkabel/vooglaadija)
+[![Issues](https://img.shields.io/badge/Report_Issue-EE3B3B?style=for-the-badge&logo=github)](https://github.com/tomkabel/vooglaadija/issues)
 
 </div>

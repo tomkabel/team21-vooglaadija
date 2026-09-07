@@ -1,73 +1,71 @@
 # Database Backup Guide
 
+## Automated Backups (backup profile)
+
+The `backup` profile in `docker-compose.yml` runs daily PostgreSQL dumps (`pg_dump -Fc`,
+gzip-compressed custom-format `.dump` archives) at 02:00 with a 7-day retention
+(`BACKUP_RETENTION_DAYS`). Dumps land in `infra/backup/backup-data/`.
+
+```bash
+# Local stack (base + local override; loopback debug ports only)
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile backup up -d
+
+# Standalone production — also mounts the Caddy override, which binds host
+# ports 80/443 and requires the bootstrap-generated certs/ directory:
+docker compose -f docker-compose.yml -f docker-compose.local.yml -f docker-compose.caddy.yml --profile backup up -d
+```
+
+A one-off manual backup (no scheduler):
+
+```bash
+docker compose --profile backup run --rm backup
+```
+
 ## Quick Backup (Manual)
 
 ```bash
-# Run backup using the backup script
-PGPASSWORD=$DB_PASSWORD pg_dump -h localhost -U postgres -d ytprocessor -Fc -Z 6 > backup_$(date +%Y%m%d).sql.gz
-
-# Or via docker:
-docker-compose exec db pg_dump -U postgres -d ytprocessor -Fc -Z 6 > backup_$(date +%Y%m%d).sql.gz
-```
-
-## Automated Backups
-
-### Option 1: Cron Container
-
-Add to your production deployment:
-
-```bash
-docker-compose -f docker-compose.yml -f docker-compose.production.yml -f infra/backup/docker-compose.backup.yml up -d
-```
-
-### Option 2: External Cron Job
-
-Set up a cron job on your host:
-
-```bash
-# Daily at 2 AM
-0 2 * * * docker-compose exec -T db pg_dump -U postgres -d ytprocessor -Fc -Z 6 > /path/to/backups/ytprocessor_$(date +\%Y\%m\%d).sql.gz
-
-# Keep last 30 days
-0 3 * * * find /path/to/backups/ -name "ytprocessor_*.sql.gz" -mtime +30 -delete
-```
-
-### Option 3: Continuous Archiving with Point-in-Time Recovery
-
-For production, enable PostgreSQL WAL archiving:
-
-```bash
-# In docker-compose.production.yml
-db:
-  command: >
-    postgres
-    -c wal_level=replica
-    -c max_wal_senders=3
-    -c archive_mode=on
-    -c archive_command=' scp %p user@backup-server:/var/backups/wal/%f'
+# Via docker (custom-format archive, gzip-compressed)
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T db pg_dump -U postgres -d ytprocessor -Fc -Z 6 > backup_$(date +%Y%m%d).dump
 ```
 
 ## Restore from Backup
 
-```bash
-# Restore to local database
-pg_restore -h localhost -U postgres -d ytprocessor_restored backup_file.sql.gz
+Restore a custom-format `.dump` archive into the running database:
 
-# Or via docker:
-docker-compose exec -T db pg_restore -U postgres -d ytprocessor_restored /path/to/backup_file.sql.gz
+```bash
+# Custom-format archive
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec -i db pg_restore -U postgres -d ytprocessor --clean --if-exists < backup_file.dump
+
+# Plain SQL dump
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec -i db psql -U postgres -d ytprocessor < backup_file.sql
 ```
+
+> `pg_dump -Fc` archives are **not** gzip files despite the `-Z 6` flag — the compression is built
+> into the archive format, so they must be restored with `pg_restore`, not `gunzip`.
 
 ## Backup Verification
 
-Always verify your backups work:
+Always verify your backups work — a backup that has never been restored is only a theory:
 
 ```bash
 # List backups
-ls -la /path/to/backups/
+ls -la infra/backup/backup-data/
 
-# Check backup integrity
-pg_restore --help > /dev/null && echo "pg_restore is working"
-
-# Test restore to a different database
-PGPASSWORD=$DB_PASSWORD pg_restore -h localhost -U postgres -d ytprocessor_test -c /path/to/backup_file.sql.gz
+# Restore into a uniquely named scratch database, verify, then drop it:
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec db psql -U postgres -d postgres \
+  -c 'CREATE DATABASE scratch_restore_test;'
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec -i db pg_restore -U postgres -d scratch_restore_test < backup_file.dump
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec db psql -U postgres -d scratch_restore_test \
+  -c '\dt' \
+  -c 'SELECT count(*) FROM users;'
+# Verification complete — drop the scratch database:
+docker compose -f docker-compose.yml -f docker-compose.local.yml exec db psql -U postgres -d postgres \
+  -c 'DROP DATABASE scratch_restore_test;'
 ```
+
+## Production Notes
+
+- Copy dumps off the server (rsync to another host or object storage) — a backup on the same disk as
+  the data is not a real backup.
+- The standalone deployment stores its database in the `ytprocessor-postgres-data` volume; backups
+  via the profile above are the supported restore path.

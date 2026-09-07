@@ -1,22 +1,26 @@
-name: "CodeQL"
-
-# DISABLED: This workflow is temporarily disabled.
-# To re-enable, copy the triggers below into the `on:` section.
-#
-# on:
-#   push:
-#     branches: [main, develop]
-#   pull_request:
-#     branches: [main, develop]
-#   schedule:
-#     - cron: '33 7 * * 5'
+name: 'CodeQL'
 
 on:
+  push:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 9 * * 1'
   workflow_dispatch:
 
+# Advanced CodeQL configurations cannot upload SARIF while code scanning
+# "default setup" is enabled for this repository (GitHub rejects the run with
+# "CodeQL analyses from advanced configurations cannot be processed when the
+# default setup is enabled"). Default setup is active here and provides the
+# actual scan coverage (see the `dynamic/github-code-scanning/codeql` jobs).
+#
+# This advanced workflow is kept (pinned actions, Python analysis shape) and
+# re-armed by setting the repository variable CODEQL_ADVANCED_ENABLED=true —
+# which is required once default setup is turned off in repo settings. Until
+# then the job is skipped instead of failing every push.
 jobs:
   analyze:
     name: Analyze
+    if: vars.CODEQL_ADVANCED_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -26,16 +30,18 @@ jobs:
       contents: read
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
-      with:
-        languages: python
-        build-mode: none
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@b0c4fd77f6c559021d78430ec4d0d169ae74a4eb
+        with:
+          languages: python
+          build-mode: none
 
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
-      with:
-        category: "/language:python"
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@b0c4fd77f6c559021d78430ec4d0d169ae74a4eb
+        with:
+          category: '/language:python'

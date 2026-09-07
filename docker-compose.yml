@@ -1,21 +1,47 @@
 # ============================================
-# A++ Production Docker-Compose - 2026 Best Practices
-# Resource Limits, Security, Observability, GitOps Ready
+# Vooglaadija — production Docker Compose
+# ============================================
+# This is the SINGLE source of truth for the application stack.
+#
+# Deployment:
+#   - Production (recommended): deploy/bootstrap.sh provisions Docker on any
+#     VPS, generates secrets into ./.env, sets up the Caddyfile + TLS origin
+#     cert and deploys this file together with docker-compose.local.yml and
+#     docker-compose.caddy.yml (standalone Caddy reverse proxy, no Coolify).
+#   - Local development:
+#       cp .env.example .env   # set secrets
+#       docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+#
+# Design notes (2026 best practices):
+#   - No custom networks: the default compose network is used; the standalone
+#     Caddy service (docker-compose.caddy.yml) joins it and forwards to api:8000.
+#   - No host port bindings here: Caddy (docker-compose.caddy.yml) is the only
+#     public entry point on ports 80/443. Debug ports live in
+#     docker-compose.local.yml (loopback only).
+#   - api/worker can pull registry images (GHCR, built in CI) or build locally
+#     via docker-compose.local.yml build targets.
+#   - Profiles: 'monitoring' (Prometheus + Grafana), 'backup' (PostgreSQL dumps).
+#   - json-file logging with rotation on every service (no host plugin required).
 # ============================================
 
-x-common-env:
-  &common-env # Database components (app/config.py constructs URL with proper encoding)
+x-common-env: &common-env # Database components (app/config.py constructs URL with proper encoding)
   DB_USER: ${DB_USER:-postgres}
   DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
   DB_NAME: ${DB_NAME:-ytprocessor}
   DB_HOST: ${DB_HOST:-db}
   DB_PORT: ${DB_PORT:-5432}
+  DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+  DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+  DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-30}
+  DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-1800}
   # Redis components (app/config.py constructs URL from REDIS_URL or components)
   REDIS_URL: ${REDIS_URL:-}
   REDIS_HOST: ${REDIS_HOST:-redis}
   REDIS_PORT: ${REDIS_PORT:-6379}
   REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
   SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+  SECRET_KEY_PREVIOUS: ${SECRET_KEY_PREVIOUS:-}
+  ENVIRONMENT: ${ENVIRONMENT:-production}
   FILE_EXPIRE_HOURS: ${FILE_EXPIRE_HOURS:-24}
   STORAGE_PATH: /app/storage
   # Observability
@@ -27,22 +53,24 @@ x-common-env:
   # Feature flags
   FEATURE_METRICS_ENABLED: ${FEATURE_METRICS_ENABLED:-true}
   FEATURE_TRACING_ENABLED: ${FEATURE_TRACING_ENABLED:-true}
+  FEATURE_CHAOS_API_ENABLED: ${FEATURE_CHAOS_API_ENABLED:-false}
+  FEATURE_THROTTLE_PREEMPTIVE_ENABLED: ${FEATURE_THROTTLE_PREEMPTIVE_ENABLED:-false}
 
 x-base-service: &base-service
   deploy:
     resources:
       limits:
-        cpus: "1.0"
+        cpus: '1.0'
         memory: 1G
       reservations:
-        cpus: "0.25"
+        cpus: '0.25'
         memory: 256M
   read_only: true
   tmpfs:
     - /tmp
     - /var/run
     - /var/cache
-  user: "1000:1000"
+  user: '1000:1000'
   cap_drop:
     - ALL
   cap_add:
@@ -53,34 +81,65 @@ x-base-service: &base-service
     - no-new-privileges=true
 
 services:
+  # ==========================================
+  # Storage init — fix named volume permissions
+  # ==========================================
+  storage-init:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+    image: alpine:3.20
+    restart: 'no'
+    volumes:
+      - storage:/app/storage:rw
+    # Named volumes are now bind-mounted to the HDDs via the volume
+    # definitions at the bottom of this file (see DATA_ROOT doc).
+    command: |
+      sh -c "
+        echo 'Fixing storage permissions...';
+        chown -R 1000:1000 /app/storage 2>/dev/null || true;
+        mkdir -p /app/storage/downloads /app/storage/temp 2>/dev/null || true;
+        chown -R 1000:1000 /app/storage/downloads /app/storage/temp 2>/dev/null || true;
+        echo 'Storage permissions fixed';
+        exit 0;
+      "
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+  # ==========================================
+  # API — FastAPI application
+  # ==========================================
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: api
     container_name: ytprocessor-api
+    image: ghcr.io/tomkabel/vooglaadija:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       <<: *common-env
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:8081,http://127.0.0.1:8080,http://asus:8081}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:8081,http://127.0.0.1:8080}
+      COOKIE_SECURE: ${COOKIE_SECURE:-True}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
       REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
-      # Override DATABASE_URL to use docker network hostnames (interpolated from env vars)
-      DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD}@${DB_HOST:-db}:${DB_PORT:-5432}/${DB_NAME:-ytprocessor}
-      # Override REDIS_URL to use docker network hostname (interpolated from env vars)
-      REDIS_URL: redis://:${REDIS_PASSWORD}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}
+      # Rate-limit counters share the same Redis the queue uses. Leave
+      # RATE_LIMIT_REDIS_URL empty (default) to let the app derive the URL
+      # from REDIS_HOST/REDIS_PORT/REDIS_PASSWORD in Python, quote_plus-
+      # encoding the password exactly like core/config.py — no manual
+      # URL-encoding, and it stays in sync when REDIS_HOST/REDIS_PORT change.
+      RATE_LIMIT_REDIS_URL: ${RATE_LIMIT_REDIS_URL:-}
       # Enable observability
       OTEL_PYTHON_TRACER_PROVIDER: otel
       OTEL_PYTHON_METER_PROVIDER: otel
     expose:
-      - "8000"
-    ports:
-      - "127.0.0.1:8000:8000"
+      - '8000'
     volumes:
-      - storage:/app/storage:Z # SELinux label
-      # Config could be mounted as read-only if needed
-      # - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - storage:/app/storage # bind-mounted to HDD (see volumes: block)
     depends_on:
+      storage-init:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:
@@ -89,260 +148,574 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)\" || exit 1",
+          'CMD-SHELL',
+          'python -c "import urllib.request;
+          urllib.request.urlopen(''http://localhost:8000/health'', timeout=5)" || exit 1',
         ]
       interval: 15s
       timeout: 10s
       retries: 3
       start_period: 30s
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
-        compress: "true"
-    # Networks and aliases for service discovery
-    networks:
-      ytprocessor-network:
-        aliases:
-          - api
-          - backend
+        max-size: '10m'
+        max-file: '3'
 
+  # ==========================================
+  # Celery Worker — background job processor
+  # ==========================================
   worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: worker
-    container_name: ytprocessor-worker
+    # NOTE: no static container_name — it blocks `deploy.replicas` (Compose
+    # requires unique names per replica). The container is named
+    # `vooglaadija-worker-N` automatically; inter-service comms and Prometheus
+    # use the service name `worker`, so removing this is safe.
+    image: ghcr.io/tomkabel/vooglaadija:worker-${IMAGE_TAG:-latest}
+    # Scale out by setting WORKER_REPLICAS>1 in the environment (each replica
+    # runs the bounded concurrency pool from #160, so total parallelism is
+    # WORKER_REPLICAS * WORKER_CONCURRENCY).
+    environment:
+      <<: *common-env
+      CELERY_QUEUES: ${CELERY_QUEUES:-downloads,retries,dlq}
+      CELERY_CONCURRENCY: ${CELERY_CONCURRENCY:-2}
+      WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-8082}
+      DB_MAX_OVERFLOW: ${WORKER_DB_MAX_OVERFLOW:-2}
+      DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-3}
+      BROWSER_DOWNLOADER_ENABLED: ${BROWSER_DOWNLOADER_ENABLED:-true}
+      BROWSER_DOWNLOADER_ENDPOINT: ${BROWSER_DOWNLOADER_ENDPOINT:-http://browser-downloader:3000}
+    volumes:
+      - storage:/app/storage
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      browser-downloader:
+        condition: service_started
+    <<: *base-service
+    command: ['python', '-m', 'worker.celery_main', 'worker']
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
+      resources:
+        # Raised from 0.75 CPU / 512M to back the concurrency pool (#160/#161):
+        # ~2 concurrent yt-dlp/ffmpeg jobs need ~1-1.5 CPU and ~1-1.5 GB during
+        # format negotiation. A single replica now sustains WORKER_CONCURRENCY=2.
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request;
+          urllib.request.urlopen(''http://localhost:8082/health'', timeout=5)" || exit 1',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ==========================================
+  # Celery Beat — scheduled tasks
+  # ==========================================
+  celery-beat:
+    container_name: ytprocessor-celery-beat
+    image: ghcr.io/tomkabel/vooglaadija:worker-${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       <<: *common-env
-      WORKER_ID: ${HOSTNAME:-worker-1}
-      WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-8082}
-      # Override DATABASE_URL to use docker network hostnames (interpolated from env vars)
-      DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD}@${DB_HOST:-db}:${DB_PORT:-5432}/${DB_NAME:-ytprocessor}
-      # Override REDIS_URL to use docker network hostname (interpolated from env vars)
-      REDIS_URL: redis://:${REDIS_PASSWORD}@${REDIS_HOST:-redis}:${REDIS_PORT:-6379}
+      # core.config.Settings requires DB_POOL_SIZE + DB_MAX_OVERFLOW >=
+      # WORKER_CONCURRENCY + 2 for every process, including beat (which
+      # never runs downloads and leaves WORKER_CONCURRENCY at its default
+      # of 2, so the pool must total >= 4). Lowering WORKER_CONCURRENCY
+      # instead would also lower YT_DLP_EXTRACTION_CONCURRENCY's default,
+      # which the yt-dlp pool-size validator checks against — so the pool
+      # is bumped here rather than touching worker-role settings.
+      DB_POOL_SIZE: '2'
+      DB_MAX_OVERFLOW: '2'
     volumes:
       - storage:/app/storage:Z
+      # Named volume holds the PersistentScheduler schedule file
+      # (`/tmp/celerybeat-schedule`) so last-run state survives restarts.
+      - celery_beat_data:/var/lib/celerybeat:z
+    tmpfs:
+      - /var/run
+      - /var/cache
     depends_on:
+      storage-init:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
     <<: *base-service
+    command: ['python', '-m', 'worker.celery_main', 'beat']
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    healthcheck:
+      test: ['CMD-SHELL', 'test -f /var/lib/celerybeat/celerybeat-schedule && exit 0 || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # ==========================================
+  # Flower — Celery monitoring dashboard
+  # ==========================================
+  flower:
+    container_name: ytprocessor-flower
+    image: ghcr.io/tomkabel/vooglaadija:worker-${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      FLOWER_PORT: ${FLOWER_PORT:-5555}
+      FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:?FLOWER_BASIC_AUTH is required}
+    # Flower doesn't touch downloaded files, but importing core.config
+    # (via worker.celery_main) validates STORAGE_PATH is writable for every
+    # process — without this mount, the read-only root filesystem below
+    # makes that validation fail and the container crash-loops on startup.
+    volumes:
+      - storage:/app/storage:Z
+    expose:
+      - '5555'
+    depends_on:
+      - worker
+      - redis
+    <<: *base-service
+    command: ['python', '-m', 'worker.celery_main', 'flower']
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=5)\" || exit 1",
+          'CMD-SHELL',
+          'python -c "import urllib.request;
+          urllib.request.urlopen(''http://localhost:5555/healthcheck'', timeout=5)" || exit 1',
         ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ==========================================
+  # Browser downloader — TikTok/Instagram microservice (Phase 2)
+  # ==========================================
+  browser-downloader:
+    container_name: ytprocessor-browser-downloader
+    image: ghcr.io/tomkabel/vooglaadija:browser-downloader-${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: packages/browser-downloader/Dockerfile
+    restart: unless-stopped
+    environment:
+      # The worker passes output_dir = <storage_path>/downloads; the
+      # microservice validates output dirs strictly under BD_OUTPUT_BASE.
+      BD_OUTPUT_BASE: /app/storage
+      BD_REQUEST_TIMEOUT_MS: ${BD_REQUEST_TIMEOUT_MS:-300000}
+    volumes:
+      - storage:/app/storage:Z
+    expose:
+      - '3000'
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
+    <<: *base-service
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:3000/health']
       interval: 15s
       timeout: 10s
       retries: 3
       start_period: 30s
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
-        compress: "true"
-    networks:
-      ytprocessor-network:
-        aliases:
-          - worker
+        max-size: '10m'
+        max-file: '3'
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
 
+  # ==========================================
+  # PostgreSQL
+  # ==========================================
   db:
-    image: postgres:15-alpine # Removed problematic digest for now
     container_name: ytprocessor-db
+    image: postgres:15-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       POSTGRES_DB: ${DB_NAME:-ytprocessor}
       # PostgreSQL tuning for containers
-      POSTGRES_INITDB_ARGS: "--data-checksums"
+      POSTGRES_INITDB_ARGS: '--data-checksums'
     volumes:
-      - postgres_data:/var/lib/postgresql/data:Z
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-        compress: "true"
-    # Database typically needs more resources
-    # Note: PostgreSQL must run as its default user, not overridden by security-context
+      - postgres_data:/var/lib/postgresql/data
+    ports: []
+    # PostgreSQL must run as its default user, not overridden by security-context
     deploy:
       resources:
         limits:
-          cpus: "1.5"
+          cpus: '1.5'
           memory: 1G
         reservations:
-          cpus: "0.5"
+          cpus: '0.5'
           memory: 256M
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-ytprocessor}",
-        ]
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-ytprocessor}']
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
-    # Database should be read-only except for data directory
-    # This is handled by the volume mount
-    networks:
-      ytprocessor-network:
-        aliases:
-          - db
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
 
+  # ==========================================
+  # Redis — job queue and cache
+  # ==========================================
   redis:
-    image: redis:7-alpine
     container_name: ytprocessor-redis
+    image: redis:7-alpine
     restart: unless-stopped
     # Use exec form for proper signal handling
     command:
       - redis-server
       - --requirepass
-      - "${REDIS_PASSWORD}"
+      - '${REDIS_PASSWORD:?REDIS_PASSWORD is required}'
       - --appendonly
-      - "yes"
+      - 'yes'
       - --maxmemory
-      - "256mb"
+      - '256mb'
       - --maxmemory-policy
       - allkeys-lru
       - --save
-      - "" # Disable RDB snapshots (we rely on AOF)
+      - '' # Disable RDB snapshots (we rely on AOF)
       - --appendfilename
-      - "appendonly.aof"
+      - 'appendonly.aof'
     volumes:
-      - redis_data:/data:Z
+      - redis_data:/data
     environment:
-      REDISCLI_AUTH: "${REDIS_PASSWORD}"
+      REDISCLI_AUTH: '${REDIS_PASSWORD}'
     security_opt:
       - no-new-privileges=true
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-        compress: "true"
     deploy:
       resources:
         limits:
-          cpus: "0.5"
+          cpus: '0.5'
           memory: 256M
         reservations:
-          cpus: "0.25"
+          cpus: '0.25'
           memory: 64M
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping"]
+      test: ['CMD-SHELL', 'redis-cli ping']
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 5s
-    networks:
-      ytprocessor-network:
-        aliases:
-          - redis
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
 
-  # Optional: Observability stack (for local development/testing)
+  # ==========================================
+  # OpenTelemetry Collector
+  # ==========================================
   otel-collector:
     image: otel/opentelemetry-collector:0.88.0
-    container_name: otel-collector
     restart: unless-stopped
-    command: ["--config=/etc/otel-collector-config.yml"]
+    command: ['--config=/etc/otel-collector-config.yml']
     volumes:
       - ./infra/otel-collector-config.yml:/etc/otel-collector-config.yml:ro
-    ports:
-      - "4317:4317" # OTLP gRPC
-      - "4318:4318" # OTLP HTTP
+    environment:
+      # Used by infra/otel-collector-config.yml env expansion. The fallback is
+      # local/dev only; production should set a real OTLP/gRPC backend target.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-localhost:4317}
+      OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-false}
+      # Pipeline exporter selector. Defaults to "debug" so the collector prints
+      # received telemetry and does NOT forward back to its own plain gRPC
+      # receiver (which previously caused a continuous TLS handshake error loop).
+      # Set to "otlp" ONLY when a real downstream OTLP backend is configured via
+      # OTEL_EXPORTER_OTLP_ENDPOINT (TLS-capable, not this collector's own
+      # receiver).
+      OTEL_SELF_EXPORT_ENABLED: debug
+    expose:
+      - '4317' # OTLP gRPC
+      - '4318' # OTLP HTTP
     security_opt:
       - no-new-privileges=true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
-        compress: "true"
-    networks:
-      ytprocessor-network:
-        aliases:
-          - otel-collector
+        max-size: '10m'
+        max-file: '3'
 
-  # Nginx reverse proxy for API with SSL
-  nginx:
-    image: nginx:alpine
-    container_name: ytprocessor-nginx
+  # ==========================================
+  # Monitoring (optional) — Prometheus + Grafana
+  # Usage: docker compose --profile monitoring up -d
+  # ==========================================
+  prometheus:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    image: prom/prometheus:v2.54.1
+    profiles: ['monitoring']
     restart: unless-stopped
-    ports:
-      - "80:80" # Override with docker-compose.local.yml on rootless systems
-      - "443:443"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+      - --web.enable-lifecycle
+      # 12h retention keeps the dashboard meaningful without excessive disk usage
+      - --storage.tsdb.retention.time=12h
     volumes:
-      - ./infra/nginx/nginx.ssl.local.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./infra/ssl:/etc/nginx/ssl:ro
-      - ./infra/certbot/data:/var/www/certbot:ro
-    depends_on:
-      api:
-        condition: service_healthy
-    healthcheck:
-      test:
-        ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-        compress: "true"
-    networks:
-      ytprocessor-network:
-        aliases:
-          - nginx
-
-  # Optional: API documentation (for development)
-  swagger-ui:
-    image: swaggerapi/swagger-ui:v5.1.0 # Pinned version for stability
-    container_name: swagger-ui
-    restart: unless-stopped
-    environment:
-      # Route OpenAPI spec fetch through nginx reverse proxy (host:8080 -> nginx:80)
-      # This keeps all external traffic through the established reverse proxy architecture.
-      # Browser (at swagger-ui host:8081) fetches from nginx (host:8080), which proxies to api:8000
-      URL: http://127.0.0.1:8080/openapi.json
+      - ./infra/prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
     ports:
-      - "8081:8080"
-    # swagger-ui doesn't need resource limits or security context restrictions
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-        compress: "true"
+      - '127.0.0.1:9090:9090'
     depends_on:
       - api
-    networks:
-      ytprocessor-network:
-        aliases:
-          - swagger-ui
+    security_opt:
+      - no-new-privileges=true
+    user: '65534:65534'
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:9090/-/healthy']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+  grafana:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    image: grafana/grafana:11.3.0
+    profiles: ['monitoring']
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD:
+        ${GF_SECURITY_ADMIN_PASSWORD:?GF_SECURITY_ADMIN_PASSWORD is required}
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: dark
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/vooglaadija-chaos-demo.json
+      GF_PANELS_DISABLE_SANITIZE_HTML: 'true'
+    volumes:
+      - ./infra/grafana/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+      - ./infra/grafana/dashboard-provider.yml:/etc/grafana/provisioning/dashboards/dashboard-provider.yml:ro
+      - ./monitoring/grafana-dashboard-demo.json:/etc/grafana/provisioning/dashboards/vooglaadija-chaos-demo.json:ro
+      - ./monitoring/grafana-dashboard-full.json:/etc/grafana/provisioning/dashboards/vooglaadija-chaos-full.json:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      - prometheus
+    security_opt:
+      - no-new-privileges=true
+    user: '472:472'
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:3000/api/health']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+  # ==========================================
+  # Backups (optional) — daily PostgreSQL dumps
+  # Usage: docker compose --profile backup up -d
+  # ==========================================
+  backup:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    image: postgres:15-alpine
+    profiles: ['backup']
+    restart: 'no'
+    volumes:
+      - ./infra/backup/backup.sh:/usr/local/bin/backup.sh:ro
+      - backup_data:/var/backup/ytprocessor
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${DB_USER:-postgres}
+      PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      PGDATABASE: ${DB_NAME:-ytprocessor}
+      BACKUP_OUTPUT_DIR: /var/backup/ytprocessor
+      RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+    entrypoint: ['/bin/bash', '/usr/local/bin/backup.sh']
+    depends_on:
+      db:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+  backup-cron:
+    image: alpine:3.20
+    profiles: ['backup']
+    restart: unless-stopped
+    volumes:
+      - ./infra/backup/backup.sh:/usr/local/bin/backup.sh:ro
+      - backup_data:/var/backup/ytprocessor
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${DB_USER:-postgres}
+      PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      PGDATABASE: ${DB_NAME:-ytprocessor}
+      BACKUP_OUTPUT_DIR: /var/backup/ytprocessor
+      RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+    entrypoint: |
+      /bin/sh -c "
+        set -e
+        apk add --no-cache postgresql15-client >/dev/null 2>&1
+        echo '0 2 * * * /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1' > /etc/crontabs/root
+        crond -f -l 2
+      "
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+# ============================================================
+# DATA_ROOT — all large/persistent data lives on the HDDs, NOT the root SSD
+# ============================================================
+# The named volumes below are backed by host bind mounts on the HDDs so that
+# Docker stores every byte of real data under /mnt/<disk>/... instead of
+# /var/lib/docker/volumes/ (which is on the root SSD).
+#
+#   /dev/vdb2 (2.0T, empty) -> /mnt/new_storage  (general blob storage)
+#   /dev/vdb1 (6.0T)        -> /mnt/db_storage   (PostgreSQL data)
+#
+# The host directories were pre-created with the correct ownership/permissions
+# for each service's runtime UID (postgres 70:70, redis 999:1000,
+# prometheus 65534, grafana 472, app 1000:1000).
+#
+# To relocate later, change the `device:` paths below AND move the host
+# directories (e.g. rsync /mnt/new_storage/* to the new path).
+# ============================================================
 
 volumes:
   postgres_data:
     name: ytprocessor-postgres-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/db_storage/postgres
   redis_data:
     name: ytprocessor-redis-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/new_storage/redis
   storage:
     name: ytprocessor-storage
-
-networks:
-  ytprocessor-network:
-    name: ytprocessor-network
-    # Enable network isolation and policies
-    driver: bridge
-    # Internal network for service-to-service communication only
-    internal: false
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/new_storage/storage
+  prometheus_data:
+    name: ytprocessor-prometheus-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/new_storage/prometheus
+  grafana_data:
+    name: ytprocessor-grafana-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/new_storage/grafana
+  backup_data:
+    name: ytprocessor-backup-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/new_storage/backups
+  celery_beat_data:
+    name: ytprocessor-celery-beat-data

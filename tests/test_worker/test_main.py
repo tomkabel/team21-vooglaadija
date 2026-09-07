@@ -1,16 +1,28 @@
 """Tests for worker main module."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 
-from app.config import settings
-from app.models.download_job import DownloadJob
+from core.config import settings
+from core.models.download_job import DownloadJob
 from worker.main import cleanup_expired_jobs
 
 _DOWNLOADS_DIR = f"{settings.storage_path}/downloads"
+
+
+def _make_mock_session_factory():
+    """Return a mock async session factory where SELECT 1 succeeds."""
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=None)
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+    mock_factory = MagicMock(return_value=mock_cm)
+    return mock_factory
 
 
 class TestCleanupExpiredJobs:
@@ -50,16 +62,8 @@ class TestCleanupExpiredJobs:
         db_session.add(job)
         await db_session.commit()
 
-        # Mock file operations: realpath resolves to downloads dir, file exists
-        def mock_realpath(path):
-            if path == settings.storage_path:
-                return settings.storage_path
-            if path == f"{settings.storage_path}/downloads":
-                return f"{settings.storage_path}/downloads"
-            return f"{_DOWNLOADS_DIR}/test.mp4"
-
         with (
-            patch("worker.main.os.path.realpath", side_effect=mock_realpath),
+            patch("worker.main.validate_path", return_value=f"{_DOWNLOADS_DIR}/test.mp4"),
             patch("worker.main.os.path.exists", return_value=True),
         ):
             with patch("worker.main.os.remove") as mock_remove:
@@ -82,23 +86,17 @@ class TestCleanupExpiredJobs:
         db_session.add(job)
         await db_session.commit()
 
-        storage_paths = {settings.storage_path, f"{settings.storage_path}/downloads"}
-
-        def realpath_side_effect(path):
-            if path == "/etc/passwd":
-                return "/etc/passwd"
-            if path in storage_paths:
-                return f"{settings.storage_path}/downloads"
-            return path
-
         with (
-            patch("worker.main.os.path.realpath", side_effect=realpath_side_effect),
+            patch("worker.main.validate_path", side_effect=ValueError("Path traversal detected")),
             patch("worker.main.os.path.exists", return_value=True),
         ):
             with patch("worker.main.os.remove") as mock_remove:
                 count = await cleanup_expired_jobs()
                 assert count == 0
                 mock_remove.assert_not_called()
+
+        await db_session.refresh(job)
+        assert job.status == "completed"
 
     @pytest.mark.unit
     async def test_cleanup_expired_jobs_handles_missing_file(self, db_session):
@@ -115,15 +113,8 @@ class TestCleanupExpiredJobs:
         db_session.add(job)
         await db_session.commit()
 
-        storage_paths = {settings.storage_path, f"{settings.storage_path}/downloads"}
-
-        def mock_realpath(path):
-            if path in storage_paths:
-                return f"{settings.storage_path}/downloads"
-            return f"{_DOWNLOADS_DIR}/nonexistent.mp4"
-
         with (
-            patch("worker.main.os.path.realpath", side_effect=mock_realpath),
+            patch("worker.main.validate_path", return_value=f"{_DOWNLOADS_DIR}/nonexistent.mp4"),
             patch("worker.main.os.path.exists", return_value=False),
         ):
             with patch("worker.main.os.remove") as mock_remove:
@@ -186,19 +177,38 @@ class TestCleanupExpiredJobs:
             db_session.add(job)
         await db_session.commit()
 
-        storage_paths = {settings.storage_path, f"{settings.storage_path}/downloads"}
-
-        def mock_realpath(path):
-            if path in storage_paths:
-                return f"{settings.storage_path}/downloads"
-            return f"{_DOWNLOADS_DIR}/test0.mp4"
-
         with (
-            patch("worker.main.os.path.realpath", side_effect=mock_realpath),
+            patch("worker.main.validate_path", return_value=f"{_DOWNLOADS_DIR}/test0.mp4"),
             patch("worker.main.os.path.exists", return_value=False),
         ):
             count = await cleanup_expired_jobs()
             assert count == 3
+
+    @pytest.mark.unit
+    async def test_cleanup_expired_jobs_rejects_sibling_prefix_path(self, db_session):
+        """Sibling-prefix paths are skipped without deleting the file or DB row."""
+        past_time = datetime.now(UTC) - timedelta(hours=1)
+        job = DownloadJob(
+            id=UUID("550e8400-e29b-41d4-a716-446655440023"),
+            user_id=UUID("550e8400-e29b-41d4-a716-446655440005"),
+            url="https://www.youtube.com/watch?v=test",
+            status="completed",
+            expires_at=past_time,
+            file_path=f"{_DOWNLOADS_DIR}_evil/test.mp4",
+        )
+        db_session.add(job)
+        await db_session.commit()
+
+        with (
+            patch("worker.main.os.path.exists", return_value=True),
+            patch("worker.main.os.remove") as mock_remove,
+        ):
+            count = await cleanup_expired_jobs()
+
+        assert count == 0
+        mock_remove.assert_not_called()
+        await db_session.refresh(job)
+        assert job.status == "completed"
 
 
 class TestWorkerMainStartup:
@@ -207,16 +217,6 @@ class TestWorkerMainStartup:
     The main() function now verifies Redis and database connectivity before
     entering the processing loop. These tests exercise those early-exit paths.
     """
-
-    def _make_mock_session_factory(self):
-        """Return a mock async session factory where SELECT 1 succeeds."""
-        mock_db = AsyncMock()
-        mock_db.execute = AsyncMock(return_value=None)
-        mock_cm = AsyncMock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_db)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
-        mock_factory = MagicMock(return_value=mock_cm)
-        return mock_factory
 
     @pytest.mark.unit
     async def test_main_raises_when_redis_ping_fails(self):
@@ -232,11 +232,14 @@ class TestWorkerMainStartup:
             patch("worker.main.redis_client", mock_redis),
             patch("worker.main.start_health_server"),
             patch("worker.main.stop_health_server"),
+            patch("worker.main.close_health_redis_client", new_callable=AsyncMock),
             patch("worker.main.update_worker_state"),
             patch("worker.main.write_health_async", new_callable=AsyncMock),
         ):
+            from worker.main import main as _worker_main
+
             with pytest.raises(ConnectionError, match="Redis unavailable"):
-                await __import__("worker.main", fromlist=["main"]).main()
+                await _worker_main()
 
     @pytest.mark.unit
     async def test_main_raises_when_db_connection_fails(self):
@@ -261,6 +264,7 @@ class TestWorkerMainStartup:
             patch("worker.main.get_async_session_factory", return_value=mock_factory),
             patch("worker.main.start_health_server"),
             patch("worker.main.stop_health_server"),
+            patch("worker.main.close_health_redis_client", new_callable=AsyncMock),
             patch("worker.main.update_worker_state"),
             patch("worker.main.write_health_async", new_callable=AsyncMock),
         ):
@@ -280,7 +284,7 @@ class TestWorkerMainStartup:
         mock_redis.eval = AsyncMock(return_value=[])
         mock_redis.brpop = AsyncMock(return_value=None)
 
-        mock_factory = self._make_mock_session_factory()
+        mock_factory = _make_mock_session_factory()
 
         mock_health_server = MagicMock()
 
@@ -289,6 +293,7 @@ class TestWorkerMainStartup:
             patch("worker.main.get_async_session_factory", return_value=mock_factory),
             patch("worker.main.start_health_server", return_value=mock_health_server),
             patch("worker.main.stop_health_server"),
+            patch("worker.main.close_health_redis_client", new_callable=AsyncMock),
             patch("worker.main.update_worker_state"),
             patch("worker.main.write_health_async", new_callable=AsyncMock),
             patch("worker.main.sync_outbox_to_queue", new_callable=AsyncMock),
@@ -319,13 +324,14 @@ class TestWorkerMainStartup:
         mock_redis.eval = AsyncMock(return_value=[])
         mock_redis.brpop = AsyncMock(return_value=None)
 
-        mock_factory = self._make_mock_session_factory()
+        mock_factory = _make_mock_session_factory()
 
         with (
             patch("worker.main.redis_client", mock_redis),
             patch("worker.main.get_async_session_factory", return_value=mock_factory),
             patch("worker.main.start_health_server", return_value=None),
             patch("worker.main.stop_health_server"),
+            patch("worker.main.close_health_redis_client", new_callable=AsyncMock),
             patch("worker.main.update_worker_state"),
             patch("worker.main.write_health_async", new_callable=AsyncMock),
             patch("worker.main.sync_outbox_to_queue", new_callable=AsyncMock),
@@ -366,6 +372,7 @@ class TestWorkerMainStartup:
             patch("worker.main.get_async_session_factory", return_value=mock_factory),
             patch("worker.main.start_health_server", return_value=None),
             patch("worker.main.stop_health_server"),
+            patch("worker.main.close_health_redis_client", new_callable=AsyncMock),
             patch("worker.main.update_worker_state"),
             patch("worker.main.write_health_async", new_callable=AsyncMock),
             patch("worker.main.sync_outbox_to_queue", new_callable=AsyncMock),
@@ -377,3 +384,161 @@ class TestWorkerMainStartup:
         assert any("SELECT" in c.upper() or "select" in c for c in db_calls), (
             "Expected a SELECT statement to be executed during DB startup check"
         )
+
+    @pytest.mark.unit
+    async def test_midflight_shutdown_cancels_inflight_job_after_grace(self):
+        """A shutdown that arrives mid-job should still bound the task by grace period."""
+        import importlib
+
+        import worker.main
+
+        importlib.reload(worker.main)
+        worker.main.shutdown_event.clear()
+        worker.main.shutdown_requested_at = None
+        original_grace = worker.main.GRACE_PERIOD_SECONDS
+
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def long_running_job():
+            started.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        task = asyncio.create_task(long_running_job())
+
+        try:
+            await started.wait()
+            worker.main.GRACE_PERIOD_SECONDS = 0
+            worker.main._signal_handler()
+            await worker.main._await_current_job_with_shutdown_grace(task, "job-123")
+        finally:
+            worker.main.GRACE_PERIOD_SECONDS = original_grace
+            worker.main.shutdown_event.clear()
+            worker.main.shutdown_requested_at = None
+
+        assert cancelled.is_set()
+        assert task.cancelled()
+
+
+class TestWorkerConcurrencyPool:
+    """The worker main loop runs up to WORKER_CONCURRENCY jobs in parallel."""
+
+    @pytest.mark.unit
+    async def test_loop_processes_multiple_jobs_concurrently(self):
+        """With WORKER_CONCURRENCY>1 the loop dispatches several jobs at once
+        and refills the pool after completed tasks are reaped."""
+        import importlib
+
+        import worker.main
+
+        importlib.reload(worker.main)
+
+        from worker.main import main, settings, shutdown_event
+
+        original_concurrency = worker.main.settings.worker_concurrency
+        worker.main.settings.worker_concurrency = 3
+        # avoid re-reading the attribute from a different settings instance
+        settings.worker_concurrency = 3
+
+        shutdown_event.clear()
+        worker.main.shutdown_requested_at = None
+
+        job_ids = [f"job-{i}" for i in range(6)]
+
+        # Track concurrency: count tasks alive inside process_next_job.
+        active = 0
+        max_active = 0
+        started_jobs: list[str] = []
+        dispatch_gate = asyncio.Event()
+        started_event = asyncio.Event()
+
+        async def fake_process_next_job(job_id=None):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            started_jobs.append(str(job_id))
+            started_event.set()
+            # Let the loop dispatch more jobs before this one finishes.
+            await dispatch_gate.wait()
+            active -= 1
+            return True
+
+        # brpop returns queued jobs then blocks (returns None forever after).
+        brpop_calls = {"n": 0}
+
+        async def fake_brpop(queue, timeout=2):
+            n = brpop_calls["n"]
+            brpop_calls["n"] += 1
+            if n < len(job_ids):
+                return ("download_queue", job_ids[n])
+            return None
+
+        # Let the initial batch fill the pool and block on the gate, then
+        # release it; wait for a replenished job (job-3) to start — proving
+        # _reap_in_flight refills the pool — before signalling shutdown.
+        async def trigger_shutdown_later():
+            deadline = asyncio.get_running_loop().time() + 5.0
+            while max_active < 3 and asyncio.get_running_loop().time() < deadline:
+                started_event.clear()
+                try:
+                    await asyncio.wait_for(started_event.wait(), timeout=0.5)
+                except TimeoutError:
+                    pass
+            dispatch_gate.set()
+            while (
+                "job-3" not in started_jobs and asyncio.get_running_loop().time() < deadline + 5.0
+            ):
+                started_event.clear()
+                try:
+                    await asyncio.wait_for(started_event.wait(), timeout=0.5)
+                except TimeoutError:
+                    pass
+            worker.main._signal_handler()
+            dispatch_gate.set()
+
+        mock_redis = AsyncMock()
+        mock_redis.ping = AsyncMock(return_value=True)
+        mock_redis.eval = AsyncMock(return_value=[])
+        mock_redis.brpop = fake_brpop
+
+        mock_factory = _make_mock_session_factory()
+        mock_health_server = MagicMock()
+
+        shutdown_task = asyncio.create_task(trigger_shutdown_later())
+        try:
+            with (
+                patch("worker.main.redis_client", mock_redis),
+                patch("worker.main.get_async_session_factory", return_value=mock_factory),
+                patch("worker.main.process_next_job", fake_process_next_job),
+                patch("worker.main.start_health_server", return_value=mock_health_server),
+                patch("worker.main.stop_health_server"),
+                patch("worker.main.close_health_redis_client", new_callable=AsyncMock),
+                patch("worker.main.update_worker_state"),
+                patch("worker.main.write_health_async", new_callable=AsyncMock),
+                patch("worker.main.sync_outbox_to_queue", new_callable=AsyncMock),
+                patch("worker.main.cleanup_expired_jobs", new_callable=AsyncMock, return_value=0),
+                patch("worker.main.requeue_stuck_jobs", new_callable=AsyncMock, return_value=0),
+                patch(
+                    "worker.main._drain_circuit_deferred", new_callable=AsyncMock, return_value=0
+                ),
+            ):
+                await main()
+        finally:
+            if not shutdown_task.done():
+                shutdown_task.cancel()
+            worker.main.settings.worker_concurrency = original_concurrency
+            settings.worker_concurrency = original_concurrency
+            shutdown_event.clear()
+            worker.main.shutdown_requested_at = None
+
+        # The loop must have run more than one job at a time.
+        assert max_active >= 2, f"max concurrent jobs observed: {max_active}"
+        assert max_active <= 3, f"concurrency exceeded limit: {max_active}"
+        # The pool must have been refilled after the initial batch completed
+        # (a regression in _reap_in_flight would leave job-3..job-5 unprocessed).
+        assert "job-3" in started_jobs, f"pool was not refilled; started: {started_jobs}"
+        assert len(started_jobs) >= 4, f"not enough jobs dispatched: {started_jobs}"
