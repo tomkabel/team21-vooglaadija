@@ -8,7 +8,7 @@ os.environ["BCRYPT_ROUNDS"] = "4"  # min rounds for test speed (prod default: 12
 
 # Support running integration tests against real PostgreSQL via docker-compose.test.yml.
 # Usage:
-#   TEST_DATABASE_URL=postgresql+asyncpg://test_user:test_pass@localhost:5433/test_db \
+#   TEST_DATABASE_URL=postgresql+asyncpg://test_user:test_pass@localhost:5433/test_db \  # pragma: allowlist secret
 #     pytest tests/ -v
 # If unset, fallback to per-worker SQLite for fast parallel unit tests.
 _test_db_url = os.environ.get("TEST_DATABASE_URL")
