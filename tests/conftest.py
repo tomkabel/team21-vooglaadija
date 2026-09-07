@@ -1,5 +1,5 @@
 import os
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 # CRITICAL: Set environment variables BEFORE any other imports
 os.environ["TESTING"] = "1"
@@ -18,6 +18,46 @@ _using_postgres = _test_db_url is not None
 _worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
 
 
+# asyncpg query parameters that have no libpq/psycopg equivalent. psycopg
+# raises on unrecognized connection options, so these must be dropped rather
+# than forwarded when building the admin DSN below.
+_ASYNCPG_ONLY_PARAMS = frozenset(
+    {
+        "server_settings",
+        "statement_cache_size",
+        "max_cached_statement_lifetime",
+        "max_cacheable_statement_size",
+        "command_timeout",
+        "direct_tls",
+    }
+)
+
+# asyncpg query parameter names that map to a differently-named libpq option.
+_ASYNCPG_TO_LIBPQ_PARAM = {
+    "ssl": "sslmode",
+    "timeout": "connect_timeout",
+}
+
+
+def _build_admin_dsn(base_url: str) -> str:
+    """Build a libpq-compatible admin DSN from an asyncpg-style database URL.
+
+    Points at the server's default ``postgres`` maintenance database while
+    preserving connection-level parameters (TLS, timeouts, ...) carried in
+    ``base_url``'s query string. asyncpg-specific parameter names are
+    translated to their libpq/psycopg equivalents; parameters with no libpq
+    equivalent are dropped instead of forwarded verbatim.
+    """
+    parts = urlsplit(base_url)
+    translated_params = [
+        (_ASYNCPG_TO_LIBPQ_PARAM.get(key, key), value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if _ASYNCPG_TO_LIBPQ_PARAM.get(key, key) not in _ASYNCPG_ONLY_PARAMS
+    ]
+    query = urlencode(translated_params)
+    return urlunsplit((parts.scheme.split("+")[0], parts.netloc, "/postgres", query, ""))
+
+
 def _ensure_postgres_database_exists(base_url: str, db_name: str) -> None:
     """Create ``db_name`` on the Postgres server from ``base_url`` if missing.
 
@@ -30,8 +70,7 @@ def _ensure_postgres_database_exists(base_url: str, db_name: str) -> None:
     import psycopg
     from psycopg import sql
 
-    parts = urlsplit(base_url)
-    admin_dsn = urlunsplit((parts.scheme.split("+")[0], parts.netloc, "/postgres", "", ""))
+    admin_dsn = _build_admin_dsn(base_url)
     with psycopg.connect(admin_dsn, autocommit=True) as conn:
         exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db_name,)).fetchone()
         if not exists:

@@ -183,126 +183,138 @@ async def main() -> None:
     # Mark worker as running
     update_worker_state(status="running")
 
-    while not shutdown_event.is_set():
-        # Check if grace period has expired (force exit even if jobs are running)
-        grace_remaining = get_grace_period_remaining()
-        if grace_remaining is not None and grace_remaining <= 0:
-            logger.warning(
-                "grace_period_expired_forcing_shutdown",
-                grace_period_seconds=GRACE_PERIOD_SECONDS,
-            )
-            break
-
-        try:
-            # Move due retry jobs from retry_queue to download_queue atomically
-            # Uses Lua script to prevent race conditions between workers
-            now_ts = datetime.now(UTC).timestamp()
-            lua_script = """
-            local due_jobs = redis.call('ZRANGEBYSCORE', KEYS[1], 0, ARGV[1])
-            if #due_jobs > 0 then
-                redis.call('ZREM', KEYS[1], unpack(due_jobs))
-                for _, job_id in ipairs(due_jobs) do
-                    redis.call('LPUSH', KEYS[2], job_id)
-                end
-            end
-            return #due_jobs
-            """
-            moved_count = await redis_client.eval(
-                lua_script, 2, "retry_queue", "download_queue", now_ts
-            )
-            if moved_count and moved_count > 0:
-                logger.info("retry_jobs_moved", moved_count=moved_count)
-
-            # Calculate remaining time for dynamic BRPOP timeout
-            # Don't block longer than grace period remaining
+    # The loop body is wrapped in try/finally (rather than relying on the
+    # inner `except asyncio.CancelledError: break` below) so that shutdown
+    # cleanup — stopping the health server, logging final grace-period status
+    # — still runs if main() is cancelled while awaiting something outside
+    # that inner try block (e.g. sync_outbox_to_queue() or cleanup_expired_jobs()).
+    # CancelledError is intentionally allowed to propagate after cleanup.
+    try:
+        while not shutdown_event.is_set():
+            # Check if grace period has expired (force exit even if jobs are running)
             grace_remaining = get_grace_period_remaining()
             if grace_remaining is not None and grace_remaining <= 0:
-                # Grace period expired, exit immediately
-                break
-            effective_timeout = min(brpop_timeout, grace_remaining or brpop_timeout)
-            # Ensure minimum timeout of 1 second to avoid busy-waiting
-            effective_timeout = max(1, int(effective_timeout))
-
-            # Use BRPOP with timeout for efficient blocking — no busy-waiting
-            # Pass the job_id directly to process_next_job to avoid race condition
-            result = await redis_client.brpop("download_queue", timeout=effective_timeout)
-            if result:
-                _, job_id_str = result
-                await process_next_job(job_id_str)
-            # If BRPOP timed out, no jobs available — continue to cleanup/heartbeat
-        except asyncio.CancelledError:
-            # This can happen if we were cancelled during brpop or job processing
-            logger.info("Worker loop cancelled, exiting...")
-            break
-        except Exception as e:
-            logger.error("job_processing_error", error=str(e))
-            await asyncio.sleep(1)
-
-        now = datetime.now(UTC)
-
-        # Independent outbox sync (30s default) — lower latency than cleanup
-        if now - last_outbox_sync >= outbox_sync_interval:
-            try:
-                synced = await sync_outbox_to_queue()
-                if synced > 0:
-                    logger.info("outbox_sync_completed", synced=synced)
-            except Exception as e:
-                logger.error("outbox_sync_error", error=str(e))
-            finally:
-                # Always advance the sync deadline, even on failure, so a
-                # persistently failing sync backs off to the normal interval
-                # instead of retrying on every ~2s BRPOP timeout loop.
-                last_outbox_sync = now
-
-        if now - last_cleanup >= cleanup_interval:
-            try:
-                cleanup_count = await cleanup_expired_jobs()
-                # Zombie sweeper: requeue jobs stuck in processing (SIGKILL/OOM recovery)
-                stuck_count = await requeue_stuck_jobs(timeout_minutes=15)
-                logger.info(
-                    "cleanup_cycle_completed",
-                    expired_jobs_cleaned=cleanup_count,
-                    stuck_jobs_requeued=stuck_count,
+                logger.warning(
+                    "grace_period_expired_forcing_shutdown",
+                    grace_period_seconds=GRACE_PERIOD_SECONDS,
                 )
-                last_cleanup = now
-                update_worker_state(last_cleanup=last_cleanup.isoformat())
-            except Exception as e:
-                logger.error("cleanup_error", error=str(e))
+                break
 
-        heartbeat_counter += 1
-        if heartbeat_counter >= heartbeat_interval:
             try:
-                await write_health_async()
-                update_worker_state()
+                # Move due retry jobs from retry_queue to download_queue atomically
+                # Uses Lua script to prevent race conditions between workers
+                now_ts = datetime.now(UTC).timestamp()
+                lua_script = """
+                local due_jobs = redis.call('ZRANGEBYSCORE', KEYS[1], 0, ARGV[1])
+                if #due_jobs > 0 then
+                    redis.call('ZREM', KEYS[1], unpack(due_jobs))
+                    for _, job_id in ipairs(due_jobs) do
+                        redis.call('LPUSH', KEYS[2], job_id)
+                    end
+                end
+                return #due_jobs
+                """
+                moved_count = await redis_client.eval(
+                    lua_script, 2, "retry_queue", "download_queue", now_ts
+                )
+                if moved_count and moved_count > 0:
+                    logger.info("retry_jobs_moved", moved_count=moved_count)
+
+                # Calculate remaining time for dynamic BRPOP timeout
+                # Don't block longer than grace period remaining
+                grace_remaining = get_grace_period_remaining()
+                if grace_remaining is not None and grace_remaining <= 0:
+                    # Grace period expired, exit immediately
+                    break
+                effective_timeout = min(brpop_timeout, grace_remaining or brpop_timeout)
+                # Ensure minimum timeout of 1 second to avoid busy-waiting
+                effective_timeout = max(1, int(effective_timeout))
+
+                # Use BRPOP with timeout for efficient blocking — no busy-waiting
+                # Pass the job_id directly to process_next_job to avoid race condition
+                result = await redis_client.brpop("download_queue", timeout=effective_timeout)
+                if result:
+                    _, job_id_str = result
+                    await process_next_job(job_id_str)
+                # If BRPOP timed out, no jobs available — continue to cleanup/heartbeat
+            except asyncio.CancelledError:
+                # This can happen if we were cancelled during brpop or job processing
+                logger.info("Worker loop cancelled, exiting...")
+                break
             except Exception as e:
-                logger.warning("health_write_failed", error=str(e))
-            heartbeat_counter = 0
+                logger.error("job_processing_error", error=str(e))
+                await asyncio.sleep(1)
 
-        # Check if graceful shutdown was requested and log remaining time
-        if shutdown_event.is_set():
-            grace_remaining = get_grace_period_remaining()
+            now = datetime.now(UTC)
+
+            # Independent outbox sync (30s default) — lower latency than cleanup
+            if now - last_outbox_sync >= outbox_sync_interval:
+                try:
+                    synced = await sync_outbox_to_queue()
+                    if synced > 0:
+                        logger.info("outbox_sync_completed", synced=synced)
+                except Exception as e:
+                    logger.error("outbox_sync_error", error=str(e))
+                finally:
+                    # Always advance the sync deadline, even on failure, so a
+                    # persistently failing sync backs off to the normal interval
+                    # instead of retrying on every ~2s BRPOP timeout loop. Use a
+                    # fresh timestamp rather than the pre-sync `now`: if
+                    # sync_outbox_to_queue() itself takes >= the sync interval,
+                    # reusing `now` would store an already-expired deadline and
+                    # the next loop iteration would retry immediately anyway.
+                    last_outbox_sync = datetime.now(UTC)
+
+            if now - last_cleanup >= cleanup_interval:
+                try:
+                    cleanup_count = await cleanup_expired_jobs()
+                    # Zombie sweeper: requeue jobs stuck in processing (SIGKILL/OOM recovery)
+                    stuck_count = await requeue_stuck_jobs(timeout_minutes=15)
+                    logger.info(
+                        "cleanup_cycle_completed",
+                        expired_jobs_cleaned=cleanup_count,
+                        stuck_jobs_requeued=stuck_count,
+                    )
+                    last_cleanup = now
+                    update_worker_state(last_cleanup=last_cleanup.isoformat())
+                except Exception as e:
+                    logger.error("cleanup_error", error=str(e))
+
+            heartbeat_counter += 1
+            if heartbeat_counter >= heartbeat_interval:
+                try:
+                    await write_health_async()
+                    update_worker_state()
+                except Exception as e:
+                    logger.warning("health_write_failed", error=str(e))
+                heartbeat_counter = 0
+
+            # Check if graceful shutdown was requested and log remaining time
+            if shutdown_event.is_set():
+                grace_remaining = get_grace_period_remaining()
+                logger.info(
+                    "Shutdown requested, exiting main loop...",
+                    grace_period_seconds_remaining=grace_remaining,
+                )
+                break
+
+    finally:
+        # Graceful shutdown phase
+        # Log final grace period status
+        if shutdown_requested_at is not None:
+            total_shutdown_time = time.monotonic() - shutdown_requested_at
             logger.info(
-                "Shutdown requested, exiting main loop...",
-                grace_period_seconds_remaining=grace_remaining,
+                "Worker shutdown complete",
+                total_shutdown_seconds=total_shutdown_time,
+                grace_period_configured=GRACE_PERIOD_SECONDS,
             )
-            break
 
-    # Graceful shutdown phase
-    # Log final grace period status
-    if shutdown_requested_at is not None:
-        total_shutdown_time = time.monotonic() - shutdown_requested_at
-        logger.info(
-            "Worker shutdown complete",
-            total_shutdown_seconds=total_shutdown_time,
-            grace_period_configured=GRACE_PERIOD_SECONDS,
-        )
+        logger.info("Worker shutdown complete, stopping health server...")
 
-    logger.info("Worker shutdown complete, stopping health server...")
-
-    # Shutdown health server
-    if health_server:
-        stop_health_server()
-    logger.info("worker_stopped_gracefully")
+        # Shutdown health server
+        if health_server:
+            stop_health_server()
+        logger.info("worker_stopped_gracefully")
 
 
 if __name__ == "__main__":

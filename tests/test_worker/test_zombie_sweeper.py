@@ -2,16 +2,30 @@
 
 The zombie sweeper requeues jobs that have been stuck in 'processing'
 status for too long, indicating a worker crashed or stalled.
+
+Requeueing goes through the transactional outbox pattern: the status
+update and an `Outbox` row (event_type="zombie_recovery") are committed
+atomically. The outbox relay (worker.processor.sync_outbox_to_queue)
+independently delivers the event to Redis, so these tests assert against
+the Outbox table rather than mocking Redis directly.
 """
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
 from sqlalchemy import select
 
 from app.models.download_job import DownloadJob
+from app.models.outbox import Outbox
+from worker.zombie_sweeper import requeue_stuck_jobs
+
+
+async def _outbox_entries_for(db_session, job_id: UUID) -> list[Outbox]:
+    result = await db_session.execute(
+        select(Outbox).where(Outbox.job_id == job_id, Outbox.event_type == "zombie_recovery")
+    )
+    return list(result.scalars().all())
 
 
 @pytest.fixture
@@ -101,18 +115,13 @@ class TestRequeueStuckJobs:
         self, db_session, stuck_processing_job
     ):
         """Test that stuck jobs in processing status are found."""
-        _stuck_job_id = stuck_processing_job.id
+        stuck_job_id = stuck_processing_job.id
 
-        mock_redis = AsyncMock()
-        mock_redis.lpush = AsyncMock(return_value=1)
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
-
-            count = await requeue_stuck_jobs(timeout_minutes=15)
-
-            assert count >= 1
-            mock_redis.lpush.assert_called()
+        assert count >= 1
+        entries = await _outbox_entries_for(db_session, stuck_job_id)
+        assert len(entries) == 1
 
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_resets_status_to_pending(self, db_session, user_id):
@@ -128,19 +137,15 @@ class TestRequeueStuckJobs:
         db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
-        mock_redis.lpush = AsyncMock(return_value=1)
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        assert count == 1
+        entries = await _outbox_entries_for(db_session, job_id)
+        assert len(entries) == 1
+        assert entries[0].status == "pending"
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
-
-            assert count == 1
-            assert mock_redis.lpush.call_count == 1
-
-            await db_session.refresh(job)
-            assert job.status == "pending"
+        await db_session.refresh(job)
+        assert job.status == "pending"
 
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_returns_count(self, db_session, user_id):
@@ -159,30 +164,20 @@ class TestRequeueStuckJobs:
             db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
-        mock_redis.lpush = AsyncMock(return_value=1)
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
-
-            count = await requeue_stuck_jobs(timeout_minutes=15)
-
-            assert count == 2
+        assert count == 2
 
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_ignores_pending(self, db_session, pending_job):
         """Test that pending jobs are NOT affected."""
         pending_job_id = pending_job.id
 
-        mock_redis = AsyncMock()
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
-
-            count = await requeue_stuck_jobs(timeout_minutes=15)
-
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
+        assert count == 0
+        entries = await _outbox_entries_for(db_session, pending_job_id)
+        assert entries == []
 
         result = await db_session.execute(
             select(DownloadJob).where(DownloadJob.id == pending_job_id)
@@ -195,15 +190,11 @@ class TestRequeueStuckJobs:
         """Test that completed jobs are NOT affected."""
         completed_job_id = completed_job.id
 
-        mock_redis = AsyncMock()
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
-
-            count = await requeue_stuck_jobs(timeout_minutes=15)
-
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
+        assert count == 0
+        entries = await _outbox_entries_for(db_session, completed_job_id)
+        assert entries == []
 
         result = await db_session.execute(
             select(DownloadJob).where(DownloadJob.id == completed_job_id)
@@ -216,19 +207,13 @@ class TestRequeueStuckJobs:
         """Test that failed jobs are NOT affected."""
         failed_job_id = failed_job.id
 
-        mock_redis = AsyncMock()
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
+        assert count == 0
+        entries = await _outbox_entries_for(db_session, failed_job_id)
+        assert entries == []
 
-            count = await requeue_stuck_jobs(timeout_minutes=15)
-
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
-
-        result = await db_session.execute(
-            select(DownloadJob).where(DownloadJob.id == failed_job_id)
-        )
+        result = await db_session.execute(select(DownloadJob).where(DownloadJob.id == failed_job_id))
         job = result.scalar_one()
         assert job.status == "failed"
 
@@ -239,15 +224,11 @@ class TestRequeueStuckJobs:
         """Test that processing jobs that are not stuck (too recent) are NOT affected."""
         recent_job_id = recent_processing_job.id
 
-        mock_redis = AsyncMock()
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
-
-            count = await requeue_stuck_jobs(timeout_minutes=15)
-
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
+        assert count == 0
+        entries = await _outbox_entries_for(db_session, recent_job_id)
+        assert entries == []
 
         result = await db_session.execute(
             select(DownloadJob).where(DownloadJob.id == recent_job_id)
@@ -271,16 +252,11 @@ class TestRequeueStuckJobs:
         db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
-        mock_redis.lpush = AsyncMock(return_value=1)
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
-
-            count = await requeue_stuck_jobs(timeout_minutes=15)
-
-            assert count == 1
-            mock_redis.lpush.assert_called_once()
+        assert count == 1
+        entries = await _outbox_entries_for(db_session, boundary_job_id)
+        assert len(entries) == 1
 
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_just_under_timeout(self, db_session, user_id):
@@ -298,15 +274,11 @@ class TestRequeueStuckJobs:
         db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
-
-            count = await requeue_stuck_jobs(timeout_minutes=15)
-
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
+        assert count == 0
+        entries = await _outbox_entries_for(db_session, just_under_timeout_id)
+        assert entries == []
 
         result = await db_session.execute(
             select(DownloadJob).where(DownloadJob.id == just_under_timeout_id)
@@ -340,16 +312,13 @@ class TestRequeueStuckJobs:
             db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
-        mock_redis.lpush = AsyncMock(return_value=1)
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
-
-            count = await requeue_stuck_jobs(timeout_minutes=15)
-
-            assert count == 1
-            mock_redis.lpush.assert_called_once_with("download_queue", str(stuck_job_id))
+        assert count == 1
+        entries = await _outbox_entries_for(db_session, stuck_job_id)
+        assert len(entries) == 1
+        for other_id in (pending_job_id, completed_job_id, recent_processing_id):
+            assert await _outbox_entries_for(db_session, other_id) == []
 
 
 class TestRequeueStuckJobsEdgeCases:
@@ -363,15 +332,9 @@ class TestRequeueStuckJobsEdgeCases:
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_empty_database(self, db_session):
         """Test with no jobs in database - should return 0."""
-        mock_redis = AsyncMock()
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
-
-            count = await requeue_stuck_jobs(timeout_minutes=15)
-
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
+        assert count == 0
 
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_all_stuck(self, db_session, user_id):
@@ -393,16 +356,12 @@ class TestRequeueStuckJobsEdgeCases:
             db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
-        mock_redis.lpush = AsyncMock(return_value=1)
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
-
-            count = await requeue_stuck_jobs(timeout_minutes=15)
-
-            assert count == 3
-            assert mock_redis.lpush.call_count == 3
+        assert count == 3
+        for job_id in stuck_job_ids:
+            entries = await _outbox_entries_for(db_session, job_id)
+            assert len(entries) == 1
 
     @pytest.mark.unit
     async def test_requeue_stuck_jobs_no_stuck_jobs(self, db_session, user_id):
@@ -417,12 +376,6 @@ class TestRequeueStuckJobsEdgeCases:
         db_session.add(job)
         await db_session.commit()
 
-        mock_redis = AsyncMock()
+        count = await requeue_stuck_jobs(timeout_minutes=15)
 
-        with patch("worker.zombie_sweeper.redis_client", mock_redis):
-            from worker.zombie_sweeper import requeue_stuck_jobs
-
-            count = await requeue_stuck_jobs(timeout_minutes=15)
-
-            assert count == 0
-            mock_redis.lpush.assert_not_called()
+        assert count == 0
