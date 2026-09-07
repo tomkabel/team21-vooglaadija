@@ -68,7 +68,7 @@
 
   if (rowsContainer) {
     rowsContainer.addEventListener('change', (evt) => {
-      if (evt.target && evt.target.matches('[data-bulk-checkbox]')) updateBulkUI();
+      if (evt.target?.matches('[data-bulk-checkbox]')) updateBulkUI();
     });
 
     // Rows inserted by dashboard.js's SSE handling (insertRowSorted) don't go
@@ -86,7 +86,7 @@
 
   document.body.addEventListener('htmx:afterSwap', () => updateBulkUI());
   document.body.addEventListener('htmx:afterRequest', (evt) => {
-    if (evt.detail?.elt && evt.detail.elt.matches?.('[data-bulk-delete]')) {
+    if (evt.detail?.elt?.matches?.('[data-bulk-delete]')) {
       updateBulkUI();
     }
   });

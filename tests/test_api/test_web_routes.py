@@ -1055,18 +1055,18 @@ class TestDashboardPage:
             )
 
         text = dashboard_response.text
-        assert 'data-bulk-toolbar' in text
-        assert 'data-select-all' in text
-        assert 'data-bulk-delete' in text
-        assert 'data-bulk-checkbox' in text
+        assert "data-bulk-toolbar" in text
+        assert "data-select-all" in text
+        assert "data-bulk-delete" in text
+        assert "data-bulk-checkbox" in text
         assert 'name="job_ids"' in text
-        assert 'Delete selected' in text
-        assert '/web/downloads/bulk-delete' in text
+        assert "Delete selected" in text
+        assert "/web/downloads/bulk-delete" in text
         # Empty list should not render the bulk toolbar.
         from app.api.routes.web import templates
 
         no_jobs = templates.env.get_template("partials/_download_list.html").render(jobs=[])
-        assert 'data-bulk-toolbar' not in no_jobs
+        assert "data-bulk-toolbar" not in no_jobs
 
     def test_download_list_and_item_render_equivalent_canonical_row(self):
         """Test list-rendered rows match the canonical download item partial structure."""
