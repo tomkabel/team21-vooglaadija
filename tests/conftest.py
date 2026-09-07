@@ -62,7 +62,15 @@ with open(_lock_path, "w") as _lock_file:
                 "password": postgres_container.password,
                 "dbname": postgres_container.dbname,
             }
-            _info_path.write_text(json.dumps(_container_info))
+            # This is Testcontainers' own random, throwaway password for an
+            # ephemeral local Postgres container that lives only for this
+            # test run — not a real secret. It's written here purely so
+            # sibling pytest-xdist worker processes can read the connection
+            # info; 0o600 (created atomically, owner-only) keeps it from
+            # other local users. lgtm[py/clear-text-storage-sensitive-data]
+            fd = os.open(_info_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as _info_file:
+                _info_file.write(json.dumps(_container_info))
     finally:
         fcntl.flock(_lock_file, fcntl.LOCK_UN)
 
