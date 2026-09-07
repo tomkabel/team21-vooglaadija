@@ -6,6 +6,7 @@ from app.api.routes.web import (
     web_auth,
     web_dashboard,
     web_downloads,
+    web_downloads_bulk,
     web_settings,
     web_terms,
 )
@@ -38,6 +39,7 @@ from app.api.routes.web_helpers import _success_html  # noqa: F401
 router = APIRouter(prefix="/web", tags=["web"])
 router.include_router(web_auth.router)
 router.include_router(web_downloads.router)
+router.include_router(web_downloads_bulk.router)
 router.include_router(web_dashboard.router)
 router.include_router(web_settings.router)
 router.include_router(web_terms.router)
