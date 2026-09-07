@@ -23,7 +23,6 @@ from app.services.error_classifier import get_attempt_timeout
 from app.services.llm_fallback import extract_with_llm_fallback, is_llm_fallback_available
 from app.services.pubsub_service import get_pubsub_service
 from app.services.throttle_predictor import get_risk_score, risk_check_and_warn
-from app.services.yt_dlp_service import extract_media_url
 from core.config import settings
 from core.database import get_async_session_factory
 from core.logging_config import get_logger
@@ -504,15 +503,9 @@ async def execute(
                     await db.commit()
                     if result.rowcount == 0:
                         cleanup_downloaded_file(file_path)
-                        logger.warning(
-                            "llm_fallback_job_already_requeued", job_id=str(job_id)
-                        )
-                        update_worker_state(
-                            status="running", current_job_started_at=None
-                        )
-                        return ExecutionResult(
-                            ExecutionStatus.CONSUMED, job_id, job=job
-                        )
+                        logger.warning("llm_fallback_job_already_requeued", job_id=str(job_id))
+                        update_worker_state(status="running", current_job_started_at=None)
+                        return ExecutionResult(ExecutionStatus.CONSUMED, job_id, job=job)
 
                     refreshed = await db.execute(
                         select(DownloadJob).where(DownloadJob.id == job_id)
@@ -521,13 +514,9 @@ async def execute(
                     if completed_job:
                         await publish_job_status(completed_job)
 
-                    update_worker_state(
-                        status="running", current_job_started_at=None
-                    )
+                    update_worker_state(status="running", current_job_started_at=None)
                     JOBS_COMPLETED.labels(status="success_llm_fallback").inc()
-                    logger.info(
-                        "llm_fallback_job_completed", job_id=str(job_id)
-                    )
+                    logger.info("llm_fallback_job_completed", job_id=str(job_id))
 
                     return ExecutionResult(
                         ExecutionStatus.COMPLETED,

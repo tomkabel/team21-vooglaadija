@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import cast
 from urllib.parse import urlparse
 
 import httpx
@@ -66,11 +66,11 @@ class LLMFallbackError(Exception):
 class LLMFallbackResult:
     """Result from LLM fallback extraction."""
 
-    __slots__ = ("url", "format", "title")
+    __slots__ = ("format", "title", "url")
 
-    def __init__(self, url: str | None, format: str, title: str | None = None) -> None:
+    def __init__(self, url: str | None, media_format: str, title: str | None = None) -> None:
         self.url = url
-        self.format = format
+        self.format = media_format
         self.title = title
 
     @property
@@ -78,7 +78,7 @@ class LLMFallbackResult:
         return self.url is not None and self.format != "none"
 
 
-async def _fetch_page_html(url: str, timeout: float = 30.0) -> str:
+async def _fetch_page_html(url: str, fetch_timeout: float = 30.0) -> str:
     """Fetch raw HTML content from a URL.
 
     Uses a standard User-Agent to avoid trivial blocks. Returns empty string
@@ -95,7 +95,7 @@ async def _fetch_page_html(url: str, timeout: float = 30.0) -> str:
     }
     try:
         async with httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout),
+            timeout=httpx.Timeout(fetch_timeout),
             follow_redirects=True,
             trust_env=False,
         ) as client:
@@ -154,13 +154,13 @@ def _validate_discovered_url(url: str) -> bool:
     if not parsed.hostname:
         return False
 
-    # Reject obviously internal hostnames
+    # Reject obviously internal hostnames. "0.0.0.0" here is a rejected
+    # *target* hostname, not a bind address — not the S104 bind-all-interfaces
+    # pattern the rule is meant to catch.
     hostname = parsed.hostname.lower()
-    if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+    if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):  # noqa: S104
         return False
-    if hostname.startswith("169.254.") or hostname.startswith("10."):
-        return False
-    if hostname.startswith("192.168.") or hostname.startswith("172."):
+    if hostname.startswith(("169.254.", "10.", "192.168.", "172.")):
         return False
 
     return True
@@ -222,7 +222,7 @@ async def _call_llm_provider(prompt: str) -> str:
             data = response.json()
 
         content = data["choices"][0]["message"]["content"]
-        return content
+        return cast(str, content)
 
     except httpx.HTTPError as e:
         raise LLMFallbackError(f"LLM API request failed: {e}") from e
@@ -251,9 +251,9 @@ def _parse_llm_response(response_text: str) -> LLMFallbackResult:
     title = data.get("title")
 
     if url is None or format_type == "none":
-        return LLMFallbackResult(url=None, format="none", title=None)
+        return LLMFallbackResult(url=None, media_format="none", title=None)
 
-    return LLMFallbackResult(url=url, format=format_type, title=title)
+    return LLMFallbackResult(url=url, media_format=format_type, title=title)
 
 
 async def extract_with_llm_fallback(url: str) -> LLMFallbackResult:
@@ -270,12 +270,12 @@ async def extract_with_llm_fallback(url: str) -> LLMFallbackResult:
     """
     if not settings.llm_fallback_enabled:
         logger.debug("llm_fallback_disabled", url=url[:80])
-        return LLMFallbackResult(url=None, format="none", title=None)
+        return LLMFallbackResult(url=None, media_format="none", title=None)
 
     if not _validate_discovered_url(url):
         # The original URL itself must pass basic validation
         logger.warning("llm_fallback_invalid_source_url", url=url[:80])
-        return LLMFallbackResult(url=None, format="none", title=None)
+        return LLMFallbackResult(url=None, media_format="none", title=None)
 
     logger.info("llm_fallback_started", url=url[:80])
 
@@ -283,13 +283,13 @@ async def extract_with_llm_fallback(url: str) -> LLMFallbackResult:
     html = await _fetch_page_html(url)
     if not html:
         logger.info("llm_fallback_no_html", url=url[:80])
-        return LLMFallbackResult(url=None, format="none", title=None)
+        return LLMFallbackResult(url=None, media_format="none", title=None)
 
     # Sanitize
     sanitized = _sanitize_html(html)
     if not sanitized:
         logger.info("llm_fallback_empty_after_sanitize", url=url[:80])
-        return LLMFallbackResult(url=None, format="none", title=None)
+        return LLMFallbackResult(url=None, media_format="none", title=None)
 
     # Build prompt
     prompt = _EXTRACT_PROMPT.format(url=url, html_content=sanitized)
@@ -299,38 +299,42 @@ async def extract_with_llm_fallback(url: str) -> LLMFallbackResult:
         response_text = await _call_llm_provider(prompt)
     except LLMFallbackError as e:
         logger.warning("llm_fallback_provider_error", url=url[:80], error=str(e))
-        return LLMFallbackResult(url=None, format="none", title=None)
+        return LLMFallbackResult(url=None, media_format="none", title=None)
 
     # Parse response
     result = _parse_llm_response(response_text)
 
-    if not result.found:
+    if not result.found or result.url is None:
+        # `found` already implies `url is not None`; the explicit None check
+        # just gives mypy (and any future caller) the same narrowing.
         logger.info("llm_fallback_no_media_found", url=url[:80])
-        return result
+        return LLMFallbackResult(url=None, media_format="none", title=None)
+
+    discovered_url = result.url
 
     # Validate discovered URL
-    if not _validate_discovered_url(result.url):
+    if not _validate_discovered_url(discovered_url):
         logger.warning(
             "llm_fallback_invalid_discovered_url",
             url=url[:80],
-            discovered=result.url[:100] if result.url else None,
+            discovered=discovered_url[:100],
         )
-        return LLMFallbackResult(url=None, format="none", title=None)
+        return LLMFallbackResult(url=None, media_format="none", title=None)
 
     # SSRF check on discovered URL
-    if not await validate_url_not_ssrf(result.url):
+    if not await validate_url_not_ssrf(discovered_url):
         logger.warning(
             "llm_fallback_ssrf_blocked",
             url=url[:80],
-            discovered=result.url[:100],
+            discovered=discovered_url[:100],
         )
-        return LLMFallbackResult(url=None, format="none", title=None)
+        return LLMFallbackResult(url=None, media_format="none", title=None)
 
     logger.info(
         "llm_fallback_success",
         url=url[:80],
         discovered_format=result.format,
-        discovered_url=result.url[:100],
+        discovered_url=discovered_url[:100],
     )
     return result
 

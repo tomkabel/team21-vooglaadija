@@ -8,7 +8,6 @@ import httpx
 import pytest
 
 from app.services.llm_fallback import (
-    LLMFallbackError,
     LLMFallbackResult,
     _sanitize_html,
     _validate_discovered_url,
@@ -28,7 +27,7 @@ class TestSanitizeHtml:
         assert "Hello" in result
 
     def test_removes_style_tags(self) -> None:
-        html = '<html><style>body{color:red}</style><body>Content</body></html>'
+        html = "<html><style>body{color:red}</style><body>Content</body></html>"
         result = _sanitize_html(html)
         assert "<style>" not in result
         assert "color" not in result
@@ -94,15 +93,15 @@ class TestLLMFallbackResult:
     """Tests for LLMFallbackResult."""
 
     def test_found_property_true(self) -> None:
-        result = LLMFallbackResult(url="https://example.com/v.mp4", format="mp4")
+        result = LLMFallbackResult(url="https://example.com/v.mp4", media_format="mp4")
         assert result.found is True
 
     def test_found_property_false_when_none(self) -> None:
-        result = LLMFallbackResult(url=None, format="none")
+        result = LLMFallbackResult(url=None, media_format="none")
         assert result.found is False
 
     def test_found_property_false_when_format_none(self) -> None:
-        result = LLMFallbackResult(url="https://example.com/v.mp4", format="none")
+        result = LLMFallbackResult(url="https://example.com/v.mp4", media_format="none")
         assert result.found is False
 
 
@@ -159,13 +158,7 @@ class TestExtractWithLlmFallback:
     @pytest.mark.asyncio
     async def test_returns_not_found_when_llm_returns_none(self) -> None:
         mock_response = {
-            "choices": [
-                {
-                    "message": {
-                        "content": '{"url": null, "format": "none", "title": null}'
-                    }
-                }
-            ]
+            "choices": [{"message": {"content": '{"url": null, "format": "none", "title": null}'}}]
         }
         mock_client = AsyncMock()
         mock_client.post.return_value = MagicMock(
