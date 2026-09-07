@@ -68,3 +68,7 @@ infra/ssl/README.md
 browser-downloader
 docs/impl-plan-universal-downloader.md
 non-yt-video-issue.md
+
+# Helm chart templates use Go template syntax ({{ ... }}) inside YAML, which
+# is not valid standalone YAML and cannot be parsed/formatted by Prettier.
+k8s/helm/**/templates/**
