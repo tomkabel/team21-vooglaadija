@@ -41,6 +41,15 @@ class ApiKeyService:
 
     @staticmethod
     def _hash_token(raw_token: str) -> str:
+        # SHA-256 (not a slow KDF) is intentional here: `raw_token` is a
+        # 192-bit value from `secrets.token_hex(24)`, not a low-entropy
+        # user password, so brute-forcing the hash is infeasible. Hashing
+        # it lets `authenticate()` look up keys by hash in O(1); a
+        # deliberately slow hash (bcrypt/Argon2/PBKDF2) would make every
+        # authenticated request pay a multi-millisecond KDF cost for no
+        # security benefit and would also break indexed lookup, since
+        # those algorithms embed a per-call random salt.
+        # codeql[py/weak-sensitive-data-hashing]
         return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 
     async def create(

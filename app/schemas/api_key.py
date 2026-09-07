@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated
 from uuid import UUID
 
@@ -11,9 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from core.models.api_key import WILDCARD_SCOPE
 
+
 # Concrete, documented scopes an API key can be granted. A key holding the
 # wildcard scope ("*") is treated as having every scope below.
-class ApiKeyScope(str, Enum):
+class ApiKeyScope(StrEnum):
     """Machine-facing capability scopes granted to a personal access token."""
 
     DOWNLOADS_READ = "downloads:read"
@@ -43,9 +44,7 @@ class ApiKeyCreate(BaseModel):
             if not scope:
                 continue
             if scope not in KNOWN_SCOPES:
-                raise ValueError(
-                    f"Unknown scope '{scope}'. Valid scopes: {sorted(KNOWN_SCOPES)}"
-                )
+                raise ValueError(f"Unknown scope '{scope}'. Valid scopes: {sorted(KNOWN_SCOPES)}")
             normalized.append(scope)
         if not normalized:
             normalized = [WILDCARD_SCOPE]

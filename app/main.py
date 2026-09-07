@@ -17,7 +17,7 @@ try:
 except ImportError:
     UVLOOP_AVAILABLE = False
 
-from app.api.docs import mount_docs_static, register_docs_routes
+from app.api.docs import OPENAPI_TAGS, mount_docs_static, register_docs_routes
 from app.api.exceptions import register_exception_handlers
 from app.api.middleware import (
     PrometheusMiddleware,
@@ -69,27 +69,7 @@ app = FastAPI(
     redoc_url=None,
     contact={"name": "Team 21", "url": "https://github.com/tomkabel/team21-vooglaadija"},
     license_info={"name": "GPLv3", "url": "https://www.gnu.org/licenses/gpl-3.0.html"},
-    openapi_tags=[
-        {
-            "name": "auth",
-            "description": "User registration, user authentication, token refresh, and current user profile.",
-        },
-        {
-            "name": "downloads",
-            "description": "Create, query, download, and delete media extraction jobs.",
-        },
-        {
-            "name": "health",
-            "description": "Service health and readiness checks.",
-        },
-        {
-            "name": "keys",
-            "description": (
-                "Manage long-lived, scoped personal access tokens (PATs) for "
-                "machine-to-machine and agent authentication."
-            ),
-        },
-    ],
+    openapi_tags=OPENAPI_TAGS,
     lifespan=lifespan,
 )
 
