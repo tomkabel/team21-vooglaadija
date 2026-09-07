@@ -1,7 +1,8 @@
 """Download job CRUD endpoints with DLQ replay capabilities."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
 
 from app.api.dependencies import CurrentUser, DbSession, ReadScope, WriteScope
