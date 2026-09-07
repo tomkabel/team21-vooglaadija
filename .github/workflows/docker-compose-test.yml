@@ -50,7 +50,9 @@ jobs:
       # ============================================
       - name: Create host volume mount directories
         run: |
-          sudo mkdir -p /mnt/db_storage/postgres /mnt/db_storage/postgres-replica /mnt/new_storage/redis /mnt/new_storage/storage /mnt/new_storage/prometheus /mnt/new_storage/grafana /mnt/new_storage/backups
+          sudo mkdir -p /mnt/db_storage/postgres /mnt/db_storage/postgres-replica \
+            /mnt/new_storage/redis /mnt/new_storage/storage /mnt/new_storage/prometheus \
+            /mnt/new_storage/grafana /mnt/new_storage/backups
 
       - name: Build and start services
         run: |
