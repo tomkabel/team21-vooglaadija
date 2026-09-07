@@ -4,21 +4,21 @@
 
 ### Database
 
-| Variable          | Description                       | Default                   | Notes                                       |
-| ----------------- | --------------------------------- | ------------------------- | ------------------------------------------- |
-| `DATABASE_URL`    | Full PostgreSQL connection string | _(built from components)_ | If set, `DB_*` variables are ignored.       |
-| `DB_USER`         | PostgreSQL username               | `postgres`                |                                             |
-| `DB_PASSWORD`     | PostgreSQL password               | _(required)_              | Must be set if `DATABASE_URL` is not used.  |
-| `DB_NAME`         | PostgreSQL database name          | `ytprocessor`             |                                             |
-| `DB_HOST`         | PostgreSQL host                   | `localhost`               | In Docker Compose, points at `pgbouncer`, not `db`, directly. |
-| `DB_PORT`         | PostgreSQL port                   | `5432`                    |                                             |
-| `DB_REPLICATION_PASSWORD` | Password for the `replicator` role | _(required)_       | Used by `db` to create the role and `db-replica` to stream from it. |
-| `DB_REPLICA_HOST` | Read-replica host                 | _(unset)_                 | `database_replica_url` falls back to `database_url` when unset. |
-| `DB_REPLICA_PORT` | Read-replica port                 | `5432`                    |                                             |
-| `DB_POOL_SIZE`    | SQLAlchemy pool size              | `10`                      | Worker production override defaults to `3`. |
-| `DB_MAX_OVERFLOW` | SQLAlchemy pool overflow          | `5`                       | Worker production override defaults to `2`. |
-| `DB_POOL_TIMEOUT` | SQLAlchemy pool wait timeout      | `30`                      | Must be at least `1`.                       |
-| `DB_POOL_RECYCLE` | SQLAlchemy pool recycle setting   | `1800`                    | Must be at least `1`.                       |
+| Variable                  | Description                        | Default                   | Notes                                                               |
+| ------------------------- | ---------------------------------- | ------------------------- | ------------------------------------------------------------------- |
+| `DATABASE_URL`            | Full PostgreSQL connection string  | _(built from components)_ | If set, `DB_*` variables are ignored.                               |
+| `DB_USER`                 | PostgreSQL username                | `postgres`                |                                                                     |
+| `DB_PASSWORD`             | PostgreSQL password                | _(required)_              | Must be set if `DATABASE_URL` is not used.                          |
+| `DB_NAME`                 | PostgreSQL database name           | `ytprocessor`             |                                                                     |
+| `DB_HOST`                 | PostgreSQL host                    | `localhost`               | In Docker Compose, points at `pgbouncer`, not `db`, directly.       |
+| `DB_PORT`                 | PostgreSQL port                    | `5432`                    |                                                                     |
+| `DB_REPLICATION_PASSWORD` | Password for the `replicator` role | _(required)_              | Used by `db` to create the role and `db-replica` to stream from it. |
+| `DB_REPLICA_HOST`         | Read-replica host                  | _(unset)_                 | `database_replica_url` falls back to `database_url` when unset.     |
+| `DB_REPLICA_PORT`         | Read-replica port                  | `5432`                    |                                                                     |
+| `DB_POOL_SIZE`            | SQLAlchemy pool size               | `10`                      | Worker production override defaults to `3`.                         |
+| `DB_MAX_OVERFLOW`         | SQLAlchemy pool overflow           | `5`                       | Worker production override defaults to `2`.                         |
+| `DB_POOL_TIMEOUT`         | SQLAlchemy pool wait timeout       | `30`                      | Must be at least `1`.                                               |
+| `DB_POOL_RECYCLE`         | SQLAlchemy pool recycle setting    | `1800`                    | Must be at least `1`.                                               |
 
 ### Redis
 
@@ -159,18 +159,18 @@ no host plugin required. Application logs are one JSON object per line in produc
 
 ### Services
 
-| Service          | Image                                             | Exposed Port      | Purpose                  |
-| ---------------- | ------------------------------------------------- | ----------------- | ------------------------ |
-| `api`            | `ghcr.io/tomkabel/vooglaadija:<IMAGE_TAG>`        | `8000` (internal) | FastAPI application      |
-| `worker`         | `ghcr.io/tomkabel/vooglaadija:worker-<IMAGE_TAG>` | `8082` (internal) | Background job processor |
-| `db`             | `postgres:17-alpine`                              | `5432` (internal) | PostgreSQL primary       |
-| `db-replica`     | `postgres:17-alpine`                              | `5432` (internal) | PostgreSQL read replica (streaming standby of `db`) |
+| Service          | Image                                             | Exposed Port      | Purpose                                               |
+| ---------------- | ------------------------------------------------- | ----------------- | ----------------------------------------------------- |
+| `api`            | `ghcr.io/tomkabel/vooglaadija:<IMAGE_TAG>`        | `8000` (internal) | FastAPI application                                   |
+| `worker`         | `ghcr.io/tomkabel/vooglaadija:worker-<IMAGE_TAG>` | `8082` (internal) | Background job processor                              |
+| `db`             | `postgres:17-alpine`                              | `5432` (internal) | PostgreSQL primary                                    |
+| `db-replica`     | `postgres:17-alpine`                              | `5432` (internal) | PostgreSQL read replica (streaming standby of `db`)   |
 | `pgbouncer`      | `edoburu/pgbouncer:v1.24.1-p1`                    | `5432` (internal) | Connection pooler (transaction mode) in front of `db` |
-| `redis`          | `redis:7-alpine`                                  | `6379` (internal) | Queue and cache          |
-| `otel-collector` | `otel/opentelemetry-collector:0.88.0`             | `4317`, `4318`    | Observability collector  |
-| `prometheus`     | `prom/prometheus:v2.54.1` (profile `monitoring`)  | `127.0.0.1:9090`  | Metrics scraping         |
-| `grafana`        | `grafana/grafana:11.3.0` (profile `monitoring`)   | `127.0.0.1:3000`  | Dashboards               |
-| `backup`         | `postgres:17-alpine` (profile `backup`)           | —                 | Daily `pg_dump`          |
+| `redis`          | `redis:7-alpine`                                  | `6379` (internal) | Queue and cache                                       |
+| `otel-collector` | `otel/opentelemetry-collector:0.88.0`             | `4317`, `4318`    | Observability collector                               |
+| `prometheus`     | `prom/prometheus:v2.54.1` (profile `monitoring`)  | `127.0.0.1:9090`  | Metrics scraping                                      |
+| `grafana`        | `grafana/grafana:11.3.0` (profile `monitoring`)   | `127.0.0.1:3000`  | Dashboards                                            |
+| `backup`         | `postgres:17-alpine` (profile `backup`)           | —                 | Daily `pg_dump`                                       |
 
 `api`/`worker` connect through `pgbouncer`, not directly to `db`. Because PgBouncer runs in
 transaction-pooling mode, `core/database.py` and `app/api/routes/health.py` disable asyncpg's
@@ -183,23 +183,23 @@ the only public entry point; the local override binds debug ports to loopback.
 ### PostgreSQL major-version upgrades
 
 `db`'s image is pinned to a PostgreSQL major version (currently 17) and reads/writes the
-`postgres_data` named volume directly. PostgreSQL cannot start a data directory that was
-initialized by a different major version, so bumping the image tag alone against an
-already-initialized volume will crash-loop the container. Before changing the major version on a
-running deployment:
+`postgres_data` named volume directly. PostgreSQL cannot start a data directory that was initialized
+by a different major version, so bumping the image tag alone against an already-initialized volume
+will crash-loop the container. Before changing the major version on a running deployment:
 
 1. Take a fresh dump against the **currently running** version:
-   `docker compose exec db pg_dumpall -U "$DB_USER" > pre-upgrade-$(date +%F).sql`
-   (or use the `backup`/`backup-cron` profile, which already runs `pg_dump` on a schedule).
+   `docker compose exec db pg_dumpall -U "$DB_USER" > pre-upgrade-$(date +%F).sql` (or use the
+   `backup`/`backup-cron` profile, which already runs `pg_dump` on a schedule).
 2. Deploy the new image against a **new, empty** volume (rename or drop the `postgres_data` volume
    definition, or point `POSTGRES_DATA_VOLUME`/the compose file at a new volume name).
-3. Restore the dump into the new volume: `docker compose exec -T db psql -U "$DB_USER" < pre-upgrade-*.sql`.
+3. Restore the dump into the new volume:
+   `docker compose exec -T db psql -U "$DB_USER" < pre-upgrade-*.sql`.
 4. Verify row counts / smoke-test the API before deleting the old volume.
 
-`db-replica` is a streaming standby: once `db` is on the new major version and `db-replica`'s
-volume is recreated, `infra/postgresql/replica-entrypoint.sh` re-clones it from `db` automatically
-on next start (see that script and `infra/postgresql/init-replication.sh`) — it does not need a
-separate upgrade step.
+`db-replica` is a streaming standby: once `db` is on the new major version and `db-replica`'s volume
+is recreated, `infra/postgresql/replica-entrypoint.sh` re-clones it from `db` automatically on next
+start (see that script and `infra/postgresql/init-replication.sh`) — it does not need a separate
+upgrade step.
 
 ---
 

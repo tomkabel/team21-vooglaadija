@@ -488,7 +488,9 @@ services:
     image: edoburu/pgbouncer:v1.24.1-p1
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?DB_PASSWORD is required}@db:5432/${DB_NAME:-ytprocessor}
+      DATABASE_URL:
+        postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?DB_PASSWORD is
+        required}@db:5432/${DB_NAME:-ytprocessor}
       # postgres:17-alpine stores role passwords as SCRAM-SHA-256 by default.
       # edoburu's default AUTH_TYPE (md5) writes an MD5-only userlist entry
       # that can't answer the server's SCRAM challenge ("cannot do SCRAM
