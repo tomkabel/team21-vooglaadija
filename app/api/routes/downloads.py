@@ -1,9 +1,11 @@
 """Download job CRUD endpoints with DLQ replay capabilities."""
 
+from typing import Annotated
+
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
 
-from app.api.dependencies import CurrentUser, DbSession
+from app.api.dependencies import CurrentUser, DbSession, ReadScope, WriteScope
 from app.api.rate_limit_config import limiter
 from app.schemas.download import (
     DownloadCreate,
@@ -113,6 +115,7 @@ async def create_download(
     data: DownloadCreate,
     current_user: CurrentUser,
     db: DbSession,
+    _: Annotated[None, WriteScope],
 ) -> DownloadResponse:
     """Create a new download job for the authenticated user."""
     # Defer title resolution: the worker already captures the title during
@@ -181,6 +184,7 @@ async def create_download(
 async def list_downloads(
     current_user: CurrentUser,
     db: DbSession,
+    _: Annotated[None, ReadScope],
     page: int = Query(default=1, ge=1, description="Page number"),
     per_page: int = Query(default=20, ge=1, le=100, description="Items per page"),
 ) -> DownloadListResponse:
@@ -228,6 +232,7 @@ async def get_download(
     job_id: str,
     current_user: CurrentUser,
     db: DbSession,
+    _: Annotated[None, ReadScope],
 ) -> DownloadResponse:
     """Get a specific download job by ID."""
     try:
@@ -275,6 +280,7 @@ async def get_download_file(
     job_id: str,
     current_user: CurrentUser,
     db: DbSession,
+    _: Annotated[None, ReadScope],
 ) -> FileResponse:
     """Download the file for a completed job."""
     try:
@@ -295,6 +301,7 @@ async def retry_download(
     job_id: str,
     current_user: CurrentUser,
     db: DbSession,
+    _: Annotated[None, WriteScope],
 ) -> DownloadResponse:
     """Retry a failed download job."""
     try:
@@ -330,6 +337,7 @@ async def delete_download(
     job_id: str,
     current_user: CurrentUser,
     db: DbSession,
+    _: Annotated[None, WriteScope],
 ) -> None:
     """Delete a download job and its associated file."""
     try:
@@ -347,6 +355,7 @@ async def delete_download(
 async def list_failed_jobs(
     current_user: CurrentUser,
     db: DbSession,
+    _: Annotated[None, ReadScope],
     page: int = Query(default=1, ge=1, description="Page number"),
     per_page: int = Query(default=20, ge=1, le=100, description="Items per page"),
     category: str | None = Query(default=None, description="Filter by error category"),
@@ -371,6 +380,7 @@ async def replay_failed_job(
     failed_job_id: str,
     current_user: CurrentUser,
     db: DbSession,
+    _: Annotated[None, WriteScope],
 ) -> DownloadResponse:
     """Replay a failed DLQ row."""
     try:
@@ -390,6 +400,7 @@ async def replay_all_failed_jobs(
     request: Request,
     current_user: CurrentUser,
     db: DbSession,
+    _: Annotated[None, WriteScope],
     category: str | None = Query(default=None, description="Filter by error category"),
 ) -> dict:
     """Replay failed DLQ rows in one bounded batch."""

@@ -26,6 +26,7 @@ _EXPECTED_ALEMBIC_VERSION_FILES = {
     "008_add_last_error_to_download_jobs.py",
     "009_add_outbox_pending_unique_index.py",
     "010_fix_outbox_and_job_status_constraints.py",
+    "011_add_api_keys.py",
 }
 _LEGACY_MODULES = {_DATABASE_SHIM_MODULE, _METRICS_SHIM_MODULE}
 
@@ -133,7 +134,13 @@ def test_core_database_uses_existing_core_model_metadata():
 
     assert Base is CoreBase
     assert Base.metadata is CoreBase.metadata
-    assert set(Base.metadata.tables) == {"download_jobs", "failed_jobs", "outbox", "users"}
+    assert set(Base.metadata.tables) == {
+        "api_keys",
+        "download_jobs",
+        "failed_jobs",
+        "outbox",
+        "users",
+    }
 
 
 def test_internal_code_has_no_legacy_database_or_metrics_imports():

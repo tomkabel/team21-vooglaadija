@@ -12,6 +12,28 @@ from core.logging_config import get_logger
 logger = get_logger(__name__)
 APP_DIR = Path(__file__).resolve().parents[1]
 
+OPENAPI_TAGS = [
+    {
+        "name": "auth",
+        "description": "User registration, user authentication, token refresh, and current user profile.",
+    },
+    {
+        "name": "downloads",
+        "description": "Create, query, download, and delete media extraction jobs.",
+    },
+    {
+        "name": "health",
+        "description": "Service health and readiness checks.",
+    },
+    {
+        "name": "keys",
+        "description": (
+            "Manage long-lived, scoped personal access tokens (PATs) for "
+            "machine-to-machine and agent authentication."
+        ),
+    },
+]
+
 
 def mount_docs_static(app: FastAPI) -> None:
     """Mount self-hosted Swagger and ReDoc assets when available."""

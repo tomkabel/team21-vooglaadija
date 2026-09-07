@@ -758,6 +758,11 @@ per_rule_ignores = { "DEP002" = ["ruff", "mypy", "bandit", "safety", "detect-sec
 # Module name differs from package name; required because the detached audit
 # env runs deptry without the project installed (no auto-detection possible).
 package_module_name_map = { "python-jose" = ["jose"] }
+# packages/mcp-server is an independently packaged, dependency-free
+# sub-project (its own pyproject.toml/dependency set) — same reason
+# ruff/mypy/vulture scope only to app/core/worker/scripts/alembic/tests
+# and never scan packages/.
+extend_exclude = ["^packages/"]
 
 # ============================================
 # SAFETY CONFIGURATION
