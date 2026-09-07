@@ -1,5 +1,4 @@
-"""
-Circuit Breaker pattern for external API calls.
+"""Circuit Breaker pattern for external API calls.
 
 Based on 2026 industry best practices for resilience engineering.
 Prevents thundering herd problem when external services (like YouTube) are down.
@@ -19,10 +18,13 @@ Transitions:
 import asyncio
 import os
 import time
+from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import Any
 
-from app.logging_config import get_logger
+from core import redis_client
+from core.logging_config import get_logger
+from core.metrics import CIRCUIT_BREAKER_STATE, RECOVERIES
 
 logger = get_logger(__name__)
 
@@ -39,45 +41,60 @@ class CircuitBreakerOpenError(Exception):
     """Raised when circuit breaker is open and request cannot proceed."""
 
     def __init__(self, service_name: str, reset_timeout: float):
+        """
+        Initialize an error for a service blocked by an open circuit breaker.
+
+        Parameters:
+            service_name (str): Name of the blocked service.
+            reset_timeout (float): Cooldown in seconds before retrying the service.
+        """
         self.service_name = service_name
         self.reset_timeout = reset_timeout
         super().__init__(
             f"Circuit breaker is OPEN for {service_name}. "
-            f"Service will be retried after {reset_timeout}s cooldown."
+            f"Service will be retried after {reset_timeout}s cooldown.",
         )
 
 
 class CircuitBreaker:
-    """
-    Circuit breaker implementation for external service calls.
+    """Circuit breaker implementation for external service calls.
 
     Tracks failures and opens the circuit when threshold is exceeded,
     preventing cascading failures and thundering herd problems.
     """
 
+    REDIS_PREFIX = "cb"
+
     def __init__(
         self,
         name: str,
+        *,
         failure_threshold: int = 5,
         success_threshold: int = 3,
         reset_timeout: float = 30.0,
         half_open_max_calls: int = 3,
+        use_redis_distributed: bool = False,
     ):
         """
-        Initialize circuit breaker.
+        Initialize a circuit breaker for a service.
 
-        Args:
-            name: Service name for logging
-            failure_threshold: Consecutive failures before opening circuit
-            success_threshold: Consecutive successes to close circuit from half-open
-            reset_timeout: Seconds before attempting recovery (open → half-open)
-            half_open_max_calls: Max concurrent calls in half-open state
+        Parameters:
+            name (str): Service name used to identify the breaker.
+            failure_threshold (int): Consecutive failures required to open the breaker.
+            success_threshold (int): Consecutive successful recovery calls required to close it.
+            reset_timeout (float): Seconds the breaker remains open before recovery is attempted.
+            half_open_max_calls (int): Maximum concurrent recovery calls allowed.
+            use_redis_distributed (bool): Whether to share breaker state across worker processes through Redis.
         """
         self.name = name
         self.failure_threshold = failure_threshold
         self.success_threshold = success_threshold
         self.reset_timeout = reset_timeout
         self.half_open_max_calls = half_open_max_calls
+        self._use_redis = use_redis_distributed
+
+        # Redis key namespace for this breaker
+        self._cb_key = f"{self.REDIS_PREFIX}:{name}"
 
         # State tracking
         self._state = CircuitState.CLOSED
@@ -87,18 +104,25 @@ class CircuitBreaker:
         self._half_open_calls = 0
         self._lock = asyncio.Lock()
 
+        # Publish initial gauge state so Prometheus has a data point from startup.
+        # Without this, the metric only appears after a state transition, causing
+        # a "No data" state in Grafana until the first failure or recovery event.
+        CIRCUIT_BREAKER_STATE.labels(service=self.name).set(0)
+
+        # Chaos override cache (per-instance, no module-level global)
+        # TTL is 0.5s so demo recovery is visible within 500ms
+        self._chaos_cache: tuple[float, bool] | None = None
+        self._chaos_cache_ttl: float = 0.5
+
     @property
     def state(self) -> CircuitState:
-        """Get current circuit state, checking for timeout transition.
+        """Get current circuit state.
 
-        Note: This property only checks for transitions but does NOT modify state.
-        Use _check_and_transition() or can_execute() for state mutations.
+        Returns the actual stored state WITHOUT speculatively transitioning
+        OPEN→HALF_OPEN. Transitions are only performed by
+        _check_and_transition_to_half_open() under the async lock, so
+        this property is consistent for read-only access.
         """
-        if self._state == CircuitState.OPEN and self._last_failure_time is not None:
-            # Check if reset timeout has elapsed
-            elapsed = time.monotonic() - self._last_failure_time
-            if elapsed >= self.reset_timeout:
-                return CircuitState.HALF_OPEN
         return self._state
 
     def _check_and_transition_to_half_open(self) -> CircuitState:
@@ -117,6 +141,32 @@ class CircuitBreaker:
                 )
                 self._state = CircuitState.HALF_OPEN
                 self._last_failure_time = None  # Reset timer
+                RECOVERIES.labels(reason="circuit_breaker_recovery").inc()
+                CIRCUIT_BREAKER_STATE.labels(service=self.name).set(2)
+        return self._state
+
+    def _distributed_half_open_transition(self, last_failure_wall: float | None) -> CircuitState:
+        """OPEN→HALF_OPEN using the shared wall-clock last-failure timestamp.
+
+        In distributed mode the OPEN decision in ``can_execute``/``is_accepting``
+        reads the shared Redis timestamp with ``time.time()``. The half-open
+        transition must use the SAME clock, not the local monotonic marker —
+        mixing them made the breaker NTP-step-sensitive (a backward step kept
+        it OPEN past the reset timeout; a forward step let it fail open).
+        """
+        if self._state == CircuitState.OPEN and last_failure_wall is not None:
+            elapsed = time.time() - last_failure_wall
+            if elapsed >= self.reset_timeout:
+                logger.info(
+                    "circuit_breaker_reset_timeout_elapsed",
+                    service=self.name,
+                    elapsed_seconds=elapsed,
+                    reset_timeout=self.reset_timeout,
+                )
+                self._state = CircuitState.HALF_OPEN
+                self._last_failure_time = None  # Reset timer
+                RECOVERIES.labels(reason="circuit_breaker_recovery").inc()
+                CIRCUIT_BREAKER_STATE.labels(service=self.name).set(2)
         return self._state
 
     @property
@@ -134,11 +184,187 @@ class CircuitBreaker:
         """Check if circuit is half-open (testing recovery)."""
         return self.state == CircuitState.HALF_OPEN
 
+    async def is_accepting(self) -> bool:
+        """Check whether the breaker should allow deferred work to resume.
+
+        Unlike the read-only state properties, this advances timeout-based
+        OPEN -> HALF_OPEN transitions under the async lock so background drain
+        loops do not get stuck waiting for a foreground request to probe the
+        breaker first.
+        """
+        if await self._is_chaos_override_active():
+            return False
+
+        async with self._lock:
+            d_failures = await self._distributed_failure_count()
+            d_last_failure = await self._distributed_last_failure()
+
+            if (
+                self._use_redis
+                and d_failures >= self.failure_threshold
+                and d_last_failure is not None
+            ):
+                if self._state != CircuitState.OPEN:
+                    elapsed = time.time() - d_last_failure
+                    if elapsed < self.reset_timeout:
+                        self._state = CircuitState.OPEN
+                        self._last_failure_time = time.monotonic()
+                        self._failure_count = d_failures
+                        CIRCUIT_BREAKER_STATE.labels(service=self.name).set(1)
+
+            if self._use_redis:
+                # Distributed: both decisions read the shared wall-clock
+                # timestamp — never mix in the local monotonic marker.
+                return self._distributed_half_open_transition(d_last_failure) != CircuitState.OPEN
+            return self._check_and_transition_to_half_open() != CircuitState.OPEN
+
+    async def _is_chaos_override_active(self) -> bool:
+        """Check chaos circuit-breaker override with per-instance TTL cache.
+
+        Returns the cached value if TTL (0.5s) has not elapsed, otherwise
+        re-checks Redis. This avoids a Redis round-trip on every call while
+        detecting recovery within 500ms for demo responsiveness.
+        """
+        now = time.monotonic()
+
+        if self._chaos_cache is not None:
+            timestamp, cached = self._chaos_cache
+            if (now - timestamp) < self._chaos_cache_ttl:
+                return cached
+
+        is_active = await redis_client.check_chaos_key(redis_client.CHAOS_CIRCUIT_BREAKER_KEY)
+        self._chaos_cache = (now, is_active)
+        return is_active
+
+    # -- Redis-backed distributed state helpers ---------------------------------
+
+    async def _distributed_failure_count(self) -> int:
+        """Return the shared failure count from Redis, or 0."""
+        try:
+            client = redis_client.get_redis_client()
+            val = await client.get(f"{self._cb_key}:failures")
+            return int(val) if val else 0
+        except Exception:
+            return self._failure_count  # fall back to local
+
+    async def _increment_failure_distributed(self) -> int:
+        """Atomically increment the shared failure counter with a TTL failsafe."""
+        try:
+            client = redis_client.get_redis_client()
+            pipe = client.pipeline()
+            pipe.incr(f"{self._cb_key}:failures")
+            pipe.expire(f"{self._cb_key}:failures", 120)
+            results = await pipe.execute()
+            return int(results[0])
+        except Exception:
+            self._failure_count += 1
+            return self._failure_count
+
+    async def _reset_failures_distributed(self) -> None:
+        """Clear the shared failure counter."""
+        try:
+            client = redis_client.get_redis_client()
+            await client.delete(f"{self._cb_key}:failures")
+        except Exception:
+            self._failure_count = 0
+
+    async def _try_acquire_half_open_slot(self) -> bool:
+        """Acquire a half-open slot in the shared pool.
+
+        At most half_open_max_calls slots can be held across all workers.
+        """
+        if not self._use_redis:
+            if self._half_open_calls < self.half_open_max_calls:
+                self._half_open_calls += 1
+                return True
+            return False
+        try:
+            client = redis_client.get_redis_client()
+            slot_key = f"{self._cb_key}:half_slots"
+            current = await client.incr(slot_key)
+            await client.expire(slot_key, 60)
+            if current <= self.half_open_max_calls:
+                return True
+            await client.decr(slot_key)
+            return False
+        except Exception:
+            # Fall back to local slot management if Redis is down
+            if self._half_open_calls < self.half_open_max_calls:
+                self._half_open_calls += 1
+                return True
+            return False
+
+    async def _release_half_open_slot(self) -> None:
+        """Release a previously acquired half-open slot."""
+        try:
+            if self._use_redis:
+                client = redis_client.get_redis_client()
+                slot_key = f"{self._cb_key}:half_slots"
+                await client.decr(slot_key)
+            else:
+                self._half_open_calls = max(0, self._half_open_calls - 1)
+        except Exception:
+            self._half_open_calls = max(0, self._half_open_calls - 1)
+
+    async def _reset_half_open_slots(self) -> None:
+        """Clear all half-open trial slots after leaving HALF_OPEN state."""
+        self._half_open_calls = 0
+        if not self._use_redis:
+            return
+        try:
+            client = redis_client.get_redis_client()
+            await client.delete(f"{self._cb_key}:half_slots")
+        except Exception:
+            pass
+
+    async def _distributed_last_failure(self) -> float | None:
+        """Return the shared last-failure timestamp from Redis."""
+        try:
+            client = redis_client.get_redis_client()
+            val = await client.get(f"{self._cb_key}:last_failure")
+            return float(val) if val else None
+        except Exception:
+            return self._last_failure_time
+
+    async def _set_last_failure_distributed(self) -> None:
+        """Write the shared last-failure timestamp."""
+        try:
+            client = redis_client.get_redis_client()
+            await client.setex(f"{self._cb_key}:last_failure", 120, time.time())
+        except Exception:
+            self._last_failure_time = time.monotonic()
+
     async def can_execute(self) -> bool:
         """Check if request can proceed."""
+        if await self._is_chaos_override_active():
+            return False
+
         async with self._lock:
+            # Distributed: read shared failure count and last-failure timestamp
+            d_failures = await self._distributed_failure_count()
+            d_last_failure = await self._distributed_last_failure()
+
+            # If distributed state says OPEN, propagate it locally
+            if (
+                self._use_redis
+                and d_failures >= self.failure_threshold
+                and d_last_failure is not None
+            ):
+                if self._state != CircuitState.OPEN:
+                    elapsed = time.time() - d_last_failure
+                    if elapsed < self.reset_timeout:
+                        self._state = CircuitState.OPEN
+                        self._last_failure_time = time.monotonic()
+                        self._failure_count = d_failures
+                        CIRCUIT_BREAKER_STATE.labels(service=self.name).set(1)
+
             # First: check for timeout-based transition OPEN→HALF_OPEN under lock
-            current_state = self._check_and_transition_to_half_open()
+            if self._use_redis:
+                # Distributed: use the shared wall-clock timestamp for the
+                # transition too (same clock as the OPEN decision above).
+                current_state = self._distributed_half_open_transition(d_last_failure)
+            else:
+                current_state = self._check_and_transition_to_half_open()
 
             if current_state == CircuitState.CLOSED:
                 return True
@@ -146,10 +372,9 @@ class CircuitBreaker:
             if current_state == CircuitState.OPEN:
                 return False
 
-            # HALF_OPEN: allow limited concurrent calls and reserve a slot
+            # HALF_OPEN: allow limited concurrent calls via shared slot pool
             if current_state == CircuitState.HALF_OPEN:
-                if self._half_open_calls < self.half_open_max_calls:
-                    self._half_open_calls += 1
+                if await self._try_acquire_half_open_slot():
                     return True
                 return False
 
@@ -158,9 +383,10 @@ class CircuitBreaker:
     async def record_success(self) -> None:
         """Record a successful call."""
         async with self._lock:
+            await self._release_half_open_slot()
+
             if self._state == CircuitState.HALF_OPEN:
                 self._success_count += 1
-                self._half_open_calls = max(0, self._half_open_calls - 1)
                 logger.info(
                     "circuit_breaker_success_in_half_open",
                     service=self.name,
@@ -177,68 +403,89 @@ class CircuitBreaker:
                     self._state = CircuitState.CLOSED
                     self._failure_count = 0
                     self._success_count = 0
-                    self._half_open_calls = 0
+                    await self._reset_half_open_slots()
+                    if self._use_redis:
+                        await self._reset_failures_distributed()
+                    CIRCUIT_BREAKER_STATE.labels(service=self.name).set(0)
             elif self._state == CircuitState.CLOSED:
-                # Reset failure count on success
-                if self._failure_count > 0:
+                # Reset failure count on success (local + distributed)
+                if self._failure_count > 0 or self._use_redis:
                     logger.info(
                         "circuit_breaker_failure_count_reset",
                         service=self.name,
                         previous_failures=self._failure_count,
                     )
                 self._failure_count = 0
+                if self._use_redis:
+                    await self._reset_failures_distributed()
 
     async def record_failure(self, error: Exception | None = None) -> None:
-        """Record a failed call."""
+        """
+        Record a failed call and update the circuit breaker state.
+
+        Parameters:
+            error (Exception | None): The exception associated with the failed call, if available.
+        """
         async with self._lock:
-            self._failure_count += 1
+            if self._use_redis:
+                # Use distributed counters so all workers see the failure
+                d_count = await self._increment_failure_distributed()
+                await self._set_last_failure_distributed()
+                current_count = d_count
+            else:
+                self._failure_count += 1
+                current_count = self._failure_count
+
             self._last_failure_time = time.monotonic()
 
             error_msg = str(error)[:100] if error else "unknown"
             logger.warning(
                 "circuit_breaker_failure_recorded",
                 service=self.name,
-                failure_count=self._failure_count,
+                failure_count=current_count,
                 failure_threshold=self.failure_threshold,
                 error=error_msg,
                 current_state=self._state.value,
             )
 
             if self._state == CircuitState.HALF_OPEN:
-                self._half_open_calls = max(0, self._half_open_calls - 1)
                 logger.warning(
                     "circuit_breaker_opening_from_half_open",
                     service=self.name,
-                    failure_count=self._failure_count,
+                    failure_count=current_count,
                 )
                 self._state = CircuitState.OPEN
                 self._success_count = 0
-                self._half_open_calls = 0
+                await self._reset_half_open_slots()
+                CIRCUIT_BREAKER_STATE.labels(service=self.name).set(1)
             elif self._state == CircuitState.CLOSED:
-                if self._failure_count >= self.failure_threshold:
+                if current_count >= self.failure_threshold:
                     logger.warning(
                         "circuit_breaker_opening",
                         service=self.name,
-                        failure_count=self._failure_count,
+                        failure_count=current_count,
                         failure_threshold=self.failure_threshold,
                     )
                     self._state = CircuitState.OPEN
+                    CIRCUIT_BREAKER_STATE.labels(service=self.name).set(1)
 
-    async def execute(self, func, *args, **kwargs) -> Any:
+    async def execute(self, func: Callable[..., Awaitable[Any]], *args: Any, **kwargs: Any) -> Any:
         """
-        Execute a function with circuit breaker protection.
+        Execute an asynchronous function under circuit-breaker protection.
 
-        Args:
-            func: Async function to execute
-            *args: Positional arguments for func
-            **kwargs: Keyword arguments for func
+        Cancellation releases any half-open slot without recording a failure.
+
+        Parameters:
+            func (Callable[..., Awaitable[Any]]): Asynchronous function to execute
+            *args (Any): Positional arguments passed to `func`
+            **kwargs (Any): Keyword arguments passed to `func`
 
         Returns:
-            Result from func if successful
+            Any: The result produced by `func`
 
         Raises:
-            CircuitBreakerOpenError: If circuit is open
-            Exception: Re-raises any exception from func
+            CircuitBreakerOpenError: If execution is blocked by the circuit breaker
+            Exception: Any exception raised by `func`
         """
         if not await self.can_execute():
             raise CircuitBreakerOpenError(self.name, self.reset_timeout)
@@ -247,6 +494,15 @@ class CircuitBreaker:
             result = await func(*args, **kwargs)
             await self.record_success()
             return result
+
+        except asyncio.CancelledError:
+            # Release half-open slot without recording a failure — the
+            # cancellation is from an outer timeout/shutdown, not from the
+            # downstream service itself.
+            if self._state == CircuitState.HALF_OPEN:
+                async with self._lock:
+                    self._half_open_calls = max(0, self._half_open_calls - 1)
+            raise
 
         except Exception as e:
             await self.record_failure(e)
@@ -272,7 +528,7 @@ _youtube_circuit_breaker: CircuitBreaker | None = None
 
 def get_youtube_circuit_breaker() -> CircuitBreaker:
     """Get or create the YouTube API circuit breaker."""
-    global _youtube_circuit_breaker  # noqa: PLW0603 - singleton pattern requires module-level state
+    global _youtube_circuit_breaker
     if _youtube_circuit_breaker is None:
         _youtube_circuit_breaker = CircuitBreaker(
             name="youtube_api",
@@ -280,16 +536,29 @@ def get_youtube_circuit_breaker() -> CircuitBreaker:
             success_threshold=int(os.environ.get("CIRCUIT_BREAKER_SUCCESS_THRESHOLD", "3")),
             reset_timeout=float(os.environ.get("CIRCUIT_BREAKER_RESET_TIMEOUT", "30.0")),
             half_open_max_calls=int(os.environ.get("CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS", "3")),
+            use_redis_distributed=os.environ.get("CIRCUIT_BREAKER_USE_REDIS", "").lower()
+            in ("1", "true", "yes"),
         )
     return _youtube_circuit_breaker
 
 
-async def extract_media_with_circuit_breaker(url: str, storage_path: str) -> tuple[str, str]:
+async def extract_media_with_circuit_breaker(
+    url: str,
+    storage_path: str,
+    progress_callback: Callable[[dict], Awaitable[None]] | None = None,
+) -> tuple[str, str, str | None]:
     """
-    Extract media URL with circuit breaker protection.
+    Extract media from a video URL through the YouTube circuit breaker.
 
-    Wraps extract_media_url with circuit breaker to prevent
-    hammering YouTube during outages.
+    Parameters:
+        url (str): The video URL to extract.
+        storage_path (str): Base path for storing downloaded files.
+        progress_callback (Callable[[dict], Awaitable[None]] | None): Optional
+            asynchronous callback for download progress updates.
+
+    Returns:
+        tuple[str, str, str | None]: The downloaded file path, file name, and
+            media title.
     """
     cb = get_youtube_circuit_breaker()
 
@@ -299,21 +568,44 @@ async def extract_media_with_circuit_breaker(url: str, storage_path: str) -> tup
         url=url[:50],
     )
 
-    result: tuple[str, str] = await cb.execute(
-        _extract_media_url_internal,
+    result: tuple[str, str, str | None] = await cb.execute(
+        lambda u, s: _extract_media_url_internal(u, s, progress_callback=progress_callback),
         url,
         storage_path,
     )
     return result
 
 
-async def _extract_media_url_internal(url: str, storage_path: str) -> tuple[str, str]:
+async def _extract_media_url_internal(
+    url: str,
+    storage_path: str,
+    progress_callback: Callable[[dict], Awaitable[None]] | None = None,
+) -> tuple[str, str, str | None]:
     """Internal extraction without circuit breaker (called by circuit breaker)."""
     from app.services.yt_dlp_service import extract_media_url
 
-    return await extract_media_url(url, storage_path)
+    return await extract_media_url(url, storage_path, progress_callback=progress_callback)
 
 
 def get_circuit_breaker_stats() -> dict[str, Any]:
     """Get stats for the YouTube circuit breaker."""
     return get_youtube_circuit_breaker().get_stats()
+
+
+def is_circuit_breaker_closed() -> bool:
+    """Check if the YouTube circuit breaker is in CLOSED state."""
+    cb = get_youtube_circuit_breaker()
+    return cb.state == CircuitState.CLOSED
+
+
+def is_circuit_breaker_open() -> bool:
+    """Check if the YouTube circuit breaker is in OPEN state."""
+    cb = get_youtube_circuit_breaker()
+    return cb.state == CircuitState.OPEN
+
+
+def get_circuit_state_value() -> int:
+    """Get the current circuit breaker state as Prometheus gauge value."""
+    cb = get_youtube_circuit_breaker()
+    state_map = {CircuitState.CLOSED: 0, CircuitState.OPEN: 1, CircuitState.HALF_OPEN: 2}
+    return state_map.get(cb.state, 0)

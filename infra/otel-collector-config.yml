@@ -13,27 +13,42 @@ processors:
 
 exporters:
   debug:
-    verbosity: detailed
+    verbosity: basic
     sampling_initial: 5
     sampling_thereafter: 200
 
-  # OTLP exporter disabled for local development - would create a loop
-  # otlp:
-  #   endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4317}
-  #   tls:
-  #     insecure: true
+  # Self-forwarding OTLP exporter. This collector's gRPC receiver is plain
+  # (no TLS), so exporting back to it over TLS fails with a TLS handshake error
+  # on every retry. It is therefore DISABLED by default: the collector receives
+  # spans/metrics/logs from the app and prints them via the `debug` exporter.
+  # Set OTEL_SELF_EXPORT_ENABLED=true only when a downstream OTLP backend is
+  # configured via OTEL_EXPORTER_OTLP_ENDPOINT (which must use TLS, e.g.
+  # https://...), and never point it back at this collector's own receiver.
+  otlp:
+    endpoint: ${env:OTEL_EXPORTER_OTLP_ENDPOINT}
+    tls:
+      insecure: ${env:OTEL_EXPORTER_OTLP_INSECURE}
 
 service:
   pipelines:
     traces:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [debug]
+      receivers:
+        - otlp
+      processors:
+        - batch
+      exporters:
+        - ${env:OTEL_SELF_EXPORT_ENABLED}
     metrics:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [debug]
+      receivers:
+        - otlp
+      processors:
+        - batch
+      exporters:
+        - ${env:OTEL_SELF_EXPORT_ENABLED}
     logs:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [debug]
+      receivers:
+        - otlp
+      processors:
+        - batch
+      exporters:
+        - debug

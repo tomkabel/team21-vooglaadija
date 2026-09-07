@@ -1,0 +1,651 @@
+"""Tests for worker.browser_executor module.
+
+Covers the I/O matrix from spec-gh-140-p2-worker-integration.md:
+- success path returns (file_path, file_name, None)
+- error code → ErrorCategory mapping for every documented microservice code
+- HTTP transport failures map to TRANSIENT/TIMEOUT
+- circuit breaker integration (open circuit → TRANSIENT, no HTTP call)
+- no httpx exception leaks past extract_media
+"""
+
+from __future__ import annotations
+
+import time
+
+import httpx
+import pytest
+
+from app.services.circuit_breaker import CircuitBreakerOpenError, CircuitState
+from app.services.error_classifier import ErrorCategory
+from worker.browser_executor import (
+    BrowserExecutorError,
+    _map_response_to_category,
+    _validate_file_path,
+    extract_media,
+    get_browser_downloader_circuit_breaker,
+    select_executor,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_breaker_state():
+    """Reset the module-level circuit breaker between tests.
+
+    The breaker is a singleton; without this fixture a test that opens the
+    breaker (e.g. via `record_failure` loops) leaks state into subsequent
+    tests and triggers spurious `circuit_open` errors.
+    """
+    breaker = get_browser_downloader_circuit_breaker()
+    breaker._state = CircuitState.CLOSED
+    breaker._failure_count = 0
+    breaker._success_count = 0
+    breaker._last_failure_time = None
+    breaker._half_open_calls = 0
+    yield
+    breaker._state = CircuitState.CLOSED
+    breaker._failure_count = 0
+    breaker._success_count = 0
+    breaker._last_failure_time = None
+    breaker._half_open_calls = 0
+
+
+# -- select_executor: hostname routing -----------------------------------
+
+
+class TestSelectExecutor:
+    """Hostname-based dispatch — pure function, no settings touch."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://www.tiktok.com/@user/video/123",
+            "https://tiktok.com/@u/v/1",
+            "https://m.tiktok.com/v/1.html",
+            "https://tiktokv.com/share/video/1",
+            "https://vm.tiktok.com/abcdef",
+            "https://www.instagram.com/reel/abc",
+            "https://instagram.com/p/xyz",
+            "https://instagr.am/p/abc",
+            "https://twitter.com/user/status/1",
+            "https://x.com/user/status/1",
+        ],
+    )
+    def test_browser_platforms_route_to_browser(self, url: str) -> None:
+        assert select_executor(url) == "browser"
+
+    @pytest.mark.unit
+    def test_tco_routes_to_youtube(self) -> None:
+        # t.co is a generic shortener that may redirect to YouTube; it must not
+        # be routed to the browser executor (see select_executor TODO).
+        assert select_executor("https://t.co/abc") == "youtube"
+
+    @pytest.mark.unit
+    def test_fqdn_trailing_dot_routes_to_browser(self) -> None:
+        # Some DNS resolvers return FQDN form (with trailing dot).
+        # We must still match.
+        assert select_executor("https://www.tiktok.com./@u/v/1") == "browser"
+        assert select_executor("https://instagram.com./p/x") == "browser"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://www.youtube.com/watch?v=abc",
+            "https://youtu.be/abc",
+            "https://example.com/foo",
+            "https://vimeo.com/123",
+            "",
+        ],
+    )
+    def test_non_browser_platforms_route_to_youtube(self, url: str) -> None:
+        assert select_executor(url) == "youtube"
+
+    @pytest.mark.unit
+    def test_unparseable_url_falls_through_to_youtube(self) -> None:
+        # Malformed URL is treated as unknown → yt-dlp (current behavior)
+        assert select_executor("not a url at all") == "youtube"
+
+
+# -- _map_response_to_category: error code → ErrorCategory ---------------
+
+
+class TestMapResponseToCategory:
+    """Single source of truth for microservice error codes."""
+
+    @pytest.mark.unit
+    def test_drm_detected_is_blocked(self) -> None:
+        assert _map_response_to_category("drm_detected") == ErrorCategory.BLOCKED
+
+    @pytest.mark.unit
+    def test_anti_bot_block_is_blocked(self) -> None:
+        assert _map_response_to_category("anti_bot_block") == ErrorCategory.BLOCKED
+
+    @pytest.mark.unit
+    def test_no_media_found_is_not_found(self) -> None:
+        assert _map_response_to_category("no_media_found") == ErrorCategory.NOT_FOUND
+
+    @pytest.mark.unit
+    def test_network_error_is_transient(self) -> None:
+        assert _map_response_to_category("network_error") == ErrorCategory.TRANSIENT
+
+    @pytest.mark.unit
+    def test_timeout_is_timeout(self) -> None:
+        assert _map_response_to_category("request_timeout") == ErrorCategory.TIMEOUT
+
+    @pytest.mark.unit
+    def test_http_5xx_is_transient(self) -> None:
+        assert _map_response_to_category("http_503") == ErrorCategory.TRANSIENT
+
+    @pytest.mark.unit
+    def test_http_4xx_unknown_is_blocked(self) -> None:
+        assert _map_response_to_category("http_400") == ErrorCategory.BLOCKED
+
+    @pytest.mark.unit
+    def test_invalid_request_is_blocked(self) -> None:
+        assert _map_response_to_category("invalid_request") == ErrorCategory.BLOCKED
+
+    @pytest.mark.unit
+    def test_http_429_rate_limit_is_transient(self) -> None:
+        # 429 from the microservice (in the error code) is rate limiting,
+        # not a platform-level block. Retries should kick in.
+        assert _map_response_to_category("http_429") == ErrorCategory.TRANSIENT
+
+    @pytest.mark.unit
+    def test_storage_error_maps_to_storage(self) -> None:
+        # Disk-full preflight failures map to the STORAGE retry policy
+        # (1 retry, 5m fixed delay) — not the transient/default path.
+        assert _map_response_to_category("storage_error") == ErrorCategory.STORAGE
+
+    @pytest.mark.unit
+    def test_unknown_code_defaults_to_transient(self) -> None:
+        assert _map_response_to_category("something_new") == ErrorCategory.TRANSIENT
+
+
+# -- extract_media: HTTP path --------------------------------------------
+
+
+def _make_mock_client(response_status: int, body: dict | str) -> httpx.AsyncClient:
+    """
+    Build an asynchronous HTTP client that returns a configured response for requests.
+
+    Parameters:
+        response_status (int): HTTP status code for the mock response.
+        body (dict | str): JSON response body or plain-text response body.
+
+    Returns:
+        httpx.AsyncClient: Client configured with the mock response transport.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        """
+        Create an HTTP response with the configured status and body.
+        """
+        if isinstance(body, str):
+            return httpx.Response(response_status, text=body)
+        return httpx.Response(response_status, json=body)
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+class TestExtractMediaSuccess:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_success_returns_tuple_with_filename_derived_from_path(self) -> None:
+        client = _make_mock_client(
+            200,
+            {
+                "status": "success",
+                "file_path": "/storage/downloads/abc-123.mp4",
+                "tier_used": 1,
+            },
+        )
+        result = await extract_media(
+            "https://tiktok.com/@u/v/1",
+            "/storage",
+            client=client,
+        )
+        assert result == ("/storage/downloads/abc-123.mp4", "abc-123.mp4", None)
+
+
+class TestExtractMediaErrorCodes:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_drm_detected_maps_to_blocked(self) -> None:
+        client = _make_mock_client(
+            502,
+            {"status": "failed", "error": "drm_detected"},
+        )
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.BLOCKED
+        assert exc.value.signal == "drm_detected"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_anti_bot_block_maps_to_blocked(self) -> None:
+        client = _make_mock_client(
+            502,
+            {"status": "failed", "error": "anti_bot_block"},
+        )
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://instagram.com/p/x", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.BLOCKED
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_no_media_found_maps_to_not_found(self) -> None:
+        client = _make_mock_client(
+            502,
+            {"status": "failed", "error": "no_media_found"},
+        )
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.NOT_FOUND
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_http_5xx_with_json_error_maps_to_transient(self) -> None:
+        client = _make_mock_client(
+            503,
+            {"status": "failed", "error": "concurrency_limit"},
+        )
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        # 'concurrency_limit' is not a known code → falls through to TRANSIENT
+        assert exc.value.category == ErrorCategory.TRANSIENT
+        assert exc.value.signal == "concurrency_limit"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_http_503_empty_body_maps_to_transient_with_status_signal(self) -> None:
+        """AC4: 503 with an empty body should still classify as TRANSIENT
+        with the synthetic http_<status> signal — covers the case where
+        the microservice is overloaded and closes the response without
+        writing JSON.
+        """
+        client = _make_mock_client(503, "")
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.TRANSIENT
+        assert exc.value.signal == "http_503"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_non_json_error_body_maps_to_transient(self) -> None:
+        client = _make_mock_client(502, "internal server error")
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.TRANSIENT
+        assert exc.value.signal == "http_502"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_http_400_maps_to_blocked(self) -> None:
+        client = _make_mock_client(
+            400,
+            {"status": "failed", "error": "invalid_request", "message": "bad url"},
+        )
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.BLOCKED
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_200_with_missing_file_path_maps_to_transient(self) -> None:
+        client = _make_mock_client(200, {"status": "success"})
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.TRANSIENT
+        assert exc.value.signal == "missing_file_path"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_200_with_non_dict_json_body_maps_to_transient(self) -> None:
+        """Microservice contract violation: 200 OK with a JSON list/null/scalar body."""
+        client = _make_mock_client(200, [1, 2, 3])
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.TRANSIENT
+        assert exc.value.signal == "invalid_response_shape"
+
+
+class TestExtractMediaNdjsonProgress:
+    """NDJSON progress streaming: events forwarded, final line parsed."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_progress_events_forwarded_to_callback(self) -> None:
+        body = (
+            '{"phase":"intercepting"}\n'
+            '{"phase":"downloading","percent":42,"downloaded_bytes":1000,"total_bytes":2500}\n'
+            '{"status":"success","file_path":"/storage/downloads/abc-123.mp4","tier_used":1}\n'
+        )
+        client = _make_mock_client(200, body)
+        events: list[dict] = []
+
+        async def progress_callback(data: dict) -> None:
+            events.append(data)
+
+        result = await extract_media(
+            "https://tiktok.com/@u/v/1",
+            "/storage",
+            client=client,
+            progress_callback=progress_callback,
+        )
+        assert result == ("/storage/downloads/abc-123.mp4", "abc-123.mp4", None)
+        # Progress events are forwarded in the yt-dlp-shaped dict; phase-only
+        # lines (no percent) still produce an event with None fields.
+        assert events == [
+            {
+                "percent": None,
+                "speed": None,
+                "eta": None,
+                "downloaded_bytes": None,
+                "total_bytes": None,
+            },
+            {
+                "percent": 42,
+                "speed": None,
+                "eta": None,
+                "downloaded_bytes": 1000,
+                "total_bytes": 2500,
+            },
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_streamed_failure_final_line_maps_to_blocked(self) -> None:
+        # HTTP 200 stream whose final line is a failed status: the structured
+        # error code must win over the (200) HTTP status.
+        body = (
+            '{"phase":"downloading","percent":10}\n'
+            '{"status":"failed","error":"drm_detected","tier_used":null}\n'
+        )
+        client = _make_mock_client(200, body)
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.BLOCKED
+        assert exc.value.signal == "drm_detected"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_streamed_storage_failure_maps_to_storage(self) -> None:
+        body = '{"status":"failed","error":"storage_error"}\n'
+        client = _make_mock_client(200, body)
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.STORAGE
+        assert exc.value.signal == "storage_error"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_missing_final_line_maps_to_transient(self) -> None:
+        # Stream ended without a result line (microservice crash mid-stream).
+        client = _make_mock_client(200, '{"phase":"downloading","percent":5}\n')
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.TRANSIENT
+        assert exc.value.signal == "non_json_response"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_callback_failure_does_not_fail_the_download(self) -> None:
+        body = (
+            '{"phase":"downloading","percent":10}\n'
+            '{"status":"success","file_path":"/storage/downloads/abc.mp4","tier_used":1}\n'
+        )
+        client = _make_mock_client(200, body)
+
+        async def broken_callback(data: dict) -> None:
+            raise RuntimeError("pubsub down")
+
+        result = await extract_media(
+            "https://tiktok.com/@u/v/1",
+            "/storage",
+            client=client,
+            progress_callback=broken_callback,
+        )
+        assert result == ("/storage/downloads/abc.mp4", "abc.mp4", None)
+
+
+class TestExtractMediaCircuitBreaker:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_open_circuit_propagates_circuit_breaker_open_without_http_call(self) -> None:
+        # When the breaker is OPEN, no HTTP call should be made. We use a
+        # transport that would raise if invoked, proving the call was skipped.
+        # Phase 2 fix: CircuitBreakerOpenError propagates raw so the processor's
+        # deferred-job path handles it (worker/processor.py:_handle_circuit_open).
+        called = False
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal called
+            called = True
+            return httpx.Response(200, json={"status": "success", "file_path": "/x.mp4"})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        # Force the breaker open by recording 5 consecutive failures
+        breaker = get_browser_downloader_circuit_breaker()
+        for _ in range(breaker.failure_threshold):
+            await breaker.record_failure(RuntimeError("boom"))
+
+        with pytest.raises(CircuitBreakerOpenError):
+            await extract_media(
+                "https://tiktok.com/@u/v/1",
+                "/storage",
+                client=client,
+            )
+        assert called is False, "HTTP transport was called despite open breaker"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_no_httpx_exception_leaks_past_extract_media(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadError("stream broke")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.TRANSIENT
+        assert exc.value.signal == "http_error"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_timeout_exception_maps_to_timeout_category(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.TimeoutException("read timed out")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        # The exact paths that feed the retry policy when the microservice
+        # is unreachable: TIMEOUT must reach retry_scheduler as TIMEOUT,
+        # not as the generic http_error/UNKNOWN.
+        assert exc.value.category == ErrorCategory.TIMEOUT
+        assert exc.value.signal == "request_timeout"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_connect_error_maps_to_transient_connect_error(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection refused")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.TRANSIENT
+        assert exc.value.signal == "connect_error"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_terminal_verdicts_do_not_count_as_breaker_failures(self) -> None:
+        """BLOCKED/NOT_FOUND are request-specific — the circuit stays closed."""
+        breaker = get_browser_downloader_circuit_breaker()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(502, json={"status": "failed", "error": "drm_detected"})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        for _ in range(breaker.failure_threshold):
+            with pytest.raises(BrowserExecutorError) as exc:
+                await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+            assert exc.value.category == ErrorCategory.BLOCKED
+
+        assert breaker.state == CircuitState.CLOSED
+        assert breaker._failure_count == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_transient_verdicts_still_count_as_breaker_failures(self) -> None:
+        """TRANSIENT verdicts reflect downstream health and must open the circuit."""
+        breaker = get_browser_downloader_circuit_breaker()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, json={"status": "failed", "error": "concurrency_limit"})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        for _ in range(breaker.failure_threshold):
+            with pytest.raises(BrowserExecutorError):
+                await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+
+        assert breaker.state == CircuitState.OPEN
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_half_open_recovers_to_closed_after_success_threshold(self) -> None:
+        """HALF_OPEN → CLOSED recovery driven through the public API.
+
+        Finding: the breaker tests only covered CLOSED→OPEN and poked
+        private counters. Here only the time passage is simulated (by
+        backdating _last_failure_time); the recovery assertions use the
+        public `state` property.
+        """
+        breaker = get_browser_downloader_circuit_breaker()
+        for _ in range(breaker.failure_threshold):
+            await breaker.record_failure(RuntimeError("boom"))
+        assert breaker.state == CircuitState.OPEN
+
+        # Simulate reset_timeout elapsing so OPEN → HALF_OPEN is allowed.
+        breaker._last_failure_time = time.monotonic() - breaker.reset_timeout - 1
+        assert await breaker.can_execute() is True
+        assert breaker.state == CircuitState.HALF_OPEN
+
+        for _ in range(breaker.success_threshold):
+            await breaker.record_success()
+        assert breaker.state == CircuitState.CLOSED
+
+
+# -- Circuit breaker singleton -------------------------------------------
+
+
+class TestBreakerSingleton:
+    @pytest.mark.unit
+    def test_get_breaker_returns_same_instance(self) -> None:
+        a = get_browser_downloader_circuit_breaker()
+        b = get_browser_downloader_circuit_breaker()
+        assert a is b
+        assert a.name == "browser_downloader"
+
+
+class TestPathTraversalGuard:
+    """_validate_file_path must reject any path outside the downloads dir.
+
+    The microservice-returned path flows to FileResponse and os.remove in
+    job_executor, so a regression accepting absolute/../ paths is a security
+    issue — these tests pin the guard (finding: previously untested).
+    """
+
+    @pytest.mark.unit
+    def test_absolute_path_outside_root_rejected(self) -> None:
+        with pytest.raises(BrowserExecutorError) as exc:
+            _validate_file_path("/etc/passwd", "/storage/downloads")
+        assert exc.value.category == ErrorCategory.BLOCKED
+        assert exc.value.signal == "invalid_file_path"
+
+    @pytest.mark.unit
+    def test_parent_traversal_rejected(self) -> None:
+        with pytest.raises(BrowserExecutorError):
+            _validate_file_path("/storage/downloads/../secrets.env", "/storage/downloads")
+
+    @pytest.mark.unit
+    def test_relative_path_rejected(self) -> None:
+        # A bare relative path resolves against the worker cwd, not the
+        # downloads dir — must be rejected.
+        with pytest.raises(BrowserExecutorError):
+            _validate_file_path("evil.mp4", "/storage/downloads")
+
+    @pytest.mark.unit
+    def test_root_itself_rejected(self) -> None:
+        with pytest.raises(BrowserExecutorError):
+            _validate_file_path("/storage/downloads", "/storage/downloads")
+
+    @pytest.mark.unit
+    def test_path_inside_root_accepted(self) -> None:
+        resolved = _validate_file_path("/storage/downloads/abc-123.mp4", "/storage/downloads")
+        assert resolved == "/storage/downloads/abc-123.mp4"
+
+
+class TestStreamedFailureResponses:
+    """Non-200 bodies arrive as unconsumed streams; classification must survive.
+
+    Regression: `_parse_failure_response` called `response.json()` on an
+    unconsumed streamed body, which raises `httpx.ResponseNotRead` (a
+    RuntimeError, *not* an httpx.HTTPError). It escaped every handler in
+    `_call_service` and degraded all microservice failures to UNKNOWN — the
+    BLOCKED/NOT_FOUND mappings were dead code in production and every
+    non-200 counted as a circuit-breaker failure. `MockTransport` with
+    `json=`/`text=` pre-buffers the body, so only `stream=` responses
+    reproduce the real wire behavior.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_streamed_502_classifies_by_structured_error(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                502,
+                stream=httpx.ByteStream(b'{"status": "failed", "error": "drm_detected"}'),
+                request=request,
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.BLOCKED
+        assert exc.value.signal == "drm_detected"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_streamed_404_classifies_as_not_found(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                404,
+                stream=httpx.ByteStream(b'{"status": "failed", "error": "http_404"}'),
+                request=request,
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://instagram.com/p/x/", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.NOT_FOUND
+        assert exc.value.signal == "http_404"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_streamed_non_json_body_falls_back_to_status_signal(self) -> None:
+        # Empty/non-JSON error body from the service: the http_<status>
+        # signal must still classify the failure (http_503 → TRANSIENT).
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                503,
+                stream=httpx.ByteStream(b""),
+                request=request,
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with pytest.raises(BrowserExecutorError) as exc:
+            await extract_media("https://tiktok.com/@u/v/1", "/storage", client=client)
+        assert exc.value.category == ErrorCategory.TRANSIENT
+        assert exc.value.signal == "http_503"

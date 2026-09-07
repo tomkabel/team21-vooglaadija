@@ -1,17 +1,22 @@
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
+
+from app.utils.validators import validate_password
 
 
 class UserCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     email: EmailStr
     password: str
 
     @field_validator("password")
     @classmethod
-    def password_min_length(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
+    def validate_password_field(cls, v: str) -> str:
+        error = validate_password(v)
+        if error:
+            raise ValueError(error)
         return v
 
 

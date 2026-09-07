@@ -7,7 +7,7 @@
 # ============================================
 # Stage 1: Python Dependency Builder
 # ============================================
-FROM python:3.12-slim AS python-builder
+FROM python@sha256:6c4dd321d176d61ea848dc8c73a4f7dbae8f70e0ee48bb411ea2f045b599fa8e AS python-builder
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
@@ -29,7 +29,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
     UV_COMPILE_BYTECODE=1
 
 # Install uv binary (single static binary, ~25MB, not copied to final image)
-COPY --from=ghcr.io/astral-sh/uv:0.6 /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv@sha256:4a6c9444b126bd325fba904bff796bf91fb777bf6148d60109c4cb1de2ffc497 /uv /bin/uv
 
 # Copy manifest and lockfile first → cacheable dependency layer
 COPY pyproject.toml uv.lock ./
@@ -41,11 +41,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ============================================
 # Stage 2: Frontend Builder
 # ============================================
-FROM node:20-alpine AS frontend-builder
+FROM node@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS frontend-builder
 WORKDIR /app
 
-# Install pnpm for package management (version pinned in package.json packageManager field)
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+# Install pnpm for package management (version pinned in frontend/package.json packageManager field)
+RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
 
 # Copy frontend package files and pnpm lockfile to frontend subdirectory
 COPY frontend/package*.json frontend/pnpm-lock.yaml ./frontend/
@@ -79,8 +79,12 @@ FROM python-builder AS app-builder
 # Copy source code (this invalidates frequently, but deps are already cached)
 COPY app ./app
 COPY worker ./worker
+COPY core ./core
+COPY scripts ./scripts
 COPY alembic.ini .
 COPY alembic ./alembic
+# yt-dlp plugin extractors (yt_dlp_plugins package on PYTHONPATH=/app)
+COPY yt_dlp_plugins ./yt_dlp_plugins
 
 # Install the local package (wheel build only, no dependency resolution)
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -93,12 +97,14 @@ COPY --link --from=frontend-builder /app/frontend/node_modules/htmx.org/dist/htm
 # Download Swagger UI assets (version 5.32.5 - exact pin for SRI integrity)
 RUN mkdir -p /app/app/static/swagger && \
     curl -fsSL https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.5/swagger-ui-bundle.js -o /app/app/static/swagger/swagger-ui-bundle.js && \
-    curl -fsSL https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.5/swagger-ui.css -o /app/app/static/swagger/swagger-ui.css
+    curl -fsSL https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.5/swagger-ui.css -o /app/app/static/swagger/swagger-ui.css && \
+    echo "0028baa75a6060bac3a81329f501985abbdc1d527a5c16ac87977fb8722684d27a0092ae437ab3be434867ae18f9156d  /app/app/static/swagger/swagger-ui-bundle.js" | sha384sum -c - && \
+    echo "f50d9fa52fb1792e1f7c9cba09a827c28525fb895d01884eb3da6066e10ac72a5532876199917378c96f56c0237fbb93  /app/app/static/swagger/swagger-ui.css" | sha384sum -c -
 
 # ============================================
 # Stage 4: Runtime Base
 # ============================================
-FROM python:3.12-slim AS runtime-base
+FROM python@sha256:6c4dd321d176d61ea848dc8c73a4f7dbae8f70e0ee48bb411ea2f045b599fa8e AS runtime-base
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Install runtime dependencies with apt cache mounts
@@ -108,11 +114,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     redis-tools \
-    gosu \
     curl \
     gnupg \
     && mkdir -p /etc/apt/keyrings \
-    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/nodesource-repo.gpg.key \
+    && echo "b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d  /tmp/nodesource-repo.gpg.key" | sha256sum -c - \
+    && gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource-repo.gpg.key \
+    && rm /tmp/nodesource-repo.gpg.key \
     && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends nodejs \
@@ -127,8 +135,11 @@ WORKDIR /app
 COPY --from=app-builder /app/app ./app
 COPY --from=app-builder /app/pyproject.toml ./pyproject.toml
 COPY --from=app-builder /app/worker ./worker
+COPY --from=app-builder /app/core ./core
+COPY --from=app-builder /app/scripts ./scripts
 COPY --from=app-builder /app/alembic.ini /app/alembic.ini
 COPY --from=app-builder /app/alembic /app/alembic
+COPY --from=app-builder /app/yt_dlp_plugins /app/yt_dlp_plugins
 
 # Create non-root user
 RUN groupadd -r appuser -g 1000 && \
@@ -149,8 +160,9 @@ ENV PYTHONPATH=/app \
 
 COPY entrypoint.sh /app/entrypoint.sh
 COPY migrate.sh /app/migrate.sh
-RUN chmod +x /app/entrypoint.sh /app/migrate.sh && \
-    chown appuser:appuser /app/entrypoint.sh /app/migrate.sh
+COPY seed_demo.sh /app/seed_demo.sh
+RUN chmod +x /app/entrypoint.sh /app/migrate.sh /app/seed_demo.sh && \
+    chown appuser:appuser /app/entrypoint.sh /app/migrate.sh /app/seed_demo.sh
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD ["curl", "-fsS", "-o", "/dev/null", "http://localhost:8000/health"]
@@ -184,10 +196,18 @@ ENV PYTHONPATH=/app \
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD ["curl", "-fsS", "-o", "/dev/null", "http://localhost:8082/health"]
 
+EXPOSE 8082
+
 COPY --from=app-builder /app/worker/entrypoint-worker.sh ./entrypoint-worker.sh
 COPY migrate.sh /app/migrate.sh
 RUN chmod +x ./entrypoint-worker.sh /app/migrate.sh && \
     chown appuser:appuser ./entrypoint-worker.sh /app/migrate.sh
+
+# Named volumes inherit the ownership of the image path they're mounted over
+# on first use, but only if that path already exists in the image — an
+# unknown path is created root-owned instead, which the non-root appuser
+# below cannot write into. celery-beat mounts celery_beat_data here.
+RUN mkdir -p /var/lib/celerybeat && chown appuser:appuser /var/lib/celerybeat
 
 # Note: When using bind mounts (not named volumes), the host directory must be
 # pre-created with UID/GID 1000 ownership, or the container will fail to write.
