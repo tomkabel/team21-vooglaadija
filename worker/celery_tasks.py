@@ -110,9 +110,9 @@ async def _execute_job(db: AsyncSession, job: DownloadJob, start_time: float) ->
     """Execute the download for a job using the appropriate executor."""
     from app.services.circuit_breaker import extract_media_with_circuit_breaker
 
-    try:
-        executor_kind = select_executor(job.url)
+    executor_kind = select_executor(job.url)
 
+    try:
         if executor_kind == "browser":
             file_path, file_name, title = await extract_media_browser(
                 job.url,
@@ -149,7 +149,96 @@ async def _execute_job(db: AsyncSession, job: DownloadJob, start_time: float) ->
         return {"status": "completed", "job_id": str(job.id)}
 
     except Exception as e:
+        fallback_result = await _try_llm_fallback(db, job, executor_kind, e)
+        if fallback_result is not None:
+            return fallback_result
         return {"status": "error", "job_id": str(job.id), "error": e}
+
+
+async def _try_llm_fallback(
+    db: AsyncSession,
+    job: DownloadJob,
+    executor_kind: str,
+    original_error: Exception,
+) -> dict | None:
+    """Attempt LLM-assisted extraction after standard extraction fails.
+
+    Only applies to the yt-dlp path (``executor_kind == "youtube"``, the
+    generic non-browser executor) — the browser-microservice path already
+    targets platforms yt-dlp can't handle directly, so an LLM pass there
+    would just re-fetch the same page a browser executor already tried.
+
+    Returns a "completed" result dict when the fallback recovers the job, or
+    None to fall through to the normal retry/DLQ handling for the original
+    error.
+    """
+    from app.services.circuit_breaker import extract_media_with_circuit_breaker
+    from app.services.llm_fallback import extract_with_llm_fallback, is_llm_fallback_available
+
+    if executor_kind != "youtube" or not is_llm_fallback_available():
+        return None
+
+    _sync_logger.info(
+        "llm_fallback_triggered",
+        job_id=str(job.id),
+        url=job.url,
+        original_error=str(original_error)[:200],
+    )
+
+    try:
+        llm_result = await extract_with_llm_fallback(job.url)
+        if not (llm_result.found and llm_result.url):
+            return None
+
+        _sync_logger.info(
+            "llm_fallback_discovered_url",
+            job_id=str(job.id),
+            discovered_url=llm_result.url[:100],
+            format=llm_result.format,
+        )
+
+        # Hand the discovered direct URL to the same download pipeline
+        # (circuit breaker, warm pool, format selection, ffmpeg) used for
+        # normal jobs — yt-dlp's generic extractor handles direct media/
+        # manifest URLs without any platform-specific extractor.
+        file_path, file_name, title = await extract_media_with_circuit_breaker(
+            llm_result.url,
+            settings.storage_path,
+            progress_callback=lambda data: _publish_progress(job.user_id, job.id, data),
+        )
+        if not title and llm_result.title:
+            title = llm_result.title
+
+        await db.execute(
+            update(DownloadJob)
+            .where(DownloadJob.id == job.id, DownloadJob.status == "processing")
+            .values(
+                status="completed",
+                file_path=file_path,
+                file_name=file_name,
+                title=title,
+                completed_at=datetime.now(UTC),
+                expires_at=datetime.now(UTC) + timedelta(hours=settings.file_expire_hours),
+            )
+        )
+        await db.commit()
+
+        refreshed = await db.execute(select(DownloadJob).where(DownloadJob.id == job.id))
+        completed_job = refreshed.scalar_one_or_none()
+        if completed_job:
+            await publish_job_status(completed_job)
+
+        JOBS_COMPLETED.labels(status="success_llm_fallback").inc()
+        _sync_logger.info("llm_fallback_job_completed", job_id=str(job.id))
+        return {"status": "completed", "job_id": str(job.id)}
+
+    except Exception as llm_err:
+        _sync_logger.warning(
+            "llm_fallback_failed",
+            job_id=str(job.id),
+            error=str(llm_err)[:200],
+        )
+        return None
 
 
 async def _handle_result(db: AsyncSession, job: DownloadJob, result: dict) -> None:
