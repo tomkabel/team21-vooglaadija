@@ -411,13 +411,15 @@ setup_environment() {
   [[ -f "$REPO_DIR/.env.example" ]] || die ".env.example not found in $REPO_DIR."
   cp "$REPO_DIR/.env.example" "$env_file"
 
-  local db_password redis_password secret_key grafana_password
+  local db_password redis_password secret_key grafana_password db_replication_password
   db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
   redis_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
   secret_key=$(openssl rand -hex 32)
   grafana_password=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 24)
+  db_replication_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
 
   sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=${db_password}|" "$env_file"
+  sed -i "s|^DB_REPLICATION_PASSWORD=.*|DB_REPLICATION_PASSWORD=${db_replication_password}|" "$env_file"
   sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${redis_password}|" "$env_file"
   sed -i "s|^SECRET_KEY=.*|SECRET_KEY=${secret_key}|" "$env_file"
   sed -i "s|^GF_SECURITY_ADMIN_PASSWORD=.*|GF_SECURITY_ADMIN_PASSWORD=${grafana_password}|" "$env_file"

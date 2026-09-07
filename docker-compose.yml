@@ -28,8 +28,10 @@ x-common-env: &common-env # Database components (app/config.py constructs URL wi
   DB_USER: ${DB_USER:-postgres}
   DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
   DB_NAME: ${DB_NAME:-ytprocessor}
-  DB_HOST: ${DB_HOST:-db}
+  DB_HOST: ${DB_HOST:-pgbouncer}
   DB_PORT: ${DB_PORT:-5432}
+  DB_REPLICA_HOST: ${DB_REPLICA_HOST:-db-replica}
+  DB_REPLICA_PORT: ${DB_REPLICA_PORT:-5432}
   DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
   DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
   DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-30}
@@ -140,7 +142,7 @@ services:
     depends_on:
       storage-init:
         condition: service_completed_successfully
-      db:
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -188,7 +190,7 @@ services:
     depends_on:
       storage-init:
         condition: service_completed_successfully
-      db:
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -373,11 +375,18 @@ services:
           memory: 256M
 
   # ==========================================
-  # PostgreSQL
+  # PostgreSQL Primary
   # ==========================================
+  # NOTE: this service was bumped from postgres:15-alpine to postgres:17-alpine.
+  # PostgreSQL major versions cannot start against a data directory initialized
+  # by an older major version — an existing postgres_data volume from a pre-P17
+  # deployment MUST be dumped/restored (or pg_upgrade'd) into a fresh volume
+  # before this image is deployed against it. See docs/OPS.md "PostgreSQL
+  # major-version upgrades" for the procedure. Fresh/CI environments are
+  # unaffected since their volume is empty on first start.
   db:
     container_name: ytprocessor-db
-    image: postgres:15-alpine
+    image: postgres:17-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
@@ -385,9 +394,20 @@ services:
       POSTGRES_DB: ${DB_NAME:-ytprocessor}
       # PostgreSQL tuning for containers
       POSTGRES_INITDB_ARGS: '--data-checksums'
+      # Replication role for db-replica (infra/postgresql/init-replication.sh
+      # creates it on first initialization only).
+      DB_REPLICATION_USER: ${DB_REPLICATION_USER:-replicator}
+      DB_REPLICATION_PASSWORD: ${DB_REPLICATION_PASSWORD:?DB_REPLICATION_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgresql/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./infra/postgresql/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./infra/postgresql/init-replication.sh:/docker-entrypoint-initdb.d/init-replication.sh:ro
     ports: []
+    command: >
+      postgres
+        -c config_file=/etc/postgresql/postgresql.conf
+        -c hba_file=/etc/postgresql/pg_hba.conf
     # PostgreSQL must run as its default user, not overridden by security-context
     deploy:
       resources:
@@ -403,6 +423,108 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+  # ==========================================
+  # PostgreSQL Read Replica
+  # ==========================================
+  db-replica:
+    container_name: ytprocessor-db-replica
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      PGUSER: ${DB_USER:-postgres}
+      PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      # Consumed by replica-entrypoint.sh to pg_basebackup from the primary.
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_REPLICATION_USER: ${DB_REPLICATION_USER:-replicator}
+      DB_REPLICATION_PASSWORD: ${DB_REPLICATION_PASSWORD:?DB_REPLICATION_PASSWORD is required}
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+      - ./infra/postgresql/replica.conf:/etc/postgresql/postgresql.conf:ro
+      - ./infra/postgresql/replica-entrypoint.sh:/usr/local/bin/replica-entrypoint.sh:ro
+    ports: []
+    entrypoint: ['/usr/local/bin/replica-entrypoint.sh']
+    command: >
+      postgres
+        -c config_file=/etc/postgresql/postgresql.conf
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-ytprocessor}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+  # ==========================================
+  # PgBouncer — connection pooler
+  # ==========================================
+  pgbouncer:
+    container_name: ytprocessor-pgbouncer
+    # pgbouncer/pgbouncer on Docker Hub is unmaintained (last tag 1.15.0, 2020)
+    # and has no 1.24 manifest. edoburu/pgbouncer is the actively maintained
+    # community image and is configured entirely via DATABASE_URL, not
+    # DATABASES_* variables (those aren't recognized by its entrypoint).
+    image: edoburu/pgbouncer:v1.24.1-p1
+    restart: unless-stopped
+    environment:
+      DATABASE_URL:
+        postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?DB_PASSWORD is
+        required}@db:5432/${DB_NAME:-ytprocessor}
+      # postgres:17-alpine stores role passwords as SCRAM-SHA-256 by default.
+      # edoburu's default AUTH_TYPE (md5) writes an MD5-only userlist entry
+      # that can't answer the server's SCRAM challenge ("cannot do SCRAM
+      # authentication: wrong password type"). scram-sha-256 stores the
+      # plaintext password instead, letting PgBouncer do real SCRAM to `db`.
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 25
+      MIN_POOL_SIZE: 5
+      RESERVE_POOL_SIZE: 5
+      RESERVE_POOL_TIMEOUT: 3
+      MAX_DB_CONNECTIONS: 50
+      MAX_USER_CONNECTIONS: 50
+      SERVER_IDLE_TIMEOUT: 600
+    expose:
+      - '5432'
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h localhost -p 5432 -U ${DB_USER:-postgres}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     logging:
       driver: json-file
       options:
@@ -599,7 +721,7 @@ services:
         limits:
           cpus: '0.5'
           memory: 256M
-    image: postgres:15-alpine
+    image: postgres:17-alpine
     profiles: ['backup']
     restart: 'no'
     volumes:
@@ -624,7 +746,9 @@ services:
         max-file: '3'
 
   backup-cron:
-    image: alpine:3.20
+    # postgresql17-client is only packaged starting with Alpine 3.21; 3.20's
+    # main repo tops out at postgresql16-client.
+    image: alpine:3.21
     profiles: ['backup']
     restart: unless-stopped
     volumes:
@@ -641,7 +765,7 @@ services:
     entrypoint: |
       /bin/sh -c "
         set -e
-        apk add --no-cache postgresql15-client >/dev/null 2>&1
+        apk add --no-cache postgresql17-client
         echo '0 2 * * * /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1' > /etc/crontabs/root
         crond -f -l 2
       "
@@ -682,6 +806,13 @@ volumes:
       type: none
       o: bind
       device: /mnt/db_storage/postgres
+  postgres_replica_data:
+    name: ytprocessor-postgres-replica-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/db_storage/postgres-replica
   redis_data:
     name: ytprocessor-redis-data
     driver: local

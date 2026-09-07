@@ -50,10 +50,18 @@ class TestSettingsTestingMode:
             importlib.import_module(legacy_module)
 
     def test_testing_env_skips_validation_and_has_sqlite(self):
-        """TESTING=1 skips production validation; database_url uses SQLite."""
-        from core.config import settings
+        """TESTING=1 skips production validation; Settings() defaults to SQLite.
 
-        assert "sqlite" in settings.database_url
+        tests/conftest.py intentionally repoints the session-wide `settings`
+        singleton at the real Testcontainers PostgreSQL database so the app
+        and worker exercise real Postgres in tests. This checks a fresh,
+        unmodified Settings() instance instead, which verifies the class's
+        own testing-mode default (no DATABASE_URL configured -> SQLite)
+        independent of that singleton override.
+        """
+        from core.config import Settings
+
+        assert "sqlite" in Settings().database_url
 
     def test_secret_key_is_set_in_test_env(self):
         """In test env, SECRET_KEY comes from the conftest override."""

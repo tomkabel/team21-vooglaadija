@@ -13,6 +13,7 @@ from sqlalchemy import select
 from core.database import get_async_session_factory
 from core.models.download_job import DownloadJob
 from core.models.outbox import Outbox
+from tests.conftest import seed_user
 
 pytestmark = pytest.mark.slow
 
@@ -106,10 +107,11 @@ async def test_claim_next_returns_pending_job_once_and_persists_processing(db_se
     from worker.job_claimer import claim_next
 
     job_id = uuid4()
+    user = await seed_user(db_session)
     db_session.add(
         DownloadJob(
             id=job_id,
-            user_id=uuid4(),
+            user_id=user.id,
             url="https://www.youtube.com/watch?v=story55single",
             status="pending",
         )
@@ -141,10 +143,11 @@ async def test_claim_next_concurrent_workers_claim_exactly_once(db_session) -> N
     from worker.job_claimer import claim_next
 
     job_id = uuid4()
+    user = await seed_user(db_session)
     db_session.add(
         DownloadJob(
             id=job_id,
-            user_id=uuid4(),
+            user_id=user.id,
             url="https://www.youtube.com/watch?v=story55concurrent",
             status="pending",
         )
@@ -179,7 +182,7 @@ async def test_zombie_requeue_writes_outbox_only_for_returned_stuck_jobs(db_sess
     stuck_id = UUID("550e8400-e29b-41d4-a716-446655445501")
     recent_id = UUID("550e8400-e29b-41d4-a716-446655445502")
     pending_id = UUID("550e8400-e29b-41d4-a716-446655445503")
-    user_id = uuid4()
+    user_id = (await seed_user(db_session)).id
     db_session.add_all(
         [
             DownloadJob(
@@ -242,7 +245,7 @@ async def test_reset_stuck_jobs_updates_only_stale_processing_and_publishes(db_s
     recent_id = UUID("550e8400-e29b-41d4-a716-446655445512")
     completed_id = UUID("550e8400-e29b-41d4-a716-446655445513")
     failed_id = UUID("550e8400-e29b-41d4-a716-446655445514")
-    user_id = uuid4()
+    user_id = (await seed_user(db_session)).id
     db_session.add_all(
         [
             DownloadJob(

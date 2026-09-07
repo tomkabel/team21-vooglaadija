@@ -9,9 +9,12 @@ import pytest
 
 from core.config import settings
 from core.models.download_job import DownloadJob
+from tests.conftest import seed_user
 from worker.main import cleanup_expired_jobs
 
 _DOWNLOADS_DIR = f"{settings.storage_path}/downloads"
+
+_JOB_OWNER_USER_ID = UUID("550e8400-e29b-41d4-a716-446655440005")
 
 
 def _make_mock_session_factory():
@@ -27,6 +30,14 @@ def _make_mock_session_factory():
 
 class TestCleanupExpiredJobs:
     """Tests for cleanup_expired_jobs function."""
+
+    @pytest.fixture(autouse=True)
+    async def _seed_job_owner(self, db_session):
+        """Ensure the fixed user_id used by every job in this class exists.
+
+        PostgreSQL enforces download_jobs.user_id -> users.id (SQLite did not).
+        """
+        await seed_user(db_session, user_id=_JOB_OWNER_USER_ID)
 
     @pytest.mark.unit
     async def test_cleanup_expired_jobs_no_expired(self, db_session):

@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.services.error_classifier import ErrorCategory
 from core.models.download_job import DownloadJob
+from tests.conftest import seed_user
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -67,6 +68,7 @@ class TestProcessNextJob:
         from worker.processor import process_next_job
 
         # Create a pending job in the database
+        await seed_user(db_session, user_id=UUID("550e8400-e29b-41d4-a716-446655440005"))
         job = DownloadJob(
             id=UUID("550e8400-e29b-41d4-a716-446655440000"),
             user_id=UUID("550e8400-e29b-41d4-a716-446655440005"),
@@ -123,6 +125,7 @@ class TestProcessNextJob:
         from worker.processor import process_next_job
 
         job_id = UUID("550e8400-e29b-41d4-a716-446655440010")
+        await seed_user(db_session, user_id=UUID("550e8400-e29b-41d4-a716-446655440005"))
         job = DownloadJob(
             id=job_id,
             user_id=UUID("550e8400-e29b-41d4-a716-446655440005"),
@@ -201,6 +204,7 @@ class TestProcessNextJob:
         from worker.dlq_manager import move_to_dlq
         from worker.retry_scheduler import RetryDecision
 
+        await seed_user(db_session, user_id=UUID("550e8400-e29b-41d4-a716-446655440005"))
         job = DownloadJob(
             id=UUID("550e8400-e29b-41d4-a716-446655440006"),
             user_id=UUID("550e8400-e29b-41d4-a716-446655440005"),
@@ -255,6 +259,7 @@ class TestProcessNextJob:
 
         # Create a job in processing state but only 5 minutes old
         recent_time = datetime.now(UTC) - timedelta(minutes=5)
+        await seed_user(db_session, user_id=UUID("550e8400-e29b-41d4-a716-446655440005"))
         job = DownloadJob(
             id=UUID("550e8400-e29b-41d4-a716-446655440003"),
             user_id=UUID("550e8400-e29b-41d4-a716-446655440005"),
@@ -285,6 +290,7 @@ class TestProcessNextJob:
 
         # Create a completed job from 15 minutes ago
         old_time = datetime.now(UTC) - timedelta(minutes=15)
+        await seed_user(db_session, user_id=UUID("550e8400-e29b-41d4-a716-446655440005"))
         job = DownloadJob(
             id=UUID("550e8400-e29b-41d4-a716-446655440004"),
             user_id=UUID("550e8400-e29b-41d4-a716-446655440005"),

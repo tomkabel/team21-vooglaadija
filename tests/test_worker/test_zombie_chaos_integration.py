@@ -8,6 +8,7 @@ import pytest
 from core.config import settings
 from core.metrics import RECOVERIES
 from core.models.download_job import DownloadJob
+from tests.conftest import seed_user
 from worker.main import shutdown_event
 
 
@@ -44,9 +45,10 @@ class TestZombieSweepChaosFlow:
         mock_redis.exists = AsyncMock(return_value=0)
 
         job_id = uuid.uuid4()
+        user = await seed_user(db_session)
         job = DownloadJob(
             id=job_id,
-            user_id=uuid.uuid4(),
+            user_id=user.id,
             url="https://www.youtube.com/watch?v=zombie001",
             status="pending",
         )
@@ -92,9 +94,10 @@ class TestZombieSweepChaosFlow:
         mock_redis.exists = AsyncMock(return_value=0)
 
         job_id = uuid.uuid4()
+        user = await seed_user(db_session)
         job = DownloadJob(
             id=job_id,
-            user_id=uuid.uuid4(),
+            user_id=user.id,
             url="https://www.youtube.com/watch?v=zombie002",
             status="pending",
         )

@@ -13,6 +13,7 @@ from app.services.error_classifier import ErrorCategory
 from core.models.download_job import DownloadJob
 from core.models.failed_job import FailedJob
 from core.models.outbox import Outbox
+from tests.conftest import seed_user
 
 pytestmark = pytest.mark.slow
 
@@ -108,9 +109,10 @@ async def test_schedule_retry_updates_db_outbox_and_redis(db_session) -> None:
     from worker.retry_scheduler import evaluate, schedule_retry
 
     job_id = uuid4()
+    user = await seed_user(db_session)
     job = DownloadJob(
         id=job_id,
-        user_id=uuid4(),
+        user_id=user.id,
         url="https://www.youtube.com/watch?v=schedule-retry",
         status="processing",
         retry_count=0,
@@ -161,9 +163,10 @@ async def test_schedule_retry_retains_pending_outbox_when_redis_fails(db_session
     from worker.retry_scheduler import evaluate, schedule_retry
 
     job_id = uuid4()
+    user = await seed_user(db_session)
     job = DownloadJob(
         id=job_id,
-        user_id=uuid4(),
+        user_id=user.id,
         url="https://www.youtube.com/watch?v=retry-redis-fail",
         status="processing",
         retry_count=0,
@@ -197,9 +200,10 @@ async def test_schedule_retry_skips_outbox_when_guarded_update_misses(db_session
     from worker.retry_scheduler import evaluate, schedule_retry
 
     job_id = uuid4()
+    user = await seed_user(db_session)
     job = DownloadJob(
         id=job_id,
-        user_id=uuid4(),
+        user_id=user.id,
         url="https://www.youtube.com/watch?v=retry-skip",
         status="pending",
         retry_count=0,
@@ -234,7 +238,7 @@ async def test_move_to_dlq_writes_required_failed_job_fields_and_depth(db_sessio
     from worker.retry_scheduler import RetryDecision
 
     job_id = uuid4()
-    user_id = uuid4()
+    user_id = (await seed_user(db_session)).id
     job = DownloadJob(
         id=job_id,
         user_id=user_id,
@@ -299,7 +303,7 @@ async def test_outbox_relay_handles_retry_payload_success_and_failure(db_session
     """Outbox relay marks successful retry rows 'processed' and retains failed ones as pending."""
     from worker.outbox_relay import sync_outbox_to_queue
 
-    user_id = uuid4()
+    user_id = (await seed_user(db_session)).id
     successful_job_id = uuid4()
     failed_job_id = uuid4()
     next_retry = datetime.now(UTC) + timedelta(seconds=30)
@@ -352,7 +356,7 @@ async def test_outbox_relay_clears_duplicate_retry_rows_after_verifying_redis(db
     """Outbox relay marks retry rows already recovered to Redis as 'processed'."""
     from worker.outbox_relay import sync_outbox_to_queue
 
-    user_id = uuid4()
+    user_id = (await seed_user(db_session)).id
     job_id = uuid4()
     next_retry = datetime.now(UTC) + timedelta(seconds=30)
 

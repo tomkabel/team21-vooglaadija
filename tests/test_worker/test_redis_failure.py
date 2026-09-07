@@ -15,6 +15,7 @@ import pytest
 from starlette.responses import Response
 
 from core.models.download_job import DownloadJob
+from tests.conftest import seed_user
 
 
 class TestRedisFailureHandling:
@@ -26,9 +27,11 @@ class TestRedisFailureHandling:
         return UUID("550e8400-e29b-41d4-a716-446655440020")
 
     @pytest.fixture
-    def user_id(self) -> UUID:
+    async def user_id(self, db_session) -> UUID:
         """Fixed user ID for consistent testing."""
-        return UUID("550e8400-e29b-41d4-a716-446655440021")
+        fixed_id = UUID("550e8400-e29b-41d4-a716-446655440021")
+        await seed_user(db_session, user_id=fixed_id)
+        return fixed_id
 
     @pytest.mark.unit
     async def test_worker_start_fails_if_redis_down(self):
@@ -193,6 +196,7 @@ class TestRedisFailureDuringJobProcessing:
 
         job_id = UUID("550e8400-e29b-41d4-a716-446655440022")
         user_id = UUID("550e8400-e29b-41d4-a716-446655440023")
+        await seed_user(db_session, user_id=user_id)
 
         # Create job
         job = DownloadJob(

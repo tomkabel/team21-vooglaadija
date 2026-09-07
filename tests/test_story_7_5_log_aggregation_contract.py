@@ -26,6 +26,8 @@ BASE_COMPOSE_SERVICES = {
     "flower",
     "browser-downloader",
     "db",
+    "db-replica",
+    "pgbouncer",
     "redis",
     "otel-collector",
     "prometheus",

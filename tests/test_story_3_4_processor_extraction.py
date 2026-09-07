@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from core.database import get_async_session_factory
 from core.models.download_job import DownloadJob
+from tests.conftest import seed_user
 
 pytestmark = pytest.mark.slow
 
@@ -69,9 +70,10 @@ async def test_claim_next_returns_job_once_for_pending_row(db_session) -> None:
     from worker.job_claimer import claim_next
 
     job_id = uuid4()
+    user = await seed_user(db_session)
     job = DownloadJob(
         id=job_id,
-        user_id=uuid4(),
+        user_id=user.id,
         url="https://www.youtube.com/watch?v=story34",
         status="pending",
     )
@@ -98,9 +100,10 @@ async def test_claim_next_allows_only_one_concurrent_claim(db_session) -> None:
     from worker.job_claimer import claim_next
 
     job_id = uuid4()
+    user = await seed_user(db_session)
     job = DownloadJob(
         id=job_id,
-        user_id=uuid4(),
+        user_id=user.id,
         url="https://www.youtube.com/watch?v=story34concurrent",
         status="pending",
     )
@@ -127,9 +130,10 @@ async def test_executor_completes_claimed_job_and_publishes_status(db_session) -
     from worker.job_executor import ExecutionStatus, execute
 
     job_id = uuid4()
+    user = await seed_user(db_session)
     job = DownloadJob(
         id=job_id,
-        user_id=uuid4(),
+        user_id=user.id,
         url="https://www.youtube.com/watch?v=story34execute",
         status="pending",
     )
@@ -173,9 +177,10 @@ async def test_processor_defers_jobs_when_executor_hits_open_circuit(db_session)
     from worker.processor import process_next_job
 
     job_id = uuid4()
+    user = await seed_user(db_session)
     job = DownloadJob(
         id=job_id,
-        user_id=uuid4(),
+        user_id=user.id,
         url="https://www.youtube.com/watch?v=story34circuit",
         status="pending",
     )

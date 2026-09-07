@@ -106,10 +106,19 @@ class Settings(BaseSettings):
     db_name: str = "ytprocessor"
     db_host: str = "localhost"
     db_port: str = "5432"
+    db_replica_host: str = ""
+    db_replica_port: str = "5432"
     db_pool_size: int = 10
     db_max_overflow: int = 5
     db_pool_timeout: int = 30
     db_pool_recycle: int = 1800
+    # Not exposed in .env.example: tests/conftest.py sets this directly on the
+    # settings singleton (mirroring how it repoints database_url) so the
+    # shared async engine in core/database.py uses NullPool instead of
+    # QueuePool. Without it, a pooled asyncpg connection opened under one
+    # pytest-asyncio test's event loop breaks the next time it's checked out
+    # under a different test's loop.
+    db_disable_pooling: bool = False
 
     # Used to construct REDIS_URL if not set directly
     redis_host: str = "localhost"
@@ -280,6 +289,17 @@ class Settings(BaseSettings):
         self.database_url = (
             f"postgresql+asyncpg://{self.db_user}:{encoded_password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
+        )
+
+    @property
+    def database_replica_url(self) -> str:
+        """Build the read replica URL from configured replica host."""
+        if not self.db_replica_host:
+            return self.database_url
+        encoded_password = quote_plus(self.db_password)
+        return (
+            f"postgresql+asyncpg://{self.db_user}:{encoded_password}"
+            f"@{self.db_replica_host}:{self.db_replica_port}/{self.db_name}"
         )
 
     def _validate_secret_key(self) -> None:
