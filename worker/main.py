@@ -472,9 +472,13 @@ async def main() -> None:
                 synced = await sync_outbox_to_queue()
                 if synced > 0:
                     logger.info("outbox_sync_completed", synced=synced)
-                last_outbox_sync = now
             except Exception as e:
                 logger.error("outbox_sync_error", error=str(e))
+            finally:
+                # Advance the schedule even on failure so a persistent
+                # DB/Redis outage is retried at OUTBOX_SYNC_INTERVAL_SECONDS
+                # cadence instead of on every main-loop iteration.
+                last_outbox_sync = now
 
         if now - last_cleanup >= cleanup_interval:
             try:

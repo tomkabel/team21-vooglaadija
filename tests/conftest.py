@@ -6,21 +6,63 @@ os.environ["TESTING"] = "1"
 os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-not-for-production-use-32chars"
 os.environ["BCRYPT_ROUNDS"] = "4"  # min rounds for test speed (prod default: 12)
 
-# Determine unique database URL per xdist worker to avoid race conditions
-_worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
-_test_db_path = os.path.abspath(f"test_{_worker_id}.db")
-_test_db_url = f"sqlite+aiosqlite:///{_test_db_path}"
+# Support running integration tests against real PostgreSQL via docker-compose.test.yml.
+# Usage:
+#   TEST_DATABASE_URL=postgresql+asyncpg://test_user:test_pass@localhost:5433/test_db \  # pragma: allowlist secret
+#     pytest tests/ -v
+# If unset, fallback to per-worker SQLite for fast parallel unit tests.
+_test_db_url = os.environ.get("TEST_DATABASE_URL")
+_using_postgres = _test_db_url is not None
 
-# Remove stale per-worker database from previous runs.
-# create_all skips existing tables so a stale file with an older schema
-# won't be updated to match the current model definitions.
-try:
-    os.remove(_test_db_path)
-except OSError:
-    pass
+# Unique per-xdist-worker identity, used for SQLite file naming and for the
+# PostgreSQL per-worker database name below, so concurrent workers never
+# share tables — a shared database would let one worker's teardown drop
+# another worker's in-flight tables.
+_worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
+
+if _using_postgres:
+    # Isolate each xdist worker in its own *database* (not merely a schema):
+    # `settings.database_url` is a module-global read by every engine created
+    # anywhere in the app/worker code, not just this module's `test_engine`,
+    # so schema-only isolation (via search_path) would only cover this
+    # module's own connections and leave other engines pointed at the shared
+    # default schema. A per-worker database, baked into the URL itself,
+    # isolates every consumer uniformly.
+    import asyncio as _asyncio
+
+    import asyncpg as _asyncpg
+
+    _pg_worker_db = f"test_{_worker_id}"
+    _admin_dsn = _test_db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+    async def _recreate_worker_database(admin_dsn: str, db_name: str) -> None:
+        conn = await _asyncpg.connect(admin_dsn)
+        try:
+            # Drop any stale database from a previous run (mirrors the
+            # SQLite stale-file cleanup below) before recreating it fresh.
+            await conn.execute(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)')
+            await conn.execute(f'CREATE DATABASE "{db_name}"')
+        finally:
+            await conn.close()
+
+    _asyncio.run(_recreate_worker_database(_admin_dsn, _pg_worker_db))
+
+    _base_url = _test_db_url.rsplit("/", 1)[0]
+    _test_db_url = f"{_base_url}/{_pg_worker_db}"
+else:
+    # Determine unique database URL per xdist worker to avoid race conditions
+    _test_db_path = os.path.abspath(f"test_{_worker_id}.db")
+    _test_db_url = f"sqlite+aiosqlite:///{_test_db_path}"
+
+    # Remove stale per-worker database from previous runs.
+    # create_all skips existing tables so a stale file with an older schema
+    # won't be updated to match the current model definitions.
+    try:
+        os.remove(_test_db_path)
+    except OSError:
+        pass
 
 # Force reconfigure the database URL before any app imports.
-# This ensures the app uses SQLite instead of PostgreSQL.
 import core.config  # noqa: E402
 
 core.config.settings.database_url = _test_db_url
@@ -41,16 +83,18 @@ from core.database import Base, get_db  # noqa: E402
 
 _REGISTERED_MODEL_EXPORTS = core_models.__all__
 
-# Now import app - it will use the SQLite URL we set above
+# Now import app - it will use the database URL we set above
 from app.main import app as fastapi_app  # noqa: E402
 
 TEST_DATABASE_URL = _test_db_url
 
+_engine_kwargs = {"poolclass": NullPool}
+if not _using_postgres:
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
 
 test_engine = create_async_engine(
     TEST_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=NullPool,
+    **_engine_kwargs,
 )
 
 # Use async_sessionmaker for proper async session support
@@ -82,9 +126,10 @@ async def setup_database() -> AsyncGenerator[None, None]:
     """Create tables once per xdist worker, drop at end.
 
     Per-test isolation is provided by the autouse ``_cleanup_test_tables`` fixture,
-    which deletes all rows before each test. Combined with per-worker DB files and
-    NullPool connections, schema isolation per test is unnecessary and costs ~270s
-    for 972 tests (0.28s DDL x 2 ops x 972 tests).
+    which deletes all rows before each test. Combined with per-worker DB files
+    (SQLite) or per-worker databases (PostgreSQL) and NullPool connections,
+    schema isolation per test is unnecessary and costs ~270s for 972 tests
+    (0.28s DDL x 2 ops x 972 tests).
     """
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
