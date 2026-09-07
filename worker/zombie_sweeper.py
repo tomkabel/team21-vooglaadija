@@ -65,9 +65,35 @@ async def requeue_stuck_jobs(timeout_minutes: int = 15) -> int:
         requeued_count = 0
         for job in stuck_jobs:
             try:
-                # Create outbox entry atomically with status update.
-                # Prevents the dual-write problem: if Redis is down,
-                # the outbox relay will enqueue when it recovers.
+                # Claim the job atomically: only succeed if it is still
+                # "processing" with the exact updated_at we read above. If
+                # another worker already reclaimed (or otherwise changed)
+                # this job concurrently, the WHERE clause matches zero rows
+                # and we skip it instead of stomping the other worker's
+                # write or double-dispatching the job.
+                result = await db.execute(
+                    update(DownloadJob)
+                    .where(
+                        DownloadJob.id == job.id,
+                        DownloadJob.status == "processing",
+                        DownloadJob.updated_at == job.updated_at,
+                    )
+                    .values(
+                        status="pending",
+                        updated_at=datetime.now(UTC),
+                    )
+                )
+                if result.rowcount != 1:
+                    logger.info(
+                        "zombie_job_claim_lost",
+                        job_id=str(job.id),
+                        rowcount=result.rowcount,
+                    )
+                    continue
+
+                # Only create the outbox entry once we've actually claimed
+                # the job, so we never publish duplicate zombie_recovery
+                # events for a job another worker already reclaimed.
                 outbox_entry = Outbox(
                     id=uuid.uuid4(),
                     job_id=job.id,
@@ -77,14 +103,6 @@ async def requeue_stuck_jobs(timeout_minutes: int = 15) -> int:
                 )
                 db.add(outbox_entry)
 
-                await db.execute(
-                    update(DownloadJob)
-                    .where(DownloadJob.id == job.id)
-                    .values(
-                        status="pending",
-                        updated_at=datetime.now(UTC),
-                    )
-                )
                 requeued_count += 1
                 logger.info(
                     "zombie_job_requeued",

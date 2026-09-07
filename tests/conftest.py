@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlsplit, urlunsplit
 
 # CRITICAL: Set environment variables BEFORE any other imports
 os.environ["TESTING"] = "1"
@@ -12,11 +13,52 @@ os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-not-for-production-
 _test_db_url = os.environ.get("TEST_DATABASE_URL")
 _using_postgres = _test_db_url is not None
 
+# Unique worker id used to isolate database state when running under
+# pytest-xdist (`-n auto`); defaults to a single logical worker otherwise.
+_worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
+
+
+def _ensure_postgres_database_exists(base_url: str, db_name: str) -> None:
+    """Create ``db_name`` on the Postgres server from ``base_url`` if missing.
+
+    Runs synchronously via psycopg, before any async engine or event loop
+    exists. Connects to the server's default ``postgres`` maintenance
+    database, since ``CREATE DATABASE`` cannot run inside a transaction
+    against the database being created (and psycopg defaults to
+    transactional execution, hence ``autocommit=True`` here).
+    """
+    import psycopg
+    from psycopg import sql
+
+    parts = urlsplit(base_url)
+    admin_dsn = urlunsplit((parts.scheme.split("+")[0], parts.netloc, "/postgres", "", ""))
+    with psycopg.connect(admin_dsn, autocommit=True) as conn:
+        exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db_name,)).fetchone()
+        if not exists:
+            try:
+                conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db_name)))
+            except psycopg.errors.DuplicateDatabase:
+                # Another process created it between our check and CREATE
+                # (e.g. concurrent xdist worker startup) - safe to ignore.
+                pass
+
+
 if not _using_postgres:
     # Determine unique database URL per xdist worker to avoid race conditions
-    _worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
     _test_db_path = os.path.abspath(f"test_{_worker_id}.db")
     _test_db_url = f"sqlite+aiosqlite:///{_test_db_path}"
+else:
+    # Isolate PostgreSQL state per xdist worker. `setup_database` (below)
+    # creates/drops ALL tables before/after *every* test - if every worker
+    # pointed at the same database (as before), one worker could drop tables
+    # out from under another worker's in-flight query. Mirror the per-worker
+    # SQLite pattern above: suffix the database name with the worker id and
+    # create it on first use if it doesn't already exist.
+    _base_test_db_url = _test_db_url
+    _worker_db_name = f"{urlsplit(_base_test_db_url).path.lstrip('/')}_{_worker_id}"
+    _ensure_postgres_database_exists(_base_test_db_url, _worker_db_name)
+    _base_parts = urlsplit(_base_test_db_url)
+    _test_db_url = urlunsplit(_base_parts._replace(path=f"/{_worker_db_name}"))
 
 # Force reconfigure the database URL before any app imports
 import app.config  # noqa: E402
