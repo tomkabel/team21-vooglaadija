@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Index
+from sqlalchemy import DateTime, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -20,7 +20,7 @@ WILDCARD_SCOPE = "*"
 
 # Hard prefix for raw personal access tokens. Endpoints use this to distinguish
 # a PAT from a JWT without attempting a signature decode.
-API_KEY_TOKEN_PREFIX = "vlj_pat_"
+API_KEY_TOKEN_PREFIX = "vlj_pat_"  # noqa: S105 - format prefix, not a secret  # pragma: allowlist secret
 
 
 class ApiKey(Base):
