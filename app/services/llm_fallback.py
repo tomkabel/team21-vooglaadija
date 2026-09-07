@@ -116,10 +116,12 @@ def _sanitize_html(html: str) -> str:
     The goal is to reduce token count while preserving structure and any
     embedded JSON/config objects that might contain media URLs.
     """
-    # Remove <script>...</script> tags and their contents
-    html = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
-    # Remove <style>...</style> tags and their contents
-    html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    # Remove <script>...</script> tags and their contents. The closing tag's
+    # regex must tolerate whitespace before the ">" (e.g. "</script >"),
+    # which the naive pattern would otherwise fail to match.
+    html = re.sub(r"<script[^>]*>.*?</script\s*>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    # Remove <style>...</style> tags and their contents (same whitespace caveat).
+    html = re.sub(r"<style[^>]*>.*?</style\s*>", "", html, flags=re.DOTALL | re.IGNORECASE)
     # Remove HTML comments
     html = re.sub(r"<!--.*?-->", "", html, flags=re.DOTALL)
     # Remove noscript, iframe, object, embed tags (but keep their content if any)

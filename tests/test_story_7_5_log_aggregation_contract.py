@@ -12,6 +12,9 @@ import yaml
 
 from core.logging_config import configure_logging, get_logger
 
+pytestmark = pytest.mark.slow
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # All compose services use Docker's json-file driver with rotation.
@@ -19,6 +22,8 @@ BASE_COMPOSE_SERVICES = {
     "storage-init",
     "api",
     "worker",
+    "celery-beat",
+    "flower",
     "browser-downloader",
     "db",
     "redis",
@@ -80,8 +85,8 @@ def test_compose_has_no_loki_logging_driver_or_loki_backend():
 
 
 @pytest.mark.unit
-def test_no_custom_networks_for_coolify_compatibility():
-    """Compose must not define custom networks (Coolify manages the network)."""
+def test_no_custom_networks_for_caddy_compatibility():
+    """Compose must not define custom networks (Caddy joins the default network)."""
     config = _load_yaml_file("docker-compose.yml")
 
     assert "networks" not in config
@@ -110,6 +115,21 @@ def test_local_override_builds_and_exposes_debug_ports():
     assert services["worker"]["build"]["target"] == "worker"
     assert "127.0.0.1:8000:8000" in services["api"]["ports"]
     assert "127.0.0.1:5432:5432" in services["db"]["ports"]
+
+
+@pytest.mark.unit
+def test_local_override_keeps_cookie_secure_conditional():
+    """The local override must not hardcode COOKIE_SECURE=False.
+
+    bootstrap.sh loads this file into the production compose list, so a
+    hardcoded 'False' would strip the Secure flag from production cookies.
+    The override stays conditional: production .env sets COOKIE_SECURE=True
+    (compose interpolation resolves it), local dev without the var gets False.
+    """
+    config = _load_yaml_file("docker-compose.local.yml")
+    services = config["services"]
+
+    assert services["api"]["environment"]["COOKIE_SECURE"] == "${COOKIE_SECURE:-False}"
 
 
 @pytest.mark.unit
