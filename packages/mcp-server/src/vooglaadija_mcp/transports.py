@@ -14,6 +14,10 @@ from .server import VooglaadijaMCPServer
 
 _JSON_CONTENT = ("Content-Type", "application/json")
 
+# Cap per-session outbound queues so a stalled SSE client cannot accumulate
+# unbounded memory on the server.
+_MAX_SESSION_QUEUE_SIZE = 256
+
 
 def run_stdio(server: VooglaadijaMCPServer) -> None:
     """Run the server over stdin/stdout using newline-delimited JSON-RPC."""
@@ -46,7 +50,7 @@ class _SSEState:
     def create_session(self) -> str:
         session_id = uuid.uuid4().hex
         with self.lock:
-            self.sessions[session_id] = queue.Queue()
+            self.sessions[session_id] = queue.Queue(maxsize=_MAX_SESSION_QUEUE_SIZE)
         return session_id
 
     def push(self, session_id: str, message: dict[str, Any]) -> bool:
@@ -54,7 +58,17 @@ class _SSEState:
             q = self.sessions.get(session_id)
         if q is None:
             return False
-        q.put(message)
+        try:
+            q.put_nowait(message)
+        except queue.Full:
+            # The client isn't draining its queue; drop the session instead
+            # of blocking or growing memory without bound.
+            print(
+                f"Vooglaadija MCP SSE session {session_id} queue full; dropping session.",
+                file=sys.stderr,
+            )
+            self.drop(session_id)
+            return False
         return True
 
     def drop(self, session_id: str) -> None:
@@ -69,7 +83,7 @@ class _SSEHandler(BaseHTTPRequestHandler):
     def log_message(self, *args: Any) -> None:  # silence default logging
         return
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         if self.path.split("?")[0] != "/sse":
             self.send_error(404)
             return
@@ -95,7 +109,7 @@ class _SSEHandler(BaseHTTPRequestHandler):
         finally:
             self.server_state.drop(session_id)
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         if not self.path.split("?")[0].startswith("/messages"):
             self.send_error(404)
             return

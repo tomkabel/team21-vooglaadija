@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.logging_config import get_logger
-from core.models.api_key import API_KEY_TOKEN_PREFIX, ApiKey, WILDCARD_SCOPE
+from core.models.api_key import API_KEY_TOKEN_PREFIX, WILDCARD_SCOPE, ApiKey
 
 logger = get_logger(__name__)
 
@@ -56,10 +56,12 @@ class ApiKeyService:
         value is a salted-free SHA-256 hash.
         """
         raw_token = self._generate_token()
-        expires_at: datetime | None = None
-        if expires_in_days:
-            expires_at = datetime.now(UTC) + timedelta(days=expires_in_days)
-        elif expires_in_days is None:
+        if expires_in_days is not None:
+            # Cap to the maximum allowed lifetime; 0 (or negative) yields an
+            # already-expired key rather than silently becoming non-expiring.
+            capped_days = min(expires_in_days, _MAX_EXPIRY_DAYS)
+            expires_at = datetime.now(UTC) + timedelta(days=capped_days)
+        else:
             expires_at = datetime.now(UTC) + timedelta(days=_DEFAULT_EXPIRY_DAYS)
 
         api_key = ApiKey(
@@ -73,6 +75,7 @@ class ApiKeyService:
         self.db.add(api_key)
         await self.db.flush()
         await self.db.refresh(api_key)
+        await self.db.commit()
         logger.info("api_key_created", user_id=str(user_id), key_id=str(api_key.id))
         return api_key, raw_token
 
@@ -97,6 +100,7 @@ class ApiKeyService:
             return False
         api_key.revoked_at = datetime.now(UTC)
         await self.db.flush()
+        await self.db.commit()
         logger.info("api_key_revoked", user_id=str(user_id), key_id=str(key_id))
         return True
 

@@ -75,6 +75,10 @@ app = FastAPI(
             "description": "User registration, user authentication, token refresh, and current user profile.",
         },
         {
+            "name": "downloads",
+            "description": "Create, query, download, and delete media extraction jobs.",
+        },
+        {
             "name": "health",
             "description": "Service health and readiness checks.",
         },

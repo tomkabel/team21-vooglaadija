@@ -32,7 +32,7 @@ def _init_request_auth_state(request: Request) -> None:
     if not hasattr(request.state, "auth_method"):
         request.state.auth_method = None
     if not hasattr(request.state, "api_key_scopes"):
-        request.state.api_key_scopes = ["*"]
+        request.state.api_key_scopes = []
     if not hasattr(request.state, "api_key_id"):
         request.state.api_key_id = None
 
@@ -167,7 +167,7 @@ def require_scope(required: str):
     """
 
     async def _check(request: Request, _: CurrentUser) -> None:
-        scopes = getattr(request.state, "api_key_scopes", ["*"])
+        scopes = getattr(request.state, "api_key_scopes", [])
         if "*" in scopes or required in scopes:
             return
         raise HTTPException(

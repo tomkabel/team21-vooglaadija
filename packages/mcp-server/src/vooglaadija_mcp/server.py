@@ -54,8 +54,12 @@ class VooglaadijaMCPServer:
         msg_id = message.get("id")
         method = message.get("method")
 
-        # Notifications (no method or no id) never produce a response.
         if method is None:
+            if msg_id is not None:
+                # A request with an id must get a response, even if it is
+                # malformed -- otherwise the client hangs waiting forever.
+                return self._error(msg_id, CODE_INVALID_REQUEST, "Request is missing 'method'.")
+            # No method and no id: nothing meaningful to respond to.
             return None
         if msg_id is None:
             try:
@@ -64,8 +68,8 @@ class VooglaadijaMCPServer:
                 pass
             return None
 
-        params = self._coerce_params(message)
         try:
+            params = self._coerce_params(message)
             result = self._dispatch(method, params)
         except McpError as exc:
             return self._error(msg_id, exc.code, exc.message, exc.data)
@@ -77,7 +81,11 @@ class VooglaadijaMCPServer:
     @staticmethod
     def _coerce_params(message: dict[str, Any]) -> dict[str, Any]:
         params = message.get("params", {})
-        return params if isinstance(params, dict) else {}
+        if params is None:
+            return {}
+        if not isinstance(params, dict):
+            raise McpError(CODE_INVALID_PARAMS, "'params' must be an object.")
+        return params
 
     def _dispatch(self, method: str, params: dict[str, Any]) -> Any:
         if method == "initialize":
