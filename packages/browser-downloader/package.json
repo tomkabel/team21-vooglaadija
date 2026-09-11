@@ -8,7 +8,7 @@
   },
   "description": "Standalone Node.js microservice that downloads non-YouTube media via Playwright stealth + CDP/DOM interception + streamlink.",
   "devDependencies": {
-    "vitest": "3.2.6"
+    "vitest": "5.0.0"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
